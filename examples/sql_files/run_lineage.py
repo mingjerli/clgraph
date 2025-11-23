@@ -339,6 +339,96 @@ def main():
     print()
 
     # -------------------------------------------------------------------------
+    # 9. Column Graph Methods
+    # -------------------------------------------------------------------------
+    print("9. COLUMN GRAPH METHODS (pipeline.column_graph)")
+    print("-" * 80)
+    print("  Demonstrates available methods on the ColumnGraph.\n")
+
+    # 9a. Get source columns (no incoming edges)
+    print("  9a. Source Columns (external inputs):")
+    source_columns = pipeline.column_graph.get_source_columns()
+    for col in source_columns[:10]:
+        print(f"      📥 {col.full_name}")
+    if len(source_columns) > 10:
+        print(f"      ... and {len(source_columns) - 10} more")
+    print()
+
+    # 9b. Get final columns (no outgoing edges)
+    print("  9b. Final Columns (pipeline outputs):")
+    final_columns = pipeline.column_graph.get_final_columns()
+    for col in final_columns[:10]:
+        print(f"      📤 {col.full_name}")
+    if len(final_columns) > 10:
+        print(f"      ... and {len(final_columns) - 10} more")
+    print()
+
+    # 9c. Get upstream columns (direct dependencies)
+    print("  9c. Column Upstream (direct dependencies):")
+    example_cols = ["mart_customer_ltv.lifetime_revenue", "int_daily_metrics.gross_revenue"]
+    for col_name in example_cols:
+        if col_name in pipeline.columns:
+            upstream = pipeline.column_graph.get_upstream(col_name)
+            print(f"      {col_name} depends on:")
+            if upstream:
+                for up in upstream[:5]:
+                    print(f"        ← {up.full_name}")
+                if len(upstream) > 5:
+                    print(f"        ... and {len(upstream) - 5} more")
+            else:
+                print("        (no direct dependencies)")
+    print()
+
+    # 9d. Get downstream columns (direct dependents)
+    print("  9d. Column Downstream (direct impact):")
+    example_sources = ["raw_orders.total_amount", "raw_customers.customer_id"]
+    for col_name in example_sources:
+        if col_name in pipeline.columns:
+            downstream = pipeline.column_graph.get_downstream(col_name)
+            print(f"      {col_name} is used by:")
+            if downstream:
+                for ds in downstream[:5]:
+                    print(f"        → {ds.full_name}")
+                if len(downstream) > 5:
+                    print(f"        ... and {len(downstream) - 5} more")
+            else:
+                print("        (no direct dependents)")
+    print()
+
+    # 9e. Build column dependencies (graphlib format)
+    print("  9e. Column Dependencies (graphlib format):")
+    col_deps = pipeline.column_graph._build_column_dependencies()
+    print(f"      Total columns: {len(col_deps)}")
+    # Show a sample
+    sample_col = next((c for c in col_deps if len(col_deps[c]) > 0), None)
+    if sample_col:
+        print(f"      Example: {sample_col}")
+        print(f"        depends on: {list(col_deps[sample_col])[:3]}{'...' if len(col_deps[sample_col]) > 3 else ''}")
+    print()
+
+    # 9f. Direct access to columns and edges
+    print("  9f. Direct Access to Columns and Edges:")
+    print(f"      Total columns: {len(pipeline.column_graph.columns)}")
+    print(f"      Total edges: {len(pipeline.column_graph.edges)}")
+    print()
+    print("      Example column access:")
+    first_col_name = next(iter(pipeline.column_graph.columns.keys()), None)
+    if first_col_name:
+        first_col = pipeline.column_graph.columns[first_col_name]
+        print(f"        col = pipeline.column_graph.columns['{first_col_name}']")
+        print(f"        col.column_name = {first_col.column_name}")
+        print(f"        col.table_name = {first_col.table_name}")
+    print()
+    print("      Example edge access:")
+    if pipeline.column_graph.edges:
+        first_edge = pipeline.column_graph.edges[0]
+        print(f"        edge = pipeline.column_graph.edges[0]")
+        print(f"        edge.from_column = {first_edge.from_column.full_name}")
+        print(f"        edge.to_column = {first_edge.to_column.full_name}")
+        print(f"        edge.edge_type = {first_edge.edge_type}")
+    print()
+
+    # -------------------------------------------------------------------------
     # Summary
     # -------------------------------------------------------------------------
     print("=" * 80)
@@ -347,7 +437,12 @@ def main():
     print(f"  Total queries:  {len(queries)}")
     print(f"  Total tables:   {len(pipeline.table_graph.tables)}")
     print(f"  Total columns:  {len(pipeline.columns)}")
+    print(f"  Total edges:    {len(pipeline.edges)}")
     print(f"  PII columns:    {len(list(all_pii))}")
+    print()
+    print("  Graph Objects:")
+    print(f"    pipeline.table_graph  -> TableDependencyGraph (tables + queries)")
+    print(f"    pipeline.column_graph -> ColumnGraph (columns + edges)")
     print()
     print("Analysis complete!")
 

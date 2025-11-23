@@ -159,6 +159,111 @@ Handles multiple related queries as a pipeline:
 - Template variable support
 - Pipeline-wide impact analysis
 
+## Pipeline Graph Objects
+
+A `Pipeline` contains two graph structures for lineage analysis:
+
+```python
+from clpipe import Pipeline
+
+pipeline = Pipeline(queries, dialect="bigquery")
+
+# Two graph objects available:
+# 1. Table-level graph (TableDependencyGraph)
+# 2. Column-level graph (ColumnGraph)
+```
+
+### Table Graph (`pipeline.table_graph`)
+
+The `TableDependencyGraph` tracks table-level dependencies:
+
+```python
+# Access tables and queries
+pipeline.table_graph.tables      # Dict[str, TableNode]
+pipeline.table_graph.queries     # Dict[str, ParsedQuery]
+
+# Get source tables (external inputs, not created by any query)
+source_tables = pipeline.table_graph.get_source_tables()
+
+# Get final tables (not read by any downstream query)
+final_tables = pipeline.table_graph.get_final_tables()
+
+# Get upstream dependencies for a table
+deps = pipeline.table_graph.get_dependencies("analytics.user_metrics")
+for dep in deps:
+    print(f"  depends on: {dep.table_name}")
+
+# Get downstream tables (impact analysis)
+downstream = pipeline.table_graph.get_downstream("raw.orders")
+for table in downstream:
+    print(f"  impacts: {table.table_name}")
+
+# Get query execution order (topologically sorted)
+query_order = pipeline.table_graph.topological_sort()
+
+# Get table execution order
+table_order = pipeline.table_graph.get_execution_order()
+
+# Build graphlib-style dependency map
+deps_map = pipeline.table_graph._build_table_dependencies()
+# Returns: Dict[str, Set[str]] - {table_name: {upstream_tables}}
+```
+
+### Column Graph (`pipeline.column_graph`)
+
+The `ColumnGraph` tracks column-level lineage:
+
+```python
+# Access columns and edges
+pipeline.column_graph.columns    # Dict[str, PipelineColumnNode]
+pipeline.column_graph.edges      # List[PipelineColumnEdge]
+
+# Backward compatible access (these are property aliases)
+pipeline.columns  # Same as pipeline.column_graph.columns
+pipeline.edges    # Same as pipeline.column_graph.edges
+
+# Get source columns (no incoming edges)
+source_cols = pipeline.column_graph.get_source_columns()
+
+# Get final columns (no outgoing edges)
+final_cols = pipeline.column_graph.get_final_columns()
+
+# Get direct upstream columns (one hop back)
+upstream = pipeline.column_graph.get_upstream("analytics.metrics.total_revenue")
+for col in upstream:
+    print(f"  depends on: {col.full_name}")
+
+# Get direct downstream columns (one hop forward)
+downstream = pipeline.column_graph.get_downstream("raw.orders.amount")
+for col in downstream:
+    print(f"  impacts: {col.full_name}")
+
+# Build graphlib-style dependency map
+col_deps = pipeline.column_graph._build_column_dependencies()
+# Returns: Dict[str, Set[str]] - {column_full_name: {upstream_column_full_names}}
+```
+
+### Full Lineage Tracing
+
+For complete lineage (not just direct dependencies), use Pipeline methods:
+
+```python
+# Trace backward to ultimate sources (recursive)
+sources = pipeline.trace_column_backward("final_table", "metric")
+# Returns all source columns across the entire pipeline
+
+# Trace forward to all impacts (recursive)
+impacts = pipeline.trace_column_forward("raw.orders", "amount")
+# Returns all downstream columns that depend on this column
+
+# Find specific lineage path between two columns
+path = pipeline.get_lineage_path(
+    "raw.orders", "amount",
+    "analytics.metrics", "total_revenue"
+)
+# Returns list of edges connecting the two columns
+```
+
 ## Supported SQL Dialects
 
 Built on [sqlglot](https://github.com/tobymao/sqlglot), supporting:
