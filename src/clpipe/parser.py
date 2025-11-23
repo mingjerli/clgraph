@@ -14,7 +14,7 @@ Architecture:
 """
 
 # Core models
-from .column import PipelineColumnEdge, PipelineColumnNode
+from .column import ColumnGraph, PipelineColumnEdge, PipelineColumnNode
 from .lineage_builder import RecursiveLineageBuilder, SQLColumnTracer
 from .models import (
     ColumnEdge,
@@ -59,6 +59,7 @@ __all__ = [
     "Pipeline",
     "PipelineColumnNode",
     "PipelineColumnEdge",
+    "ColumnGraph",
     "PipelineLineageBuilder",
     # Metadata
     "DescriptionSource",

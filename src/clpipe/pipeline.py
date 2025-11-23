@@ -17,7 +17,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from sqlglot import exp
 
-from .column import PipelineColumnEdge, PipelineColumnNode
+from .column import ColumnGraph, PipelineColumnEdge, PipelineColumnNode
 from .lineage_builder import RecursiveLineageBuilder
 from .models import ColumnLineageGraph, ColumnNode, DescriptionSource, ParsedQuery
 from .table import TableDependencyGraph
@@ -357,9 +357,8 @@ class Pipeline:
         self.dialect = dialect
         self.query_mapping: Dict[str, str] = {}  # Maps auto_id -> user_id
 
-        # Column-level lineage (from PipelineLineageGraph)
-        self.columns: Dict[str, PipelineColumnNode] = {}  # full_name -> PipelineColumnNode
-        self.edges: List[PipelineColumnEdge] = []
+        # Column-level lineage graph
+        self.column_graph: ColumnGraph = ColumnGraph()
         self.query_lineages: Dict[str, ColumnLineageGraph] = {}
         self.llm: Optional[Any] = None  # LangChain BaseChatModel
 
@@ -380,6 +379,16 @@ class Pipeline:
         # Build lineage directly into this Pipeline instance
         builder = PipelineLineageBuilder()
         builder.build(self)
+
+    @property
+    def columns(self) -> Dict[str, PipelineColumnNode]:
+        """Access columns through column_graph for backward compatibility"""
+        return self.column_graph.columns
+
+    @property
+    def edges(self) -> List[PipelineColumnEdge]:
+        """Access edges through column_graph for backward compatibility"""
+        return self.column_graph.edges
 
     @classmethod
     def from_tuples(cls, queries: List[Tuple[str, str]], dialect: str = "bigquery") -> "Pipeline":
@@ -601,8 +610,7 @@ class Pipeline:
         instance = cls.__new__(cls)
         instance.dialect = "bigquery"
         instance.query_mapping = {}
-        instance.columns = {}
-        instance.edges = []
+        instance.column_graph = ColumnGraph()
         instance.query_lineages = {}
         instance.llm = None
         instance.table_graph = table_graph
@@ -612,7 +620,7 @@ class Pipeline:
 
     def add_column(self, column: PipelineColumnNode) -> PipelineColumnNode:
         """Add a column node to the graph"""
-        self.columns[column.full_name] = column
+        self.column_graph.add_column(column)
 
         # Also add to table's columns set if table exists
         if column.table_name and column.table_name in self.table_graph.tables:
@@ -622,7 +630,7 @@ class Pipeline:
 
     def add_edge(self, edge: PipelineColumnEdge):
         """Add a lineage edge"""
-        self.edges.append(edge)
+        self.column_graph.add_edge(edge)
 
     def trace_column_backward(self, table_name: str, column_name: str) -> List[PipelineColumnNode]:
         """

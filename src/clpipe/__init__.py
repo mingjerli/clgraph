@@ -14,6 +14,7 @@ from .diff import ColumnDiff, PipelineDiff
 from .export import CSVExporter, GraphVizExporter, JSONExporter
 from .parser import (
     ColumnEdge,
+    ColumnGraph,
     ColumnLineageGraph,
     ColumnNode,
     DescriptionSource,
@@ -63,6 +64,7 @@ __all__ = [
     # Pipeline lineage
     "PipelineColumnNode",
     "PipelineColumnEdge",
+    "ColumnGraph",
     # Query structure (advanced usage)
     "QueryUnit",
     "QueryUnitType",

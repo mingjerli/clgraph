@@ -203,6 +203,45 @@ class TableDependencyGraph:
                     deps[query_id].update(table_node.modified_by)
         return deps
 
+    def _build_table_dependencies(self) -> Dict[str, Set[str]]:
+        """
+        Build dependency map: table_name -> set of table_names it depends on.
+        This is the table-level equivalent of _build_query_dependencies.
+
+        For each table, finds all upstream tables by looking at:
+        - The query that creates this table (DDL: CREATE TABLE/VIEW)
+        - Queries that modify this table (DML: INSERT, MERGE)
+
+        Returns:
+            Dict mapping table_name to set of upstream table_names
+        """
+        deps: Dict[str, Set[str]] = {}
+
+        for table_name, table in self.tables.items():
+            deps[table_name] = set()
+
+            # Source tables have no dependencies
+            if table.is_source and table.created_by is None:
+                continue
+
+            # Get dependencies from the query that creates this table (DDL)
+            if table.created_by:
+                query = self.queries.get(table.created_by)
+                if query:
+                    for source_table in query.source_tables:
+                        if source_table in self.tables:
+                            deps[table_name].add(source_table)
+
+            # Also get dependencies from queries that modify this table (DML)
+            for query_id in table.modified_by:
+                query = self.queries.get(query_id)
+                if query:
+                    for source_table in query.source_tables:
+                        if source_table in self.tables:
+                            deps[table_name].add(source_table)
+
+        return deps
+
     def topological_sort(self) -> List[str]:
         """
         Return query IDs in topological order (dependencies before dependents).
@@ -260,34 +299,10 @@ class TableDependencyGraph:
         if table_name not in self.tables:
             return []
 
-        table = self.tables[table_name]
+        table_deps = self._build_table_dependencies()
+        upstream_names = table_deps.get(table_name, set())
 
-        # If it's a source table, it has no dependencies
-        if table.is_source:
-            return []
-
-        dependencies = []
-        seen = set()
-
-        # Get dependencies from the query that creates this table (DDL)
-        if table.created_by:
-            query = self.queries.get(table.created_by)
-            if query:
-                for source_table in query.source_tables:
-                    if source_table in self.tables and source_table not in seen:
-                        dependencies.append(self.tables[source_table])
-                        seen.add(source_table)
-
-        # Also get dependencies from queries that modify this table (DML: INSERT, MERGE)
-        for query_id in table.modified_by:
-            query = self.queries.get(query_id)
-            if query:
-                for source_table in query.source_tables:
-                    if source_table in self.tables and source_table not in seen:
-                        dependencies.append(self.tables[source_table])
-                        seen.add(source_table)
-
-        return dependencies
+        return [self.tables[name] for name in upstream_names if name in self.tables]
 
     def get_downstream(self, table_name: str) -> List[TableNode]:
         """
@@ -303,17 +318,14 @@ class TableDependencyGraph:
         if table_name not in self.tables:
             return []
 
-        table = self.tables[table_name]
+        # Build table dependencies and invert to find downstream
+        table_deps = self._build_table_dependencies()
 
-        # Find all queries that read this table
+        # Find all tables that have table_name in their dependencies
         downstream = []
-        for query_id in table.read_by:
-            query = self.queries.get(query_id)
-            if query and query.destination_table:
-                if query.destination_table in self.tables:
-                    downstream_table = self.tables[query.destination_table]
-                    if downstream_table not in downstream:
-                        downstream.append(downstream_table)
+        for other_table, deps in table_deps.items():
+            if table_name in deps:
+                downstream.append(self.tables[other_table])
 
         return downstream
 

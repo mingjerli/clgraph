@@ -154,6 +154,58 @@ def main():
         print(f"  ⚠️  {col}")
     print()
 
+    # Example 6: Access graph objects directly
+    print("6. GRAPH OBJECTS")
+    print("-" * 80)
+    print("Pipeline contains two graph structures:\n")
+
+    # Table-level graph
+    print("  pipeline.table_graph (TableDependencyGraph):")
+    print(f"    - tables: {len(pipeline.table_graph.tables)} tables")
+    print(f"    - queries: {len(pipeline.table_graph.queries)} queries")
+    print("    - Methods: get_source_tables(), get_final_tables(),")
+    print("               get_dependencies(table), get_downstream(table)")
+    print()
+
+    # Column-level graph
+    print("  pipeline.column_graph (ColumnGraph):")
+    print(f"    - columns: {len(pipeline.column_graph.columns)} columns")
+    print(f"    - edges: {len(pipeline.column_graph.edges)} edges")
+    print("    - Methods: get_source_columns(), get_final_columns(),")
+    print("               get_upstream(column), get_downstream(column)")
+    print()
+
+    # Example 7: Column graph methods
+    print("7. COLUMN GRAPH METHODS")
+    print("-" * 80)
+
+    # Get source columns (no incoming edges)
+    source_cols = pipeline.column_graph.get_source_columns()
+    print(f"  Source columns (no incoming edges): {len(source_cols)}")
+    for col in source_cols[:5]:
+        print(f"    📥 {col.full_name}")
+    if len(source_cols) > 5:
+        print(f"    ... and {len(source_cols) - 5} more")
+    print()
+
+    # Get final columns (no outgoing edges)
+    final_cols = pipeline.column_graph.get_final_columns()
+    print(f"  Final columns (no outgoing edges): {len(final_cols)}")
+    for col in final_cols[:5]:
+        print(f"    📤 {col.full_name}")
+    if len(final_cols) > 5:
+        print(f"    ... and {len(final_cols) - 5} more")
+    print()
+
+    # Get upstream for a specific column
+    target = "user_engagement_metrics.total_events"
+    if target in pipeline.columns:
+        upstream = pipeline.column_graph.get_upstream(target)
+        print(f"  Direct upstream of {target}:")
+        for col in upstream[:5]:
+            print(f"    ← {col.full_name}")
+    print()
+
     print("=" * 80)
     print("Pipeline analysis complete!")
     print("=" * 80)
