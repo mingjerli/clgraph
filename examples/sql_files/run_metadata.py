@@ -186,23 +186,18 @@ def main():
     print("4. DESCRIPTION GENERATION")
     print("-" * 80)
     print("""
-  clpipe can generate descriptions for columns that don't have them:
+  clpipe can generate descriptions for columns that don't have them.
 
-  With LLM (recommended):
-    from langchain_openai import ChatOpenAI
-    pipeline.llm = ChatOpenAI(model="gpt-4o-mini")
+  Supported LLM backends:
+    - Ollama (local, free): ollama pull llama3.2
+    - OpenAI: requires OPENAI_API_KEY
+
+  Usage:
+    pipeline.llm = llm_instance
     pipeline.generate_all_descriptions()
-
-  Without LLM (fallback - uses column name humanization):
-    # Generates simple descriptions from column names
-    # e.g., "total_amount" -> "Total Amount"
-
-  Table descriptions can also be generated:
-    for table in pipeline.table_graph.tables.values():
-        table.generate_description(llm, pipeline)
 """)
 
-    # Count columns without descriptions
+    # Count columns without descriptions in derived tables
     cols_without_desc = [
         col for col in pipeline.columns.values()
         if not col.description and col.table_name.startswith(("int_", "mart_", "stg_"))
@@ -219,14 +214,54 @@ def main():
 
     print(f"  Columns in derived tables without descriptions: {len(unique_without_desc)}")
     print()
-    print("  Sample columns needing descriptions:")
-    for col in unique_without_desc[:5]:
-        print(f"    - {col.table_name}.{col.column_name}")
-    if len(unique_without_desc) > 5:
-        print(f"    ... and {len(unique_without_desc) - 5} more")
+
+    # Try to use Ollama for description generation
+    llm_available = False
+    try:
+        from langchain_ollama import ChatOllama
+
+        print("  Attempting to connect to Ollama...")
+        llm = ChatOllama(
+            model="llama3.2",
+            temperature=0.3,
+        )
+        # Test connection with a simple call
+        llm.invoke("test")
+        pipeline.llm = llm
+        llm_available = True
+        print("  Connected to Ollama (model: llama3.2)")
+    except Exception as e:
+        print(f"  Ollama not available: {type(e).__name__}")
+        print("  To enable LLM descriptions:")
+        print("    1. Install Ollama: brew install ollama")
+        print("    2. Pull model: ollama pull llama3.2")
+        print("    3. Start server: ollama serve")
     print()
-    print("  Note: Run pipeline.generate_all_descriptions() with an LLM configured")
-    print("  to auto-generate descriptions based on SQL expressions and source columns.")
+
+    if llm_available:
+        # Generate descriptions for a few sample columns to demonstrate
+        print("  Generating descriptions for sample columns...")
+        print("  (Generating for 5 columns to save time)")
+        print()
+
+        sample_cols = unique_without_desc[:5]
+        for col in sample_cols:
+            try:
+                # Import the generate function
+                from clpipe.column import generate_description
+                generate_description(col, pipeline.llm, pipeline)
+                print(f"    {col.table_name}.{col.column_name}:")
+                print(f"      -> {col.description}")
+            except Exception as e:
+                print(f"    {col.table_name}.{col.column_name}: Error - {e}")
+        print()
+        print("  To generate all descriptions, run: pipeline.generate_all_descriptions()")
+    else:
+        print("  Sample columns that would get descriptions:")
+        for col in unique_without_desc[:5]:
+            print(f"    - {col.table_name}.{col.column_name}")
+        if len(unique_without_desc) > 5:
+            print(f"    ... and {len(unique_without_desc) - 5} more")
     print()
 
     # -------------------------------------------------------------------------
@@ -268,7 +303,7 @@ def main():
 
     for owner in sorted(owners):
         cols = pipeline.get_columns_by_owner(owner)
-        unique_cols = set((c.table_name, c.column_name) for c in cols)
+        unique_cols = {(c.table_name, c.column_name) for c in cols}
         print(f"    {owner}: {len(unique_cols)} unique columns")
     print()
 
@@ -282,7 +317,7 @@ def main():
 
     for tag in sorted(all_tags):
         cols = pipeline.get_columns_by_tag(tag)
-        unique_cols = set((c.table_name, c.column_name) for c in cols)
+        unique_cols = {(c.table_name, c.column_name) for c in cols}
         print(f"    '{tag}': {len(unique_cols)} unique columns")
     print()
 
@@ -360,7 +395,7 @@ def main():
 
     # Load metadata
     loaded_metadata = Pipeline.load_metadata(temp_path)
-    print(f"  Loaded metadata:")
+    print("  Loaded metadata:")
     print(f"    - Version: {loaded_metadata.get('version')}")
     print(f"    - Columns: {len(loaded_metadata.get('columns', {}))}")
     print(f"    - Tables: {len(loaded_metadata.get('tables', {}))}")
@@ -390,7 +425,7 @@ def main():
 
     json_data = pipeline.to_json(include_metadata=True)
 
-    print(f"  JSON export contains:")
+    print("  JSON export contains:")
     print(f"    - columns: {len(json_data.get('columns', []))} entries")
     print(f"    - edges: {len(json_data.get('edges', []))} entries")
     print(f"    - tables: {len(json_data.get('tables', []))} entries")
