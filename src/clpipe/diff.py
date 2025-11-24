@@ -101,9 +101,9 @@ class PipelineDiff:
             return set()
 
         column = graph.columns[full_name]
-        incoming = [e for e in graph.edges if e.to_column == column]
+        incoming = [e for e in graph.edges if e.to_node == column]
 
-        return {e.from_column.full_name for e in incoming}
+        return {e.from_node.full_name for e in incoming}
 
     def has_changes(self) -> bool:
         """Check if there are any changes"""

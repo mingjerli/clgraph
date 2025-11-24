@@ -10,7 +10,7 @@ Contains all dataclass definitions for:
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
 from sqlglot import exp
 
@@ -123,30 +123,56 @@ class QueryUnitGraph:
 
 @dataclass
 class ColumnNode:
-    """Represents a column or column group at any layer in the query"""
+    """
+    Unified column node for SQL lineage analysis.
 
-    layer: str  # "input", "cte", "subquery", "output"
-    table_name: str  # "users", "monthly_sales", etc.
+    Supports both single-query and multi-query (pipeline) analysis.
+    Context fields (query_id, unit_id) form a hierarchy:
+        pipeline > query > unit (CTE/subquery) > table > column
+
+    Works for:
+    - Single query analysis (unit_id identifies CTE/subquery)
+    - Multi-query pipeline analysis (query_id identifies the query)
+    - Both combined (full hierarchy)
+    """
+
+    # ─── Core Identity ───
     column_name: str  # "id", "total", "*"
+    table_name: str  # "users", "monthly_sales", etc.
     full_name: str  # "users.id", "table1.*", "output.total"
-    expression: str  # Original SQL expression
-    node_type: str  # "base_column", "star", "aggregate", "expression", etc.
+
+    # ─── Hierarchical Context ───
+    query_id: Optional[str] = None  # Which query in pipeline (for multi-query)
+    unit_id: Optional[str] = None  # Which CTE/subquery within query
+
+    # ─── Classification ───
+    node_type: str = "intermediate"  # "source", "intermediate", "output", "base_column", "star", "aggregate", "expression"
+    layer: Optional[str] = None  # "input", "cte", "subquery", "output" (for backward compatibility)
+
+    # ─── Expression ───
+    expression: Optional[str] = None  # Original SQL expression
+    operation: Optional[str] = None  # Operation type (e.g., "SUM", "CASE", "JOIN")
     source_expression: Optional[exp.Expression] = None  # sqlglot AST node
 
-    # Query unit association
-    unit_id: Optional[str] = None  # ID of the QueryUnit that owns this column
-
-    # Star-specific fields
+    # ─── Star Expansion (for SQL parsing) ───
     is_star: bool = False
     star_source_table: Optional[str] = None
     except_columns: Set[str] = field(default_factory=set)
     replace_columns: Dict[str, str] = field(default_factory=dict)
 
-    # Metadata from SQL comments
-    sql_metadata: Optional["ColumnMetadata"] = None  # Extracted from inline comments
+    # ─── Metadata & Documentation ───
+    description: Optional[str] = None
+    description_source: Optional["DescriptionSource"] = None
+    sql_metadata: Optional["ColumnMetadata"] = None  # From SQL comments
 
-    # Validation warnings
-    warnings: List[str] = field(default_factory=list)  # Warnings about ambiguous lineage
+    # ─── Governance ───
+    owner: Optional[str] = None
+    pii: bool = False
+    tags: Set[str] = field(default_factory=set)
+    custom_metadata: Dict[str, Any] = field(default_factory=dict)
+
+    # ─── Validation ───
+    warnings: List[str] = field(default_factory=list)
 
     def __hash__(self):
         return hash(self.full_name)
@@ -175,16 +201,45 @@ class ColumnNode:
             return f"{base} {' '.join(modifiers)}"
         return base
 
+    def is_computed(self) -> bool:
+        """
+        Check if this column is derived (not a true external source).
+
+        A column is considered "computed" if it's created by a query,
+        even if it's a direct pass-through.
+        """
+        if self.query_id:
+            return True
+        return self.node_type not in ["source", "base_column"]
+
+    def set_source_description(self, description: str):
+        """Set user-provided source description"""
+        self.description = description
+        self.description_source = DescriptionSource.SOURCE
+
 
 @dataclass
 class ColumnEdge:
-    """Represents a dependency between columns"""
+    """
+    Unified edge representing lineage between columns.
+    Works at any level: within query, across queries, or both.
+    """
 
     from_node: ColumnNode
     to_node: ColumnNode
-    transformation: str  # "direct", "aggregate", "star_passthrough", etc.
-    context: str  # "SELECT", "CTE", "main_query", etc.
-    expression: Optional[str] = None
+
+    # ─── Classification ───
+    edge_type: str = (
+        "direct"  # "direct", "transform", "aggregate", "join", "star_passthrough", "cross_query"
+    )
+
+    # ─── Context ───
+    query_id: Optional[str] = None  # Query where this edge exists
+    context: Optional[str] = None  # "SELECT", "CTE", "main_query", "cross_query"
+
+    # ─── Details ───
+    transformation: Optional[str] = None  # Description of transformation
+    expression: Optional[str] = None  # SQL expression
 
     def __hash__(self):
         return hash((self.from_node.full_name, self.to_node.full_name))

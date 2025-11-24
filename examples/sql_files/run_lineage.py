@@ -66,6 +66,7 @@ def main():
     def get_cte_names(sql: str) -> set:
         """Extract CTE names from a SQL query using sqlglot."""
         import sqlglot
+
         try:
             parsed = sqlglot.parse_one(sql, dialect="duckdb")
             cte_names = set()
@@ -132,13 +133,13 @@ def main():
 
         print(f"  {query_id}")
         print(f"    Creates: {details['destination'] or '(none)'}")
-        if details['ctes']:
+        if details["ctes"]:
             print(f"    CTEs: {', '.join(details['ctes'])}")
-        if details['external_sources']:
+        if details["external_sources"]:
             print(f"    External sources: {', '.join(details['external_sources'])}")
-        if details['dep_query_ids']:
+        if details["dep_query_ids"]:
             print(f"    Depends on queries: {', '.join(sorted(details['dep_query_ids']))}")
-        if not details['ctes'] and not details['external_sources'] and not details['dep_query_ids']:
+        if not details["ctes"] and not details["external_sources"] and not details["dep_query_ids"]:
             print(f"    Sources: (none)")
         print()
 
@@ -241,10 +242,7 @@ def main():
 
     # Show columns in the final mart tables
     print("  Columns in mart_customer_ltv:")
-    ltv_cols = [
-        col for col in pipeline.columns.values()
-        if col.table_name == "mart_customer_ltv"
-    ]
+    ltv_cols = [col for col in pipeline.columns.values() if col.table_name == "mart_customer_ltv"]
     for col in sorted(ltv_cols, key=lambda c: c.column_name)[:15]:
         print(f"    • {col.column_name}")
     if len(ltv_cols) > 15:
@@ -328,14 +326,18 @@ def main():
         table = pipeline.table_graph.tables["raw_orders"]
         print("        table = pipeline.table_graph.tables['raw_orders']")
         print(f"        table.is_source = {table.is_source}")
-        print(f"        table.read_by = {table.read_by[:3]}{'...' if len(table.read_by) > 3 else ''}")
+        print(
+            f"        table.read_by = {table.read_by[:3]}{'...' if len(table.read_by) > 3 else ''}"
+        )
     print()
     print("      Example query access:")
     first_query_id = list(pipeline.table_graph.queries.keys())[0]
     first_query = pipeline.table_graph.queries[first_query_id]
     print(f"        query = pipeline.table_graph.queries['{first_query_id}']")
     print(f"        query.destination_table = {first_query.destination_table}")
-    print(f"        query.source_tables = {list(first_query.source_tables)[:3]}{'...' if len(first_query.source_tables) > 3 else ''}")
+    print(
+        f"        query.source_tables = {list(first_query.source_tables)[:3]}{'...' if len(first_query.source_tables) > 3 else ''}"
+    )
     print()
 
     # -------------------------------------------------------------------------
@@ -343,7 +345,7 @@ def main():
     # -------------------------------------------------------------------------
     print("9. COLUMN GRAPH METHODS (pipeline.column_graph)")
     print("-" * 80)
-    print("  Demonstrates available methods on the ColumnGraph.\n")
+    print("  Demonstrates available methods on the PipelineLineageGraph.\n")
 
     # 9a. Get source columns (no incoming edges)
     print("  9a. Source Columns (external inputs):")
@@ -403,7 +405,9 @@ def main():
     sample_col = next((c for c in col_deps if len(col_deps[c]) > 0), None)
     if sample_col:
         print(f"      Example: {sample_col}")
-        print(f"        depends on: {list(col_deps[sample_col])[:3]}{'...' if len(col_deps[sample_col]) > 3 else ''}")
+        print(
+            f"        depends on: {list(col_deps[sample_col])[:3]}{'...' if len(col_deps[sample_col]) > 3 else ''}"
+        )
     print()
 
     # 9f. Direct access to columns and edges
@@ -423,8 +427,8 @@ def main():
     if pipeline.column_graph.edges:
         first_edge = pipeline.column_graph.edges[0]
         print(f"        edge = pipeline.column_graph.edges[0]")
-        print(f"        edge.from_column = {first_edge.from_column.full_name}")
-        print(f"        edge.to_column = {first_edge.to_column.full_name}")
+        print(f"        edge.from_node = {first_edge.from_node.full_name}")
+        print(f"        edge.to_node = {first_edge.to_node.full_name}")
         print(f"        edge.edge_type = {first_edge.edge_type}")
     print()
 
@@ -442,7 +446,7 @@ def main():
     print()
     print("  Graph Objects:")
     print(f"    pipeline.table_graph  -> TableDependencyGraph (tables + queries)")
-    print(f"    pipeline.column_graph -> ColumnGraph (columns + edges)")
+    print(f"    pipeline.column_graph -> PipelineLineageGraph (columns + edges)")
     print()
     print("Analysis complete!")
 

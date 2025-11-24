@@ -17,9 +17,9 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from sqlglot import exp
 
-from .column import ColumnGraph, PipelineColumnEdge, PipelineColumnNode
+from .column import PipelineLineageGraph, generate_description, propagate_metadata
 from .lineage_builder import RecursiveLineageBuilder
-from .models import ColumnLineageGraph, ColumnNode, DescriptionSource, ParsedQuery
+from .models import ColumnEdge, ColumnLineageGraph, ColumnNode, DescriptionSource, ParsedQuery
 from .table import TableDependencyGraph
 
 
@@ -133,12 +133,14 @@ class PipelineLineageBuilder:
                 if description:
                     description_source = DescriptionSource.SOURCE
 
-            column = PipelineColumnNode(
+            column = ColumnNode(
                 column_name=node.column_name,
-                table_name=self._infer_table_name(node, query),
-                query_id=query.query_id,
-                node_type=node.node_type,
+                table_name=self._infer_table_name(node, query) or node.table_name,
                 full_name=self._make_full_name(node, query),
+                query_id=query.query_id,
+                unit_id=node.unit_id,
+                node_type=node.node_type,
+                layer=node.layer,
                 expression=node.expression,
                 operation=node.node_type,  # Use node_type as operation for now
                 description=description,
@@ -164,11 +166,12 @@ class PipelineLineageBuilder:
             to_full = self._make_full_name(edge.to_node, query)
 
             if from_full in pipeline.columns and to_full in pipeline.columns:
-                pipeline_edge = PipelineColumnEdge(
-                    from_column=pipeline.columns[from_full],
-                    to_column=pipeline.columns[to_full],
-                    edge_type=edge.transformation,
+                pipeline_edge = ColumnEdge(
+                    from_node=pipeline.columns[from_full],
+                    to_node=pipeline.columns[to_full],
+                    edge_type=edge.edge_type if hasattr(edge, "edge_type") else edge.transformation,
                     transformation=edge.transformation,
+                    context=edge.context,
                     query_id=query.query_id,
                 )
                 pipeline.add_edge(pipeline_edge)
@@ -212,10 +215,11 @@ class PipelineLineageBuilder:
                             and col.column_name == output_col.column_name
                         ):
                             # Create cross-query edge
-                            edge = PipelineColumnEdge(
-                                from_column=output_col,
-                                to_column=col,
+                            edge = ColumnEdge(
+                                from_node=output_col,
+                                to_node=col,
                                 edge_type="cross_query",
+                                context="cross_query",
                                 transformation=f"{creating_query_id} -> {reading_query_id}",
                                 query_id=None,  # Cross-query edge
                             )
@@ -358,7 +362,7 @@ class Pipeline:
         self.query_mapping: Dict[str, str] = {}  # Maps auto_id -> user_id
 
         # Column-level lineage graph
-        self.column_graph: ColumnGraph = ColumnGraph()
+        self.column_graph: PipelineLineageGraph = PipelineLineageGraph()
         self.query_lineages: Dict[str, ColumnLineageGraph] = {}
         self.llm: Optional[Any] = None  # LangChain BaseChatModel
 
@@ -381,12 +385,12 @@ class Pipeline:
         builder.build(self)
 
     @property
-    def columns(self) -> Dict[str, PipelineColumnNode]:
+    def columns(self) -> Dict[str, ColumnNode]:
         """Access columns through column_graph for backward compatibility"""
         return self.column_graph.columns
 
     @property
-    def edges(self) -> List[PipelineColumnEdge]:
+    def edges(self) -> List[ColumnEdge]:
         """Access edges through column_graph for backward compatibility"""
         return self.column_graph.edges
 
@@ -610,7 +614,7 @@ class Pipeline:
         instance = cls.__new__(cls)
         instance.dialect = "bigquery"
         instance.query_mapping = {}
-        instance.column_graph = ColumnGraph()
+        instance.column_graph = PipelineLineageGraph()
         instance.query_lineages = {}
         instance.llm = None
         instance.table_graph = table_graph
@@ -618,7 +622,7 @@ class Pipeline:
 
     # === Lineage methods (from PipelineLineageGraph) ===
 
-    def add_column(self, column: PipelineColumnNode) -> PipelineColumnNode:
+    def add_column(self, column: ColumnNode) -> ColumnNode:
         """Add a column node to the graph"""
         self.column_graph.add_column(column)
 
@@ -628,11 +632,11 @@ class Pipeline:
 
         return column
 
-    def add_edge(self, edge: PipelineColumnEdge):
+    def add_edge(self, edge: ColumnEdge):
         """Add a lineage edge"""
         self.column_graph.add_edge(edge)
 
-    def trace_column_backward(self, table_name: str, column_name: str) -> List[PipelineColumnNode]:
+    def trace_column_backward(self, table_name: str, column_name: str) -> List[ColumnNode]:
         """
         Trace a column backward to its ultimate sources.
         Returns list of source columns across all queries.
@@ -654,18 +658,18 @@ class Pipeline:
             visited.add(current.full_name)
 
             # Find incoming edges
-            incoming = [e for e in self.edges if e.to_column.full_name == current.full_name]
+            incoming = [e for e in self.edges if e.to_node.full_name == current.full_name]
 
             if not incoming:
                 # No incoming edges = source column
                 sources.append(current)
             else:
                 for edge in incoming:
-                    queue.append(edge.from_column)
+                    queue.append(edge.from_node)
 
         return sources
 
-    def trace_column_forward(self, table_name: str, column_name: str) -> List[PipelineColumnNode]:
+    def trace_column_forward(self, table_name: str, column_name: str) -> List[ColumnNode]:
         """
         Trace a column forward to see what depends on it.
         Returns list of downstream columns across all queries.
@@ -687,20 +691,20 @@ class Pipeline:
             visited.add(current.full_name)
 
             # Find outgoing edges
-            outgoing = [e for e in self.edges if e.from_column.full_name == current.full_name]
+            outgoing = [e for e in self.edges if e.from_node.full_name == current.full_name]
 
             if not outgoing:
                 # No outgoing edges = final column
                 descendants.append(current)
             else:
                 for edge in outgoing:
-                    queue.append(edge.to_column)
+                    queue.append(edge.to_node)
 
         return descendants
 
     def get_lineage_path(
         self, from_table: str, from_column: str, to_table: str, to_column: str
-    ) -> List[PipelineColumnEdge]:
+    ) -> List[ColumnEdge]:
         """
         Find the lineage path between two columns.
         Returns list of edges connecting them (if path exists).
@@ -727,8 +731,8 @@ class Pipeline:
 
             # Find outgoing edges
             for edge in self.edges:
-                if edge.from_column.full_name == current.full_name:
-                    queue.append((edge.to_column, path + [edge]))
+                if edge.from_node.full_name == current.full_name:
+                    queue.append((edge.to_node, path + [edge]))
 
         return []  # No path found
 
@@ -768,7 +772,7 @@ class Pipeline:
             if verbose and (i + 1) % batch_size == 0:
                 print(f"   Processed {i + 1}/{len(columns_to_process)} columns...")
 
-            col.generate_description(self.llm, self)
+            generate_description(col, self.llm, self)
 
         if verbose:
             print(f"✅ Done! Generated {len(columns_to_process)} descriptions")
@@ -799,7 +803,7 @@ class Pipeline:
 
         # Process columns
         for col in columns_to_process:
-            col.propagate_metadata(self)
+            propagate_metadata(col, self)
 
         if verbose:
             print(f"✅ Done! Propagated metadata for {len(columns_to_process)} columns")
@@ -899,7 +903,7 @@ class Pipeline:
                 table = self.table_graph.tables[table_name]
                 table.description = table_meta.get("description")
 
-    def get_pii_columns(self) -> List[PipelineColumnNode]:
+    def get_pii_columns(self) -> List[ColumnNode]:
         """
         Get all columns marked as PII.
 
@@ -908,7 +912,7 @@ class Pipeline:
         """
         return [col for col in self.columns.values() if col.pii]
 
-    def get_columns_by_owner(self, owner: str) -> List[PipelineColumnNode]:
+    def get_columns_by_owner(self, owner: str) -> List[ColumnNode]:
         """
         Get all columns with a specific owner.
 
@@ -920,7 +924,7 @@ class Pipeline:
         """
         return [col for col in self.columns.values() if col.owner == owner]
 
-    def get_columns_by_tag(self, tag: str) -> List[PipelineColumnNode]:
+    def get_columns_by_tag(self, tag: str) -> List[ColumnNode]:
         """
         Get all columns containing a specific tag.
 

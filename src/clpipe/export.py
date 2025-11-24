@@ -65,8 +65,8 @@ class JSONExporter:
         for edge in graph.edges:
             result["edges"].append(
                 {
-                    "from_column": edge.from_column.full_name,
-                    "to_column": edge.to_column.full_name,
+                    "from_column": edge.from_node.full_name,
+                    "to_column": edge.to_node.full_name,
                     "edge_type": edge.edge_type,
                     "transformation": edge.transformation,
                     "query_id": edge.query_id,
@@ -271,20 +271,20 @@ class GraphVizExporter:
         for edge in graph.edges:
             # Skip if columns not in filtered set
             if (
-                edge.from_column.full_name not in column_set
-                or edge.to_column.full_name not in column_set
+                edge.from_node.full_name not in column_set
+                or edge.to_node.full_name not in column_set
             ):
                 continue
 
             # Skip intermediate edges if requested
             if show_source_only:
-                if edge.from_column.node_type not in [
-                    "source"
-                ] and edge.to_column.node_type not in ["output"]:
+                if edge.from_node.node_type not in ["source"] and edge.to_node.node_type not in [
+                    "output"
+                ]:
                     continue
 
-            from_id = edge.from_column.full_name.replace(".", "_").replace("-", "_")
-            to_id = edge.to_column.full_name.replace(".", "_").replace("-", "_")
+            from_id = edge.from_node.full_name.replace(".", "_").replace("-", "_")
+            to_id = edge.to_node.full_name.replace(".", "_").replace("-", "_")
 
             # Style based on edge type
             if edge.edge_type == "cross_query":

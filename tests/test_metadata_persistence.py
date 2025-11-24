@@ -11,8 +11,7 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clpipe.column import PipelineColumnNode
-from clpipe.models import DescriptionSource
+from clpipe.models import ColumnNode, DescriptionSource
 from clpipe.pipeline import Pipeline
 from clpipe.table import TableDependencyGraph, TableNode
 
@@ -24,7 +23,7 @@ def test_save_and_load_metadata():
     graph = Pipeline._create_empty(table_graph=table_graph)
 
     # Add column with metadata
-    col = PipelineColumnNode(
+    col = ColumnNode(
         column_name="user_id",
         table_name="users",
         query_id="q1",
@@ -84,7 +83,7 @@ def test_apply_metadata():
     table_graph1 = TableDependencyGraph()
     graph1 = Pipeline._create_empty(table_graph=table_graph1)
 
-    col1 = PipelineColumnNode(
+    col1 = ColumnNode(
         column_name="user_id",
         table_name="users",
         query_id="q1",
@@ -109,7 +108,7 @@ def test_apply_metadata():
         table_graph2 = TableDependencyGraph()
         graph2 = Pipeline._create_empty(table_graph=table_graph2)
 
-        col2 = PipelineColumnNode(
+        col2 = ColumnNode(
             column_name="user_id",
             table_name="users",
             query_id="q1",
@@ -146,7 +145,7 @@ def test_save_preserves_metadata_only():
     table_graph = TableDependencyGraph()
     graph = Pipeline._create_empty(table_graph=table_graph)
 
-    col = PipelineColumnNode(
+    col = ColumnNode(
         column_name="revenue",
         table_name="orders",
         query_id="q1",
@@ -185,7 +184,7 @@ def test_apply_metadata_partial_match():
     table_graph1 = TableDependencyGraph()
     graph1 = Pipeline._create_empty(table_graph=table_graph1)
 
-    col1 = PipelineColumnNode(
+    col1 = ColumnNode(
         column_name="user_id",
         table_name="users",
         query_id="q1",
@@ -207,7 +206,7 @@ def test_apply_metadata_partial_match():
         table_graph2 = TableDependencyGraph()
         graph2 = Pipeline._create_empty(table_graph=table_graph2)
 
-        col2a = PipelineColumnNode(
+        col2a = ColumnNode(
             column_name="user_id",
             table_name="users",
             query_id="q1",
@@ -216,7 +215,7 @@ def test_apply_metadata_partial_match():
         )
         graph2.add_column(col2a)
 
-        col2b = PipelineColumnNode(
+        col2b = ColumnNode(
             column_name="email",
             table_name="users",
             query_id="q1",

@@ -10,7 +10,7 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clpipe.column import PipelineColumnEdge, PipelineColumnNode
+from clpipe.models import ColumnEdge, ColumnNode
 from clpipe.pipeline import Pipeline
 from clpipe.table import TableDependencyGraph
 
@@ -21,7 +21,7 @@ def test_diff_no_changes():
     table_graph1 = TableDependencyGraph()
     graph1 = Pipeline._create_empty(table_graph=table_graph1)
 
-    col1 = PipelineColumnNode(
+    col1 = ColumnNode(
         column_name="user_id",
         table_name="users",
         query_id="q1",
@@ -34,7 +34,7 @@ def test_diff_no_changes():
     table_graph2 = TableDependencyGraph()
     graph2 = Pipeline._create_empty(table_graph=table_graph2)
 
-    col2 = PipelineColumnNode(
+    col2 = ColumnNode(
         column_name="user_id",
         table_name="users",
         query_id="q1",
@@ -60,7 +60,7 @@ def test_diff_column_added():
     table_graph1 = TableDependencyGraph()
     graph1 = Pipeline._create_empty(table_graph=table_graph1)
 
-    col1 = PipelineColumnNode(
+    col1 = ColumnNode(
         column_name="user_id",
         table_name="users",
         query_id="q1",
@@ -73,7 +73,7 @@ def test_diff_column_added():
     table_graph2 = TableDependencyGraph()
     graph2 = Pipeline._create_empty(table_graph=table_graph2)
 
-    col2a = PipelineColumnNode(
+    col2a = ColumnNode(
         column_name="user_id",
         table_name="users",
         query_id="q1",
@@ -82,7 +82,7 @@ def test_diff_column_added():
     )
     graph2.add_column(col2a)
 
-    col2b = PipelineColumnNode(
+    col2b = ColumnNode(
         column_name="email",
         table_name="users",
         query_id="q1",
@@ -108,7 +108,7 @@ def test_diff_column_removed():
     table_graph1 = TableDependencyGraph()
     graph1 = Pipeline._create_empty(table_graph=table_graph1)
 
-    col1a = PipelineColumnNode(
+    col1a = ColumnNode(
         column_name="user_id",
         table_name="users",
         query_id="q1",
@@ -117,7 +117,7 @@ def test_diff_column_removed():
     )
     graph1.add_column(col1a)
 
-    col1b = PipelineColumnNode(
+    col1b = ColumnNode(
         column_name="email",
         table_name="users",
         query_id="q1",
@@ -130,7 +130,7 @@ def test_diff_column_removed():
     table_graph2 = TableDependencyGraph()
     graph2 = Pipeline._create_empty(table_graph=table_graph2)
 
-    col2 = PipelineColumnNode(
+    col2 = ColumnNode(
         column_name="user_id",
         table_name="users",
         query_id="q1",
@@ -156,7 +156,7 @@ def test_diff_sql_expression_changed():
     table_graph1 = TableDependencyGraph()
     graph1 = Pipeline._create_empty(table_graph=table_graph1)
 
-    col1 = PipelineColumnNode(
+    col1 = ColumnNode(
         column_name="total",
         table_name="metrics",
         query_id="q1",
@@ -170,7 +170,7 @@ def test_diff_sql_expression_changed():
     table_graph2 = TableDependencyGraph()
     graph2 = Pipeline._create_empty(table_graph=table_graph2)
 
-    col2 = PipelineColumnNode(
+    col2 = ColumnNode(
         column_name="total",
         table_name="metrics",
         query_id="q1",
@@ -204,7 +204,7 @@ def test_diff_lineage_changed():
     table_graph1 = TableDependencyGraph()
     graph1 = Pipeline._create_empty(table_graph=table_graph1)
 
-    source1 = PipelineColumnNode(
+    source1 = ColumnNode(
         column_name="price",
         table_name="orders",
         query_id="q1",
@@ -213,7 +213,7 @@ def test_diff_lineage_changed():
     )
     graph1.add_column(source1)
 
-    derived1 = PipelineColumnNode(
+    derived1 = ColumnNode(
         column_name="total",
         table_name="metrics",
         query_id="q2",
@@ -222,14 +222,14 @@ def test_diff_lineage_changed():
     )
     graph1.add_column(derived1)
 
-    edge1 = PipelineColumnEdge(from_column=source1, to_column=derived1, edge_type="direct")
+    edge1 = ColumnEdge(from_node=source1, to_node=derived1, edge_type="direct")
     graph1.add_edge(edge1)
 
     # Create new graph with different source
     table_graph2 = TableDependencyGraph()
     graph2 = Pipeline._create_empty(table_graph=table_graph2)
 
-    source2 = PipelineColumnNode(
+    source2 = ColumnNode(
         column_name="amount",  # Different source column
         table_name="orders",
         query_id="q1",
@@ -238,7 +238,7 @@ def test_diff_lineage_changed():
     )
     graph2.add_column(source2)
 
-    derived2 = PipelineColumnNode(
+    derived2 = ColumnNode(
         column_name="total",
         table_name="metrics",
         query_id="q2",
@@ -247,7 +247,7 @@ def test_diff_lineage_changed():
     )
     graph2.add_column(derived2)
 
-    edge2 = PipelineColumnEdge(from_column=source2, to_column=derived2, edge_type="direct")
+    edge2 = ColumnEdge(from_node=source2, to_node=derived2, edge_type="direct")
     graph2.add_edge(edge2)
 
     # Compute diff
@@ -267,7 +267,7 @@ def test_diff_get_columns_needing_update():
     table_graph1 = TableDependencyGraph()
     graph1 = Pipeline._create_empty(table_graph=table_graph1)
 
-    col1a = PipelineColumnNode(
+    col1a = ColumnNode(
         column_name="user_id",
         table_name="users",
         query_id="q1",
@@ -276,7 +276,7 @@ def test_diff_get_columns_needing_update():
     )
     graph1.add_column(col1a)
 
-    col1b = PipelineColumnNode(
+    col1b = ColumnNode(
         column_name="total",
         table_name="metrics",
         query_id="q2",
@@ -293,7 +293,7 @@ def test_diff_get_columns_needing_update():
     table_graph2 = TableDependencyGraph()
     graph2 = Pipeline._create_empty(table_graph=table_graph2)
 
-    col2a = PipelineColumnNode(
+    col2a = ColumnNode(
         column_name="user_id",
         table_name="users",
         query_id="q1",
@@ -302,7 +302,7 @@ def test_diff_get_columns_needing_update():
     )
     graph2.add_column(col2a)
 
-    col2b = PipelineColumnNode(
+    col2b = ColumnNode(
         column_name="email",  # NEW
         table_name="users",
         query_id="q1",
@@ -311,7 +311,7 @@ def test_diff_get_columns_needing_update():
     )
     graph2.add_column(col2b)
 
-    col2c = PipelineColumnNode(
+    col2c = ColumnNode(
         column_name="total",
         table_name="metrics",
         query_id="q2",
@@ -340,7 +340,7 @@ def test_diff_summary():
     table_graph1 = TableDependencyGraph()
     graph1 = Pipeline._create_empty(table_graph=table_graph1)
 
-    col1a = PipelineColumnNode(
+    col1a = ColumnNode(
         column_name="user_id",
         table_name="users",
         query_id="q1",
@@ -349,7 +349,7 @@ def test_diff_summary():
     )
     graph1.add_column(col1a)
 
-    col1b = PipelineColumnNode(
+    col1b = ColumnNode(
         column_name="email",
         table_name="users",
         query_id="q1",
@@ -361,7 +361,7 @@ def test_diff_summary():
     table_graph2 = TableDependencyGraph()
     graph2 = Pipeline._create_empty(table_graph=table_graph2)
 
-    col2a = PipelineColumnNode(
+    col2a = ColumnNode(
         column_name="user_id",
         table_name="users",
         query_id="q1",
@@ -370,7 +370,7 @@ def test_diff_summary():
     )
     graph2.add_column(col2a)
 
-    col2b = PipelineColumnNode(
+    col2b = ColumnNode(
         column_name="name",  # New column
         table_name="users",
         query_id="q1",

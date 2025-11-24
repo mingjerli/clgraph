@@ -168,7 +168,7 @@ def main():
     print()
 
     # Column-level graph
-    print("  pipeline.column_graph (ColumnGraph):")
+    print("  pipeline.column_graph (PipelineLineageGraph):")
     print(f"    - columns: {len(pipeline.column_graph.columns)} columns")
     print(f"    - edges: {len(pipeline.column_graph.edges)} edges")
     print("    - Methods: get_source_columns(), get_final_columns(),")

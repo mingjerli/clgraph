@@ -10,8 +10,8 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clpipe.column import PipelineColumnEdge, PipelineColumnNode
-from clpipe.models import DescriptionSource
+from clpipe.column import propagate_metadata
+from clpipe.models import ColumnEdge, ColumnNode, DescriptionSource
 from clpipe.pipeline import Pipeline
 from clpipe.table import TableDependencyGraph
 
@@ -23,32 +23,32 @@ def test_propagate_owner_single_source():
     graph = Pipeline._create_empty(table_graph=table_graph)
 
     # Create source column with owner
-    source = PipelineColumnNode(
+    source = ColumnNode(
         column_name="user_id",
         table_name="users",
+        full_name="users.user_id",
         query_id="q1",
         node_type="source",
-        full_name="users.user_id",
         owner="analytics_team",
     )
     graph.add_column(source)
 
     # Create derived column
-    derived = PipelineColumnNode(
+    derived = ColumnNode(
         column_name="user_id",
         table_name="user_metrics",
+        full_name="user_metrics.user_id",
         query_id="q2",
         node_type="intermediate",
-        full_name="user_metrics.user_id",
     )
     graph.add_column(derived)
 
     # Create edge
-    edge = PipelineColumnEdge(from_column=source, to_column=derived, edge_type="direct")
+    edge = ColumnEdge(from_node=source, to_node=derived, edge_type="direct")
     graph.add_edge(edge)
 
     # Propagate metadata
-    derived.propagate_metadata(graph)
+    propagate_metadata(derived, graph)
 
     # Verify owner propagated
     assert derived.owner == "analytics_team"
@@ -61,45 +61,45 @@ def test_propagate_owner_same_owner():
     graph = Pipeline._create_empty(table_graph=table_graph)
 
     # Create two source columns with same owner
-    source1 = PipelineColumnNode(
+    source1 = ColumnNode(
         column_name="amount1",
         table_name="orders",
+        full_name="orders.amount1",
         query_id="q1",
         node_type="source",
-        full_name="orders.amount1",
         owner="finance_team",
     )
     graph.add_column(source1)
 
-    source2 = PipelineColumnNode(
+    source2 = ColumnNode(
         column_name="amount2",
         table_name="orders",
+        full_name="orders.amount2",
         query_id="q1",
         node_type="source",
-        full_name="orders.amount2",
         owner="finance_team",
     )
     graph.add_column(source2)
 
     # Create derived column
-    derived = PipelineColumnNode(
+    derived = ColumnNode(
         column_name="total_amount",
         table_name="order_totals",
+        full_name="order_totals.total_amount",
         query_id="q2",
         node_type="intermediate",
-        full_name="order_totals.total_amount",
         expression="amount1 + amount2",
     )
     graph.add_column(derived)
 
     # Create edges
-    edge1 = PipelineColumnEdge(from_column=source1, to_column=derived, edge_type="transform")
-    edge2 = PipelineColumnEdge(from_column=source2, to_column=derived, edge_type="transform")
+    edge1 = ColumnEdge(from_node=source1, to_node=derived, edge_type="transform")
+    edge2 = ColumnEdge(from_node=source2, to_node=derived, edge_type="transform")
     graph.add_edge(edge1)
     graph.add_edge(edge2)
 
     # Propagate metadata
-    derived.propagate_metadata(graph)
+    propagate_metadata(derived, graph)
 
     # Verify owner propagated
     assert derived.owner == "finance_team"
@@ -112,45 +112,45 @@ def test_propagate_owner_different_owners():
     graph = Pipeline._create_empty(table_graph=table_graph)
 
     # Create two source columns with different owners
-    source1 = PipelineColumnNode(
+    source1 = ColumnNode(
         column_name="user_count",
         table_name="users",
+        full_name="users.user_count",
         query_id="q1",
         node_type="source",
-        full_name="users.user_count",
         owner="analytics_team",
     )
     graph.add_column(source1)
 
-    source2 = PipelineColumnNode(
+    source2 = ColumnNode(
         column_name="order_count",
         table_name="orders",
+        full_name="orders.order_count",
         query_id="q1",
         node_type="source",
-        full_name="orders.order_count",
         owner="finance_team",
     )
     graph.add_column(source2)
 
     # Create derived column
-    derived = PipelineColumnNode(
+    derived = ColumnNode(
         column_name="combined_count",
         table_name="metrics",
+        full_name="metrics.combined_count",
         query_id="q2",
         node_type="intermediate",
-        full_name="metrics.combined_count",
         expression="user_count + order_count",
     )
     graph.add_column(derived)
 
     # Create edges
-    edge1 = PipelineColumnEdge(from_column=source1, to_column=derived, edge_type="transform")
-    edge2 = PipelineColumnEdge(from_column=source2, to_column=derived, edge_type="transform")
+    edge1 = ColumnEdge(from_node=source1, to_node=derived, edge_type="transform")
+    edge2 = ColumnEdge(from_node=source2, to_node=derived, edge_type="transform")
     graph.add_edge(edge1)
     graph.add_edge(edge2)
 
     # Propagate metadata
-    derived.propagate_metadata(graph)
+    propagate_metadata(derived, graph)
 
     # Verify owner NOT propagated (remains None)
     assert derived.owner is None
@@ -163,33 +163,33 @@ def test_propagate_pii_single_source():
     graph = Pipeline._create_empty(table_graph=table_graph)
 
     # Create source column with PII
-    source = PipelineColumnNode(
+    source = ColumnNode(
         column_name="email",
         table_name="users",
+        full_name="users.email",
         query_id="q1",
         node_type="source",
-        full_name="users.email",
         pii=True,
     )
     graph.add_column(source)
 
     # Create derived column
-    derived = PipelineColumnNode(
+    derived = ColumnNode(
         column_name="email_lower",
         table_name="user_emails",
+        full_name="user_emails.email_lower",
         query_id="q2",
         node_type="intermediate",
-        full_name="user_emails.email_lower",
         expression="LOWER(email)",
     )
     graph.add_column(derived)
 
     # Create edge
-    edge = PipelineColumnEdge(from_column=source, to_column=derived, edge_type="transform")
+    edge = ColumnEdge(from_node=source, to_node=derived, edge_type="transform")
     graph.add_edge(edge)
 
     # Propagate metadata
-    derived.propagate_metadata(graph)
+    propagate_metadata(derived, graph)
 
     # Verify PII propagated
     assert derived.pii is True
@@ -202,44 +202,44 @@ def test_propagate_pii_union():
     graph = Pipeline._create_empty(table_graph=table_graph)
 
     # Create source columns - one with PII, one without
-    source1 = PipelineColumnNode(
+    source1 = ColumnNode(
         column_name="email",
         table_name="users",
+        full_name="users.email",
         query_id="q1",
         node_type="source",
-        full_name="users.email",
         pii=True,
     )
     graph.add_column(source1)
 
-    source2 = PipelineColumnNode(
+    source2 = ColumnNode(
         column_name="user_count",
         table_name="stats",
+        full_name="stats.user_count",
         query_id="q1",
         node_type="source",
-        full_name="stats.user_count",
         pii=False,
     )
     graph.add_column(source2)
 
     # Create derived column
-    derived = PipelineColumnNode(
+    derived = ColumnNode(
         column_name="combined_data",
         table_name="output",
+        full_name="output.combined_data",
         query_id="q2",
         node_type="intermediate",
-        full_name="output.combined_data",
     )
     graph.add_column(derived)
 
     # Create edges
-    edge1 = PipelineColumnEdge(from_column=source1, to_column=derived, edge_type="transform")
-    edge2 = PipelineColumnEdge(from_column=source2, to_column=derived, edge_type="transform")
+    edge1 = ColumnEdge(from_node=source1, to_node=derived, edge_type="transform")
+    edge2 = ColumnEdge(from_node=source2, to_node=derived, edge_type="transform")
     graph.add_edge(edge1)
     graph.add_edge(edge2)
 
     # Propagate metadata
-    derived.propagate_metadata(graph)
+    propagate_metadata(derived, graph)
 
     # Verify PII propagated (union - any source is PII)
     assert derived.pii is True
@@ -252,33 +252,33 @@ def test_propagate_tags_single_source():
     graph = Pipeline._create_empty(table_graph=table_graph)
 
     # Create source column with tags
-    source = PipelineColumnNode(
+    source = ColumnNode(
         column_name="revenue",
         table_name="orders",
+        full_name="orders.revenue",
         query_id="q1",
         node_type="source",
-        full_name="orders.revenue",
         tags={"important", "financial"},
     )
     graph.add_column(source)
 
     # Create derived column
-    derived = PipelineColumnNode(
+    derived = ColumnNode(
         column_name="total_revenue",
         table_name="metrics",
+        full_name="metrics.total_revenue",
         query_id="q2",
         node_type="intermediate",
-        full_name="metrics.total_revenue",
         expression="SUM(revenue)",
     )
     graph.add_column(derived)
 
     # Create edge
-    edge = PipelineColumnEdge(from_column=source, to_column=derived, edge_type="aggregate")
+    edge = ColumnEdge(from_node=source, to_node=derived, edge_type="aggregate")
     graph.add_edge(edge)
 
     # Propagate metadata
-    derived.propagate_metadata(graph)
+    propagate_metadata(derived, graph)
 
     # Verify tags propagated
     assert derived.tags == {"important", "financial"}
@@ -291,44 +291,44 @@ def test_propagate_tags_union():
     graph = Pipeline._create_empty(table_graph=table_graph)
 
     # Create source columns with different tags
-    source1 = PipelineColumnNode(
+    source1 = ColumnNode(
         column_name="user_id",
         table_name="users",
+        full_name="users.user_id",
         query_id="q1",
         node_type="source",
-        full_name="users.user_id",
         tags={"important", "key"},
     )
     graph.add_column(source1)
 
-    source2 = PipelineColumnNode(
+    source2 = ColumnNode(
         column_name="order_id",
         table_name="orders",
+        full_name="orders.order_id",
         query_id="q1",
         node_type="source",
-        full_name="orders.order_id",
         tags={"key", "financial"},
     )
     graph.add_column(source2)
 
     # Create derived column
-    derived = PipelineColumnNode(
+    derived = ColumnNode(
         column_name="combined_id",
         table_name="joined",
+        full_name="joined.combined_id",
         query_id="q2",
         node_type="intermediate",
-        full_name="joined.combined_id",
     )
     graph.add_column(derived)
 
     # Create edges
-    edge1 = PipelineColumnEdge(from_column=source1, to_column=derived, edge_type="join")
-    edge2 = PipelineColumnEdge(from_column=source2, to_column=derived, edge_type="join")
+    edge1 = ColumnEdge(from_node=source1, to_node=derived, edge_type="join")
+    edge2 = ColumnEdge(from_node=source2, to_node=derived, edge_type="join")
     graph.add_edge(edge1)
     graph.add_edge(edge2)
 
     # Propagate metadata
-    derived.propagate_metadata(graph)
+    propagate_metadata(derived, graph)
 
     # Verify tags are union of all source tags
     assert derived.tags == {"important", "key", "financial"}
@@ -341,17 +341,17 @@ def test_propagate_not_for_source_columns():
     graph = Pipeline._create_empty(table_graph=table_graph)
 
     # Create source column
-    source = PipelineColumnNode(
+    source = ColumnNode(
         column_name="user_id",
         table_name="users",
+        full_name="users.user_id",
         query_id="q1",
         node_type="source",
-        full_name="users.user_id",
     )
     graph.add_column(source)
 
     # Try to propagate metadata to source column
-    source.propagate_metadata(graph)
+    propagate_metadata(source, graph)
 
     # Verify nothing changed (source columns don't propagate)
     assert source.owner is None
@@ -366,35 +366,35 @@ def test_propagate_not_for_user_set_columns():
     graph = Pipeline._create_empty(table_graph=table_graph)
 
     # Create source column
-    source = PipelineColumnNode(
+    source = ColumnNode(
         column_name="user_id",
         table_name="users",
+        full_name="users.user_id",
         query_id="q1",
         node_type="source",
-        full_name="users.user_id",
         owner="analytics_team",
         pii=True,
     )
     graph.add_column(source)
 
     # Create derived column with user-set description
-    derived = PipelineColumnNode(
+    derived = ColumnNode(
         column_name="user_id",
         table_name="metrics",
+        full_name="metrics.user_id",
         query_id="q2",
         node_type="intermediate",
-        full_name="metrics.user_id",
         description="User-set description",
         description_source=DescriptionSource.SOURCE,
     )
     graph.add_column(derived)
 
     # Create edge
-    edge = PipelineColumnEdge(from_column=source, to_column=derived, edge_type="direct")
+    edge = ColumnEdge(from_node=source, to_node=derived, edge_type="direct")
     graph.add_edge(edge)
 
     # Try to propagate metadata
-    derived.propagate_metadata(graph)
+    propagate_metadata(derived, graph)
 
     # Metadata SHOULD propagate even when user has set description explicitly
     # Description source is independent from other metadata fields
@@ -420,4 +420,4 @@ if __name__ == "__main__":
     test_propagate_not_for_source_columns()
     test_propagate_not_for_user_set_columns()
 
-    print("✅ All propagation tests passed!")
+    print("All propagation tests passed!")

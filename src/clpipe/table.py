@@ -141,7 +141,7 @@ class TableNode:
             lineage_graph: The pipeline lineage graph
 
         Returns:
-            List of PipelineColumnNode objects for this table
+            List of ColumnNode objects for this table
         """
 
         return [col for col in lineage_graph.columns.values() if col.table_name == self.table_name]

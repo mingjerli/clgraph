@@ -170,7 +170,7 @@ pipeline = Pipeline(queries, dialect="bigquery")
 
 # Two graph objects available:
 # 1. Table-level graph (TableDependencyGraph)
-# 2. Column-level graph (ColumnGraph)
+# 2. Column-level graph (PipelineLineageGraph)
 ```
 
 ### Table Graph (`pipeline.table_graph`)
@@ -211,12 +211,12 @@ deps_map = pipeline.table_graph._build_table_dependencies()
 
 ### Column Graph (`pipeline.column_graph`)
 
-The `ColumnGraph` tracks column-level lineage:
+The `PipelineLineageGraph` tracks column-level lineage:
 
 ```python
 # Access columns and edges
-pipeline.column_graph.columns    # Dict[str, PipelineColumnNode]
-pipeline.column_graph.edges      # List[PipelineColumnEdge]
+pipeline.column_graph.columns    # Dict[str, ColumnNode]
+pipeline.column_graph.edges      # List[ColumnEdge]
 
 # Backward compatible access (these are property aliases)
 pipeline.columns  # Same as pipeline.column_graph.columns
