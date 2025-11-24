@@ -395,10 +395,11 @@ def main():
 
     marked_count = 0
     for table, column in pii_columns:
-        key = f"{table}.{column}"
-        if key in pipeline.columns:
-            pipeline.columns[key].pii = True
-            marked_count += 1
+        # Find columns by table_name and column_name (keys include query_id prefix)
+        for col in pipeline.columns.values():
+            if col.table_name == table and col.column_name == column:
+                col.pii = True
+                marked_count += 1
     print(f"  Marked {marked_count} columns as PII")
 
     # Propagate PII metadata through lineage
@@ -412,29 +413,14 @@ def main():
     print()
 
     # -------------------------------------------------------------------------
-    # 7. Single Query Analysis
+    # 7. Table Graph Methods
     # -------------------------------------------------------------------------
-    print("7. SINGLE QUERY DEEP DIVE")
-    print("-" * 80)
-
-    # Show columns in the final mart tables
-    print("  Columns in mart_customer_ltv:")
-    ltv_cols = [col for col in pipeline.columns.values() if col.table_name == "mart_customer_ltv"]
-    for col in sorted(ltv_cols, key=lambda c: c.column_name)[:15]:
-        print(f"    • {col.column_name}")
-    if len(ltv_cols) > 15:
-        print(f"    ... and {len(ltv_cols) - 15} more")
-    print()
-
-    # -------------------------------------------------------------------------
-    # 8. Table Graph Methods
-    # -------------------------------------------------------------------------
-    print("8. TABLE GRAPH METHODS (pipeline.table_graph)")
+    print("7. TABLE GRAPH METHODS (pipeline.table_graph)")
     print("-" * 80)
     print("  Demonstrates available methods on the TableDependencyGraph.\n")
 
-    # 8a. Get source tables (external tables not created by any query)
-    print("  8a. Source Tables (external inputs):")
+    # 7a. Get source tables (external tables not created by any query)
+    print("  7a. Source Tables (external inputs):")
     source_tables = pipeline.table_graph.get_source_tables()
     for table in source_tables[:10]:
         print(f"      📥 {table.table_name}")
@@ -442,8 +428,8 @@ def main():
         print(f"      ... and {len(source_tables) - 10} more")
     print()
 
-    # 8b. Get final tables (not read by any downstream query)
-    print("  8b. Final Tables (pipeline outputs):")
+    # 7b. Get final tables (not read by any downstream query)
+    print("  7b. Final Tables (pipeline outputs):")
     final_tables = pipeline.table_graph.get_final_tables()
     for table in final_tables[:10]:
         print(f"      📤 {table.table_name}")
@@ -451,8 +437,8 @@ def main():
         print(f"      ... and {len(final_tables) - 10} more")
     print()
 
-    # 8c. Get execution order (tables in dependency order)
-    print("  8c. Table Execution Order:")
+    # 7c. Get execution order (tables in dependency order)
+    print("  7c. Table Execution Order:")
     execution_order = pipeline.table_graph.get_execution_order()
     for i, table in enumerate(execution_order[:15], 1):
         table_type = "source" if table.is_source else "created"
@@ -461,8 +447,8 @@ def main():
         print(f"      ... and {len(execution_order) - 15} more")
     print()
 
-    # 8d. Get dependencies for a specific table
-    print("  8d. Table Dependencies (upstream tables):")
+    # 7d. Get dependencies for a specific table
+    print("  7d. Table Dependencies (upstream tables):")
     example_tables = ["mart_customer_ltv", "int_daily_metrics"]
     for table_name in example_tables:
         if table_name in pipeline.table_graph.tables:
@@ -477,8 +463,8 @@ def main():
                 print("        (no dependencies)")
     print()
 
-    # 8e. Get downstream tables
-    print("  8e. Table Downstream (impact analysis):")
+    # 7e. Get downstream tables
+    print("  7e. Table Downstream (impact analysis):")
     example_sources = ["raw_orders", "raw_customers"]
     for table_name in example_sources:
         if table_name in pipeline.table_graph.tables:
@@ -493,8 +479,8 @@ def main():
                 print("        (no downstream tables)")
     print()
 
-    # 8f. Access table and query objects directly
-    print("  8f. Direct Access to Tables and Queries:")
+    # 7f. Access table and query objects directly
+    print("  7f. Direct Access to Tables and Queries:")
     print(f"      Total tables: {len(pipeline.table_graph.tables)}")
     print(f"      Total queries: {len(pipeline.table_graph.queries)}")
     print()
@@ -518,14 +504,14 @@ def main():
     print()
 
     # -------------------------------------------------------------------------
-    # 9. Column Graph Methods
+    # 8. Column Graph Methods
     # -------------------------------------------------------------------------
-    print("9. COLUMN GRAPH METHODS (pipeline.column_graph)")
+    print("8. COLUMN GRAPH METHODS (pipeline.column_graph)")
     print("-" * 80)
     print("  Demonstrates available methods on the PipelineLineageGraph.\n")
 
-    # 9a. Get source columns (no incoming edges)
-    print("  9a. Source Columns (external inputs):")
+    # 8a. Get source columns (no incoming edges)
+    print("  8a. Source Columns (external inputs):")
     source_columns = pipeline.column_graph.get_source_columns()
     for col in source_columns[:10]:
         print(f"      📥 {col.full_name}")
@@ -533,8 +519,8 @@ def main():
         print(f"      ... and {len(source_columns) - 10} more")
     print()
 
-    # 9b. Get final columns (no outgoing edges)
-    print("  9b. Final Columns (pipeline outputs):")
+    # 8b. Get final columns (no outgoing edges)
+    print("  8b. Final Columns (pipeline outputs):")
     final_columns = pipeline.column_graph.get_final_columns()
     for col in final_columns[:10]:
         print(f"      📤 {col.full_name}")
@@ -542,8 +528,8 @@ def main():
         print(f"      ... and {len(final_columns) - 10} more")
     print()
 
-    # 9c. Get upstream columns (direct dependencies)
-    print("  9c. Column Upstream (direct dependencies):")
+    # 8c. Get upstream columns (direct dependencies)
+    print("  8c. Column Upstream (direct dependencies):")
     example_cols = ["mart_customer_ltv.lifetime_revenue", "int_daily_metrics.gross_revenue"]
     for col_name in example_cols:
         if col_name in pipeline.columns:
@@ -558,8 +544,8 @@ def main():
                 print("        (no direct dependencies)")
     print()
 
-    # 9d. Get downstream columns (direct dependents)
-    print("  9d. Column Downstream (direct impact):")
+    # 8d. Get downstream columns (direct dependents)
+    print("  8d. Column Downstream (direct impact):")
     example_sources = ["raw_orders.total_amount", "raw_customers.customer_id"]
     for col_name in example_sources:
         if col_name in pipeline.columns:
@@ -574,8 +560,8 @@ def main():
                 print("        (no direct dependents)")
     print()
 
-    # 9e. Build column dependencies (graphlib format)
-    print("  9e. Column Dependencies (graphlib format):")
+    # 8e. Build column dependencies (graphlib format)
+    print("  8e. Column Dependencies (graphlib format):")
     col_deps = pipeline.column_graph._build_column_dependencies()
     print(f"      Total columns: {len(col_deps)}")
     # Show a sample
@@ -587,8 +573,8 @@ def main():
         )
     print()
 
-    # 9f. Direct access to columns and edges
-    print("  9f. Direct Access to Columns and Edges:")
+    # 8f. Direct access to columns and edges
+    print("  8f. Direct Access to Columns and Edges:")
     print(f"      Total columns: {len(pipeline.column_graph.columns)}")
     print(f"      Total edges: {len(pipeline.column_graph.edges)}")
     print()
