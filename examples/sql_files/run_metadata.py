@@ -217,24 +217,35 @@ def main():
 
     # Try to use Ollama for description generation
     llm_available = False
+    ollama_models = ["llama3:latest", "llama3.2", "qwen3-coder:30b"]  # Try these in order
+
     try:
         from langchain_ollama import ChatOllama
 
         print("  Attempting to connect to Ollama...")
-        llm = ChatOllama(
-            model="llama3.2",
-            temperature=0.3,
-        )
-        # Test connection with a simple call
-        llm.invoke("test")
-        pipeline.llm = llm
-        llm_available = True
-        print("  Connected to Ollama (model: llama3.2)")
+        for model_name in ollama_models:
+            try:
+                llm = ChatOllama(
+                    model=model_name,
+                    temperature=0.3,
+                )
+                # Test connection with a simple call
+                llm.invoke("test")
+                pipeline.llm = llm
+                llm_available = True
+                print(f"  Connected to Ollama (model: {model_name})")
+                break
+            except Exception:
+                continue
+
+        if not llm_available:
+            raise Exception("No working Ollama model found")
+
     except Exception as e:
         print(f"  Ollama not available: {type(e).__name__}")
         print("  To enable LLM descriptions:")
         print("    1. Install Ollama: brew install ollama")
-        print("    2. Pull model: ollama pull llama3.2")
+        print("    2. Pull model: ollama pull llama3:latest")
         print("    3. Start server: ollama serve")
     print()
 
