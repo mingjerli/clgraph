@@ -77,7 +77,8 @@ def main():
     # Show columns that have inline metadata (from SQL comments)
     # Metadata is extracted and stored directly on column properties
     cols_with_inline_metadata = [
-        col for col in pipeline.columns.values()
+        col
+        for col in pipeline.columns.values()
         if col.description_source and col.description_source.value == "source"
     ]
 
@@ -133,7 +134,13 @@ def main():
         ("raw_order_items", "product_id", "data-platform", None, set()),
         ("raw_order_items", "quantity", "operations", "Number of units ordered", {"metric"}),
         ("raw_order_items", "unit_price", "finance", "Price per unit", {"metric", "revenue"}),
-        ("raw_order_items", "line_total", "finance", "Total line item amount", {"metric", "revenue"}),
+        (
+            "raw_order_items",
+            "line_total",
+            "finance",
+            "Total line item amount",
+            {"metric", "revenue"},
+        ),
     ]
 
     print("  Adding metadata to raw_order_items:")
@@ -199,7 +206,8 @@ def main():
 
     # Count columns without descriptions in derived tables
     cols_without_desc = [
-        col for col in pipeline.columns.values()
+        col
+        for col in pipeline.columns.values()
         if not col.description and col.table_name.startswith(("int_", "mart_", "stg_"))
     ]
 
@@ -260,6 +268,7 @@ def main():
             try:
                 # Import the generate function
                 from clpipe.column import generate_description
+
                 generate_description(col, pipeline.llm, pipeline)
                 print(f"    {col.table_name}.{col.column_name}:")
                 print(f"      -> {col.description}")
@@ -345,7 +354,8 @@ def main():
 
     # Find a PII column in a derived table (not raw_)
     pii_derived_cols = [
-        col for col in pipeline.get_pii_columns()
+        col
+        for col in pipeline.get_pii_columns()
         if not col.table_name.startswith("raw_") and not col.table_name.startswith("source_")
     ]
 
@@ -452,7 +462,8 @@ def main():
     if sample_col:
         # Pretty print with limited fields
         display_data = {
-            k: v for k, v in sample_col.items()
+            k: v
+            for k, v in sample_col.items()
             if k in ["table_name", "column_name", "pii", "owner", "tags", "description"]
         }
         print(f"    {json.dumps(display_data, indent=6)}")
@@ -460,7 +471,7 @@ def main():
     # Export to file example
     print("\n  To save to file:")
     print('    with open("lineage.json", "w") as f:')
-    print('        json.dump(pipeline.to_json(), f, indent=2)')
+    print("        json.dump(pipeline.to_json(), f, indent=2)")
     print()
 
     # -------------------------------------------------------------------------
