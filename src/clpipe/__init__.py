@@ -14,7 +14,6 @@ from .diff import ColumnDiff, PipelineDiff
 from .export import CSVExporter, GraphVizExporter, JSONExporter
 from .parser import (
     ColumnEdge,
-    ColumnGraph,
     ColumnLineageGraph,
     ColumnNode,
     DescriptionSource,
@@ -23,9 +22,8 @@ from .parser import (
     # Pipeline structure
     ParsedQuery,
     Pipeline,
-    PipelineColumnEdge,
-    PipelineColumnNode,
     PipelineLineageBuilder,
+    PipelineLineageGraph,
     # Query structure
     QueryUnit,
     QueryUnitGraph,
@@ -57,14 +55,12 @@ __all__ = [
     "SQLColumnTracer",
     "MultiQueryParser",
     "PipelineLineageBuilder",
-    # Column lineage
+    # Column lineage (unified types)
     "ColumnLineageGraph",
     "ColumnNode",
     "ColumnEdge",
     # Pipeline lineage
-    "PipelineColumnNode",
-    "PipelineColumnEdge",
-    "ColumnGraph",
+    "PipelineLineageGraph",
     # Query structure (advanced usage)
     "QueryUnit",
     "QueryUnitType",

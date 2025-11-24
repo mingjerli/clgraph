@@ -226,6 +226,7 @@ class RecursiveLineageBuilder:
                 edge = ColumnEdge(
                     from_node=source_star_node,
                     to_node=output_node,
+                    edge_type="star_passthrough",
                     transformation="star_passthrough",
                     context=unit.unit_type.value,
                     expression=col_info["expression"],
@@ -239,6 +240,7 @@ class RecursiveLineageBuilder:
                 edge = ColumnEdge(
                     from_node=table_star_node,
                     to_node=output_node,
+                    edge_type="star_passthrough",
                     transformation="star_passthrough",
                     context=unit.unit_type.value,
                     expression=col_info["expression"],
@@ -270,6 +272,7 @@ class RecursiveLineageBuilder:
                     edge = ColumnEdge(
                         from_node=table_star_node,
                         to_node=output_node,
+                        edge_type="aggregate",
                         transformation="ambiguous_aggregate",
                         context=unit.unit_type.value,
                         expression=col_info["expression"],
@@ -289,6 +292,7 @@ class RecursiveLineageBuilder:
                                     edge = ColumnEdge(
                                         from_node=col_node,
                                         to_node=output_node,
+                                        edge_type="aggregate",
                                         transformation="ambiguous_aggregate",
                                         context=unit.unit_type.value,
                                         expression=col_info["expression"],
@@ -302,6 +306,7 @@ class RecursiveLineageBuilder:
                         edge = ColumnEdge(
                             from_node=unit_star_node,
                             to_node=output_node,
+                            edge_type="aggregate",
                             transformation="ambiguous_aggregate",
                             context=unit.unit_type.value,
                             expression=col_info["expression"],
@@ -323,6 +328,7 @@ class RecursiveLineageBuilder:
                         edge = ColumnEdge(
                             from_node=source_node,
                             to_node=output_node,
+                            edge_type=col_info["type"],
                             transformation=col_info["type"],
                             context=unit.unit_type.value,
                             expression=col_info["expression"],
@@ -342,6 +348,7 @@ class RecursiveLineageBuilder:
                         edge = ColumnEdge(
                             from_node=source_node,
                             to_node=output_node,
+                            edge_type=col_info["type"],
                             transformation=col_info["type"],
                             context=unit.unit_type.value,
                             expression=col_info["expression"],

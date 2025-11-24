@@ -1,5 +1,5 @@
 """
-Tests for Phase 3 metadata fields and methods on PipelineColumnNode.
+Tests for Phase 3 metadata fields and methods on ColumnNode.
 
 Week 1: Testing metadata fields and basic methods.
 """
@@ -10,12 +10,12 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clpipe.parser import DescriptionSource, PipelineColumnNode
+from clpipe.parser import ColumnNode, DescriptionSource
 
 
 def test_column_metadata_fields_default():
     """Test that metadata fields have correct default values"""
-    col = PipelineColumnNode(
+    col = ColumnNode(
         column_name="user_id",
         table_name="users",
         query_id="q1",
@@ -35,7 +35,7 @@ def test_column_metadata_fields_default():
 
 def test_column_metadata_fields_assignment():
     """Test that metadata fields can be assigned"""
-    col = PipelineColumnNode(
+    col = ColumnNode(
         column_name="user_id",
         table_name="users",
         query_id="q1",
@@ -62,7 +62,7 @@ def test_column_metadata_fields_assignment():
 
 def test_set_source_description():
     """Test set_source_description method"""
-    col = PipelineColumnNode(
+    col = ColumnNode(
         column_name="email",
         table_name="users",
         query_id="q1",
@@ -80,7 +80,7 @@ def test_set_source_description():
 
 def test_set_source_description_overwrites():
     """Test that set_source_description overwrites existing description"""
-    col = PipelineColumnNode(
+    col = ColumnNode(
         column_name="email",
         table_name="users",
         query_id="q1",
@@ -102,7 +102,7 @@ def test_set_source_description_overwrites():
 
 def test_is_computed_base_column():
     """Test is_computed returns True for base columns with query_id (in derived table)"""
-    col = PipelineColumnNode(
+    col = ColumnNode(
         column_name="user_id",
         table_name="users",
         query_id="q1",  # Has query_id, so it's computed (in a derived table)
@@ -116,7 +116,7 @@ def test_is_computed_base_column():
 
 def test_is_computed_source_column():
     """Test is_computed returns False for source columns"""
-    col = PipelineColumnNode(
+    col = ColumnNode(
         column_name="user_id",
         table_name="raw_users",
         query_id=None,
@@ -129,7 +129,7 @@ def test_is_computed_source_column():
 
 def test_is_computed_intermediate_column():
     """Test is_computed returns True for intermediate columns"""
-    col = PipelineColumnNode(
+    col = ColumnNode(
         column_name="total_revenue",
         table_name="user_metrics",
         query_id="q2",
@@ -143,7 +143,7 @@ def test_is_computed_intermediate_column():
 
 def test_is_computed_output_column():
     """Test is_computed returns True for output columns"""
-    col = PipelineColumnNode(
+    col = ColumnNode(
         column_name="total_revenue",
         table_name="user_metrics",
         query_id="q2",
@@ -157,7 +157,7 @@ def test_is_computed_output_column():
 
 def test_hash_and_equality():
     """Test that hash and equality still work with metadata fields"""
-    col1 = PipelineColumnNode(
+    col1 = ColumnNode(
         column_name="user_id",
         table_name="users",
         query_id="q1",
@@ -165,7 +165,7 @@ def test_hash_and_equality():
         full_name="users.user_id",
     )
 
-    col2 = PipelineColumnNode(
+    col2 = ColumnNode(
         column_name="user_id",
         table_name="users",
         query_id="q1",
@@ -186,7 +186,7 @@ def test_hash_and_equality():
 
 def test_tags_are_mutable_set():
     """Test that tags can be modified"""
-    col = PipelineColumnNode(
+    col = ColumnNode(
         column_name="user_id",
         table_name="users",
         query_id="q1",

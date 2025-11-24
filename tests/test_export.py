@@ -12,9 +12,8 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clpipe.column import PipelineColumnNode
 from clpipe.export import CSVExporter, GraphVizExporter, JSONExporter
-from clpipe.models import DescriptionSource
+from clpipe.models import ColumnNode, DescriptionSource
 from clpipe.pipeline import Pipeline
 
 
@@ -223,7 +222,7 @@ def test_graphviz_max_columns():
 
     # Add more columns
     for i in range(10):
-        col = PipelineColumnNode(
+        col = ColumnNode(
             column_name=f"col_{i}",
             table_name="raw.orders",
             query_id=None,

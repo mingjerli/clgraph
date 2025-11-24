@@ -4,7 +4,7 @@ Integration tests for end-to-end metadata extraction from SQL comments.
 Tests the complete flow:
 1. SQL with inline comments
 2. RecursiveLineageBuilder extracts metadata
-3. Pipeline applies metadata to PipelineColumnNode
+3. Pipeline applies metadata to ColumnNode
 4. Metadata propagates through lineage
 """
 
