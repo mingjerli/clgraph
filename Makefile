@@ -98,10 +98,12 @@ check: format lint type-check test
 	@echo ""
 	@echo "✓ All checks passed!"
 
-# Pre-commit: format code and run the git pre-commit hook
+# Pre-commit: format code, fix lint issues, and run the git pre-commit hook
 pre-commit:
 	@echo "Formatting code with ruff..."
 	@uv run ruff format src/ tests/ examples/
+	@echo "Fixing lint issues with ruff..."
+	@uv run ruff check --fix src/ tests/ examples/
 	@if [ -f ../.git/hooks/pre-commit ]; then \
 		../.git/hooks/pre-commit; \
 	else \

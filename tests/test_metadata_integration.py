@@ -195,9 +195,7 @@ class TestMetadataIntegration:
             (
                 n
                 for n in pipeline.columns.values()
-                if n.column_name == "user_id"
-                and n.query_id == "query_0"
-                and n.layer == "output"
+                if n.column_name == "user_id" and n.query_id == "query_0" and n.layer == "output"
             ),
             None,
         )

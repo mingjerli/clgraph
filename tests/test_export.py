@@ -84,8 +84,14 @@ def test_json_export():
     # Check edge endpoints by parsing table.column from full_name (which has query_id prefix)
     for edge in data["edges"]:
         # Format is "query_id:table.column", extract table.column part
-        from_table_col = edge["from_column"].split(":", 1)[-1] if ":" in edge["from_column"] else edge["from_column"]
-        to_table_col = edge["to_column"].split(":", 1)[-1] if ":" in edge["to_column"] else edge["to_column"]
+        from_table_col = (
+            edge["from_column"].split(":", 1)[-1]
+            if ":" in edge["from_column"]
+            else edge["from_column"]
+        )
+        to_table_col = (
+            edge["to_column"].split(":", 1)[-1] if ":" in edge["to_column"] else edge["to_column"]
+        )
         assert from_table_col in ["raw.orders.order_id", "raw.orders.customer_email"]
         assert to_table_col in ["staging.orders.order_id", "staging.orders.customer_email"]
 
