@@ -33,9 +33,9 @@ class TestMetadataIntegration:
         user_id_nodes = [n for n in pipeline.columns.values() if n.column_name == "user_id"]
         assert len(user_id_nodes) > 0
 
-        # Find output user_id (output columns have query_id in full_name and direct_column node_type)
+        # Find output user_id (use query_id to identify the query)
         output_user_id = next(
-            (n for n in user_id_nodes if n.full_name.startswith("query.")),
+            (n for n in user_id_nodes if n.query_id == "query" and n.layer == "output"),
             None,
         )
         assert output_user_id is not None
@@ -46,7 +46,7 @@ class TestMetadataIntegration:
         # Check email
         email_nodes = [n for n in pipeline.columns.values() if n.column_name == "email"]
         output_email = next(
-            (n for n in email_nodes if n.full_name.startswith("query.")),
+            (n for n in email_nodes if n.query_id == "query" and n.layer == "output"),
             None,
         )
         assert output_email is not None
@@ -58,7 +58,7 @@ class TestMetadataIntegration:
         # Check name
         name_nodes = [n for n in pipeline.columns.values() if n.column_name == "name"]
         output_name = next(
-            (n for n in name_nodes if n.full_name.startswith("query.")),
+            (n for n in name_nodes if n.query_id == "query" and n.layer == "output"),
             None,
         )
         assert output_name is not None
@@ -77,10 +77,10 @@ class TestMetadataIntegration:
 
         pipeline = Pipeline([("query", sql)], dialect="bigquery")
 
-        # Check email_upper
+        # Check email_upper (use query_id to identify)
         email_upper_nodes = [n for n in pipeline.columns.values() if n.column_name == "email_upper"]
         output_email_upper = next(
-            (n for n in email_upper_nodes if n.full_name.startswith("query.")), None
+            (n for n in email_upper_nodes if n.query_id == "query" and n.layer == "output"), None
         )
         assert output_email_upper is not None
         assert output_email_upper.description == "Uppercased email"
@@ -89,7 +89,7 @@ class TestMetadataIntegration:
         # Check full_name
         full_name_nodes = [n for n in pipeline.columns.values() if n.column_name == "full_name"]
         output_full_name = next(
-            (n for n in full_name_nodes if n.full_name.startswith("query.")), None
+            (n for n in full_name_nodes if n.query_id == "query" and n.layer == "output"), None
         )
         assert output_full_name is not None
         assert output_full_name.description == "Full name"
@@ -110,10 +110,10 @@ class TestMetadataIntegration:
 
         pipeline = Pipeline([("query", sql)], dialect="bigquery")
 
-        # Check login_count
+        # Check login_count (use query_id to identify)
         login_count_nodes = [n for n in pipeline.columns.values() if n.column_name == "login_count"]
         output_login_count = next(
-            (n for n in login_count_nodes if n.full_name.startswith("query.")), None
+            (n for n in login_count_nodes if n.query_id == "query" and n.layer == "output"), None
         )
         assert output_login_count is not None
         assert output_login_count.description == "Number of logins"
@@ -122,7 +122,7 @@ class TestMetadataIntegration:
         # Check last_login
         last_login_nodes = [n for n in pipeline.columns.values() if n.column_name == "last_login"]
         output_last_login = next(
-            (n for n in last_login_nodes if n.full_name.startswith("query.")), None
+            (n for n in last_login_nodes if n.query_id == "query" and n.layer == "output"), None
         )
         assert output_last_login is not None
         assert output_last_login.description == "Most recent login"
@@ -133,7 +133,7 @@ class TestMetadataIntegration:
             n for n in pipeline.columns.values() if n.column_name == "total_revenue"
         ]
         output_total_revenue = next(
-            (n for n in total_revenue_nodes if n.full_name.startswith("query.")), None
+            (n for n in total_revenue_nodes if n.query_id == "query" and n.layer == "output"), None
         )
         assert output_total_revenue is not None
         assert output_total_revenue.description == "Total revenue"
@@ -190,14 +190,14 @@ class TestMetadataIntegration:
 
         pipeline = Pipeline([("query_0", sql1), ("query_1", sql2)], dialect="bigquery")
 
-        # Query 0 columns should have their original metadata
+        # Query 0 columns should have their original metadata (use query_id to identify)
         q0_user_id = next(
             (
                 n
                 for n in pipeline.columns.values()
                 if n.column_name == "user_id"
                 and n.query_id == "query_0"
-                and n.full_name.startswith("query_0.")
+                and n.layer == "output"
             ),
             None,
         )
@@ -217,11 +217,11 @@ class TestMetadataIntegration:
 
         pipeline = Pipeline([("query", sql)], dialect="bigquery")
 
-        # user_id and name should have no metadata
+        # user_id and name should have no metadata (use query_id to identify)
         user_id_nodes = [
             n
             for n in pipeline.columns.values()
-            if n.column_name == "user_id" and n.full_name.startswith("query.")
+            if n.column_name == "user_id" and n.query_id == "query" and n.layer == "output"
         ]
         if user_id_nodes:
             assert user_id_nodes[0].description is None
@@ -231,7 +231,7 @@ class TestMetadataIntegration:
         email_nodes = [
             n
             for n in pipeline.columns.values()
-            if n.column_name == "email" and n.full_name.startswith("query.")
+            if n.column_name == "email" and n.query_id == "query" and n.layer == "output"
         ]
         assert len(email_nodes) > 0
         assert email_nodes[0].description == "Email address"

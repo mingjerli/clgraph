@@ -714,9 +714,9 @@ class TestCrossQueryLineage:
         builder = PipelineLineageBuilder()
         pipeline = builder.build(table_graph)
 
-        # Verify columns are in the graph
-        assert "staging.orders.amount" in pipeline.columns
-        assert "analytics.user_metrics.total_revenue" in pipeline.columns
+        # Verify columns are in the graph (use get_column for table.column lookup)
+        assert pipeline.get_column("staging.orders", "amount") is not None
+        assert pipeline.get_column("analytics.user_metrics", "total_revenue") is not None
 
         # Verify backward lineage
         sources = pipeline.trace_column_backward("analytics.user_metrics", "total_revenue")

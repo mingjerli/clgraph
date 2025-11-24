@@ -318,10 +318,22 @@ class RecursiveLineageBuilder:
 
             for table_ref, col_name in source_refs:
                 # Resolve table_ref to either a query unit or base table
-                source_unit = self._resolve_source_unit(unit, table_ref) if table_ref else None
+                # If table_ref is None, try to infer the default source
+                effective_table_ref = table_ref
+                if not table_ref:
+                    # No explicit table reference - infer from FROM clause
+                    default_table = self._get_default_from_table(unit)
+                    if default_table:
+                        effective_table_ref = default_table
+
+                source_unit = (
+                    self._resolve_source_unit(unit, effective_table_ref)
+                    if effective_table_ref
+                    else None
+                )
 
                 if source_unit:
-                    # Reference to another query unit
+                    # Reference to another query unit (CTE or subquery)
                     source_node = self._find_column_in_unit(source_unit, col_name)
 
                     if source_node:
@@ -338,9 +350,9 @@ class RecursiveLineageBuilder:
                 else:
                     # Reference to base table - resolve alias to actual table name
                     base_table = (
-                        self._resolve_base_table_name(unit, table_ref)
-                        if table_ref
-                        else self._get_default_from_table(unit)
+                        self._resolve_base_table_name(unit, effective_table_ref)
+                        if effective_table_ref
+                        else None
                     )
                     if base_table:
                         source_node = self._find_or_create_table_column_node(base_table, col_name)
@@ -427,15 +439,59 @@ class RecursiveLineageBuilder:
 
         return None
 
-    def _find_column_in_unit(self, unit: QueryUnit, col_name: str) -> Optional[ColumnNode]:
-        """Find a column node in a processed unit's output"""
+    def _find_column_in_unit(
+        self, unit: QueryUnit, col_name: str, visited: Optional[set] = None
+    ) -> Optional[ColumnNode]:
+        """
+        Find a column node in a processed unit's output.
+
+        If the column is not explicitly defined but the unit has a star column
+        (SELECT *), trace through to find the actual source column.
+        """
+        if visited is None:
+            visited = set()
+
+        # Prevent infinite recursion
+        if unit.unit_id in visited:
+            return None
+        visited.add(unit.unit_id)
+
         if unit.unit_id not in self.unit_columns_cache:
             return None
 
+        # First, look for explicit column
         for node in self.unit_columns_cache[unit.unit_id]:
             if node.column_name == col_name:
                 return node
 
+        # Not found - check if this unit has a star column
+        # If so, the column might come through the star from an upstream source
+        star_node = None
+        for node in self.unit_columns_cache[unit.unit_id]:
+            if node.is_star:
+                star_node = node
+                break
+
+        if star_node:
+            # Find where the star comes from by looking at edges
+            for edge in self.lineage_graph.edges:
+                if edge.to_node.full_name == star_node.full_name:
+                    source_node = edge.from_node
+                    if source_node.is_star and source_node.table_name:
+                        # The star comes from another unit - look up the column there
+                        source_unit = self._get_unit_by_name(source_node.table_name)
+                        if source_unit:
+                            result = self._find_column_in_unit(source_unit, col_name, visited)
+                            if result:
+                                return result
+
+        return None
+
+    def _get_unit_by_name(self, name: str) -> Optional[QueryUnit]:
+        """Get a QueryUnit by its name (CTE name or alias)"""
+        for unit in self.unit_graph.units.values():
+            if unit.name == name:
+                return unit
         return None
 
     def _find_or_create_star_node(self, unit: QueryUnit, source_table: str) -> ColumnNode:

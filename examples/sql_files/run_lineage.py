@@ -132,11 +132,11 @@ def main():
         details = query_details[query_id]
 
         print(f"  {query_id}")
-        print(f"    Creates: {details['destination'] or '(none)'}")
+        print(f"    Creates table: {details['destination'] or '(none)'}")
         if details["ctes"]:
             print(f"    CTEs: {', '.join(details['ctes'])}")
         if details["external_sources"]:
-            print(f"    External sources: {', '.join(details['external_sources'])}")
+            print(f"    External tables: {', '.join(details['external_sources'])}")
         if details["dep_query_ids"]:
             print(f"    Depends on queries: {', '.join(sorted(details['dep_query_ids']))}")
         if not details["ctes"] and not details["external_sources"] and not details["dep_query_ids"]:
@@ -144,63 +144,240 @@ def main():
         print()
 
     # -------------------------------------------------------------------------
-    # 4. Backward Lineage Examples
+    # 4. Backward Lineage - Three Levels of Detail
     # -------------------------------------------------------------------------
-    print("4. BACKWARD LINEAGE (Where does data come from?)")
+    print("4. BACKWARD LINEAGE (Three levels of detail)")
     print("-" * 80)
+    print("""
+  clpipe provides three methods for backward lineage tracing:
 
-    # Example: Trace customer lifetime revenue
-    # Use actual destination table names from the SQL
+  | Method                        | Returns                      | Use Case                           |
+  |-------------------------------|------------------------------|-------------------------------------|
+  | trace_column_backward()       | Ultimate sources only        | Quick: "where does data come from?"|
+  | get_table_lineage_path()      | Full table path (no CTEs)    | "Show complete path through tables"|
+  | trace_column_backward_full()  | All nodes + edges (with CTEs)| Full transparency for debugging    |
+""")
+
+    # Example columns to trace
     examples = [
         ("mart_customer_ltv", "lifetime_revenue"),
         ("int_daily_metrics", "gross_revenue"),
         ("mart_product_performance", "total_margin"),
     ]
 
-    for table, column in examples:
-        print(f"\n  Column: {table}.{column}")
+    # Demonstrate all three methods for the first example
+    table, column = examples[0]
+    print(f"  Example: {table}.{column}")
+    print("  " + "=" * 76)
+
+    # Method 1: trace_column_backward() - Ultimate sources only
+    print("\n  Method 1: trace_column_backward()")
+    print("  " + "-" * 40)
+    print("  Returns only the ultimate source columns (leaf nodes with no upstream).\n")
+    try:
+        sources = pipeline.trace_column_backward(table, column)
+        if sources:
+            print("  Code: sources = pipeline.trace_column_backward(table, column)")
+            print("  Result:")
+            for source in sources:
+                print(f"    ← {source.table_name}.{source.column_name}")
+        else:
+            print("    (no sources found)")
+    except Exception as e:
+        print(f"    Error: {e}")
+
+    # Method 2: get_table_lineage_path() - Table-level path
+    print("\n  Method 2: get_table_lineage_path()")
+    print("  " + "-" * 40)
+    print("  Returns the complete path through real tables (skips CTEs).\n")
+    try:
+        path = pipeline.get_table_lineage_path(table, column)
+        if path:
+            print("  Code: path = pipeline.get_table_lineage_path(table, column)")
+            print("  Result:")
+            for i, (tbl, col, query_id) in enumerate(path):
+                if i == 0:
+                    prefix = "    "
+                    arrow = ""
+                elif i == len(path) - 1:
+                    prefix = "    └── "
+                    arrow = "↑ "
+                else:
+                    prefix = "    │   "
+                    arrow = "↑ "
+                print(f"{prefix}{arrow}{tbl}.{col}")
+                if i < len(path) - 1:
+                    print(f"    │   (from {query_id})")
+        else:
+            print("    (no path found)")
+    except Exception as e:
+        print(f"    Error: {e}")
+
+    # Method 3: trace_column_backward_full() - Full transparency with CTEs
+    print("\n  Method 3: trace_column_backward_full()")
+    print("  " + "-" * 40)
+    print("  Returns all nodes and edges, including CTEs for complete transparency.\n")
+    try:
+        nodes, edges = pipeline.trace_column_backward_full(table, column, include_ctes=True)
+        if nodes:
+            print("  Code: nodes, edges = pipeline.trace_column_backward_full(table, column)")
+            print("  Result (nodes):")
+            for node in nodes:
+                layer_tag = " [CTE]" if node.layer == "cte" else ""
+                cross_query = " [cross-query]" if node.layer == "input" else ""
+                print(f"    • {node.table_name}.{node.column_name}{layer_tag}{cross_query}")
+
+            print("\n  Result (edges):")
+            for edge in edges:
+                edge_desc = f"({edge.edge_type})"
+                print(
+                    f"    {edge.from_node.table_name}.{edge.from_node.column_name} "
+                    f"→ {edge.to_node.table_name}.{edge.to_node.column_name} {edge_desc}"
+                )
+        else:
+            print("    (no path found)")
+    except Exception as e:
+        print(f"    Error: {e}")
+
+    # Show additional examples with just the simple method
+    print("\n  " + "=" * 76)
+    print("  Additional examples (using trace_column_backward for brevity):")
+    print()
+
+    for table, column in examples[1:]:
+        print(f"  Column: {table}.{column}")
         try:
             sources = pipeline.trace_column_backward(table, column)
             if sources:
-                print("  Sources:")
-                for source in sources[:10]:  # Limit output
+                print("  Ultimate sources:")
+                for source in sources[:5]:
                     print(f"    ← {source.table_name}.{source.column_name}")
-                if len(sources) > 10:
-                    print(f"    ... and {len(sources) - 10} more")
+                if len(sources) > 5:
+                    print(f"    ... and {len(sources) - 5} more")
             else:
                 print("    (no sources found)")
         except Exception as e:
             print(f"    Error: {e}")
-    print()
+        print()
 
     # -------------------------------------------------------------------------
-    # 5. Forward Lineage (Impact Analysis)
+    # 5. Forward Lineage (Impact Analysis) - Three Levels of Detail
     # -------------------------------------------------------------------------
-    print("5. FORWARD LINEAGE (Impact Analysis)")
+    print("5. FORWARD LINEAGE / IMPACT ANALYSIS (Three levels of detail)")
     print("-" * 80)
+    print("""
+  clpipe provides three methods for forward lineage (impact analysis):
 
-    # Use actual table names
+  | Method                       | Returns                      | Use Case                            |
+  |------------------------------|------------------------------|-------------------------------------|
+  | trace_column_forward()       | Final impacted columns only  | Quick: "what does this affect?"     |
+  | get_table_impact_path()      | Full table path (no CTEs)    | "Show complete impact through tables"|
+  | trace_column_forward_full()  | All nodes + edges (with CTEs)| Full transparency for debugging     |
+""")
+
+    # Example columns to trace
     impact_examples = [
         ("raw_orders", "total_amount"),
         ("raw_customers", "customer_id"),
         ("raw_products", "unit_cost"),
     ]
 
-    for table, column in impact_examples:
-        print(f"\n  Column: {table}.{column}")
+    # Demonstrate all three methods for the first example
+    table, column = impact_examples[0]
+    print(f"  Example: {table}.{column}")
+    print("  " + "=" * 76)
+
+    # Method 1: trace_column_forward() - Final impacts only
+    print("\n  Method 1: trace_column_forward()")
+    print("  " + "-" * 40)
+    print("  Returns only the final impacted columns (leaf nodes with no downstream).\n")
+    try:
+        impacts = pipeline.trace_column_forward(table, column)
+        if impacts:
+            print("  Code: impacts = pipeline.trace_column_forward(table, column)")
+            print("  Result:")
+            for impact in impacts[:8]:
+                print(f"    → {impact.table_name}.{impact.column_name}")
+            if len(impacts) > 8:
+                print(f"    ... and {len(impacts) - 8} more")
+        else:
+            print("    (no downstream impacts)")
+    except Exception as e:
+        print(f"    Error: {e}")
+
+    # Method 2: get_table_impact_path() - Table-level path
+    print("\n  Method 2: get_table_impact_path()")
+    print("  " + "-" * 40)
+    print("  Returns the complete impact path through real tables (skips CTEs).\n")
+    try:
+        path = pipeline.get_table_impact_path(table, column)
+        if path:
+            print("  Code: path = pipeline.get_table_impact_path(table, column)")
+            print("  Result:")
+            for i, (tbl, col, _query_id) in enumerate(path):
+                if i == 0:
+                    prefix = "    "
+                    arrow = ""
+                else:
+                    prefix = "    ├── " if i < len(path) - 1 else "    └── "
+                    arrow = "→ "
+                print(f"{prefix}{arrow}{tbl}.{col}")
+            print(f"\n  Total: {len(path)} columns in impact path")
+        else:
+            print("    (no path found)")
+    except Exception as e:
+        print(f"    Error: {e}")
+
+    # Method 3: trace_column_forward_full() - Full transparency with CTEs
+    print("\n  Method 3: trace_column_forward_full()")
+    print("  " + "-" * 40)
+    print("  Returns all nodes and edges, including CTEs for complete transparency.\n")
+    try:
+        nodes, edges = pipeline.trace_column_forward_full(table, column, include_ctes=True)
+        if nodes:
+            print("  Code: nodes, edges = pipeline.trace_column_forward_full(table, column)")
+            print("  Result (nodes - first 10):")
+            for node in nodes[:10]:
+                layer_tag = " [CTE]" if node.layer == "cte" else ""
+                cross_query = " [cross-query]" if node.layer == "input" else ""
+                print(f"    • {node.table_name}.{node.column_name}{layer_tag}{cross_query}")
+            if len(nodes) > 10:
+                print(f"    ... and {len(nodes) - 10} more nodes")
+
+            print("\n  Result (edges - first 8):")
+            for edge in edges[:8]:
+                edge_desc = f"({edge.edge_type})"
+                print(
+                    f"    {edge.from_node.table_name}.{edge.from_node.column_name} "
+                    f"→ {edge.to_node.table_name}.{edge.to_node.column_name} {edge_desc}"
+                )
+            if len(edges) > 8:
+                print(f"    ... and {len(edges) - 8} more edges")
+        else:
+            print("    (no path found)")
+    except Exception as e:
+        print(f"    Error: {e}")
+
+    # Show additional examples with just the simple method
+    print("\n  " + "=" * 76)
+    print("  Additional examples (using trace_column_forward for brevity):")
+    print()
+
+    for table, column in impact_examples[1:]:
+        print(f"  Column: {table}.{column}")
         try:
             impacts = pipeline.trace_column_forward(table, column)
             if impacts:
-                print("  Impacts:")
-                for impact in impacts[:10]:  # Limit output
+                print("  Final impacted columns:")
+                for impact in impacts[:5]:
                     print(f"    → {impact.table_name}.{impact.column_name}")
-                if len(impacts) > 10:
-                    print(f"    ... and {len(impacts) - 10} more")
+                if len(impacts) > 5:
+                    print(f"    ... and {len(impacts) - 5} more")
             else:
                 print("    (no downstream impacts)")
         except Exception as e:
             print(f"    Error: {e}")
-    print()
+        print()
 
     # -------------------------------------------------------------------------
     # 6. PII Tracking

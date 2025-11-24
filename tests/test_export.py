@@ -26,23 +26,24 @@ def create_test_graph():
     pipeline = Pipeline(queries, dialect="bigquery")
 
     # Set metadata on columns to match test expectations
-    if "raw.orders.order_id" in pipeline.columns:
-        col = pipeline.columns["raw.orders.order_id"]
+    # Use get_column for lookup since keys now include query_id prefix
+    col = pipeline.get_column("raw.orders", "order_id")
+    if col:
         col.description = "Order ID"
         col.description_source = DescriptionSource.SOURCE
         col.owner = "data-team"
         col.pii = False
 
-    if "raw.orders.customer_email" in pipeline.columns:
-        col = pipeline.columns["raw.orders.customer_email"]
+    col = pipeline.get_column("raw.orders", "customer_email")
+    if col:
         col.description = "Customer email address"
         col.description_source = DescriptionSource.SOURCE
         col.owner = "data-team"
         col.pii = True
         col.tags = {"contact", "sensitive"}
 
-    if "staging.orders.order_id" in pipeline.columns:
-        col = pipeline.columns["staging.orders.order_id"]
+    col = pipeline.get_column("staging.orders", "order_id")
+    if col:
         col.owner = "data-team"
         col.pii = False
 
@@ -62,11 +63,12 @@ def test_json_export():
 
     # Check columns (4 total: 2 source + 2 output)
     assert len(data["columns"]) == 4
-    col_names = {c["full_name"] for c in data["columns"]}
-    assert "raw.orders.order_id" in col_names
-    assert "raw.orders.customer_email" in col_names
-    assert "staging.orders.order_id" in col_names
-    assert "staging.orders.customer_email" in col_names
+    # Check by table_name + column_name since full_name now includes query_id prefix
+    col_table_names = {(c["table_name"], c["column_name"]) for c in data["columns"]}
+    assert ("raw.orders", "order_id") in col_table_names
+    assert ("raw.orders", "customer_email") in col_table_names
+    assert ("staging.orders", "order_id") in col_table_names
+    assert ("staging.orders", "customer_email") in col_table_names
 
     # Check metadata on source column
     email_cols = [c for c in data["columns"] if c["column_name"] == "customer_email"]
@@ -79,9 +81,13 @@ def test_json_export():
 
     # Check edges (2 edges: one for each column)
     assert len(data["edges"]) == 2
-    edge_pairs = {(e["from_column"], e["to_column"]) for e in data["edges"]}
-    assert ("raw.orders.order_id", "staging.orders.order_id") in edge_pairs
-    assert ("raw.orders.customer_email", "staging.orders.customer_email") in edge_pairs
+    # Check edge endpoints by parsing table.column from full_name (which has query_id prefix)
+    for edge in data["edges"]:
+        # Format is "query_id:table.column", extract table.column part
+        from_table_col = edge["from_column"].split(":", 1)[-1] if ":" in edge["from_column"] else edge["from_column"]
+        to_table_col = edge["to_column"].split(":", 1)[-1] if ":" in edge["to_column"] else edge["to_column"]
+        assert from_table_col in ["raw.orders.order_id", "raw.orders.customer_email"]
+        assert to_table_col in ["staging.orders.order_id", "staging.orders.customer_email"]
 
     # Check tables
     assert len(data["tables"]) == 2
