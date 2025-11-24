@@ -1,4 +1,4 @@
-# SQL Lineage
+# clpipe
 
 A powerful Python library for SQL column lineage analysis and pipeline dependency tracking.
 
@@ -17,13 +17,14 @@ A powerful Python library for SQL column lineage analysis and pipeline dependenc
 - **Template variable support** - handle parameterized SQL with {{variable}} syntax
 - **Pipeline-level impact analysis** - see how changes propagate through your data pipeline
 
-### Metadata Management (NEW)
+### Metadata Management
 - **Column metadata** - track descriptions, ownership, PII flags, and custom tags
 - **Metadata propagation** - automatically inherit metadata through lineage
-- **LLM integration** - generate natural language descriptions using OpenAI, Ollama, etc.
+- **Inline comment parsing** - extract metadata from SQL comments (`-- description [pii: true]`)
+- **LLM integration** - generate natural language descriptions using Ollama, OpenAI, etc.
 - **Diff tracking** - detect changes between pipeline versions
 
-### Export Functionality (NEW)
+### Export Functionality
 - **JSON export** - machine-readable format for system integration
 - **CSV export** - column and table metadata for spreadsheets
 - **GraphViz export** - DOT format for visualization tools
@@ -32,6 +33,11 @@ A powerful Python library for SQL column lineage analysis and pipeline dependenc
 
 ```bash
 pip install clpipe
+```
+
+Or with uv:
+```bash
+uv pip install clpipe
 ```
 
 ## Quick Start
@@ -58,38 +64,83 @@ FROM users u
 JOIN monthly_sales ms ON u.id = ms.user_id
 """
 
-tracer = SQLColumnTracer(sql)
+tracer = SQLColumnTracer(sql, dialect="bigquery")
 lineage = tracer.build_column_lineage_graph()
 
-# Get backward lineage (sources) for a column
-sources = lineage.get_backward_lineage("name")
-print(sources)  # {'users.name'}
+# Get output columns
+output_cols = lineage.get_output_nodes()
+for col in output_cols:
+    print(f"  {col.column_name}")
 
-# Get forward lineage (impacts) from a source
-impacts = lineage.get_forward_lineage("orders.amount")
-print(impacts)  # {'monthly_sales.total_amount', 'output.total_amount'}
+# Get source tables
+input_nodes = lineage.get_input_nodes()
+source_tables = {node.table_name for node in input_nodes if node.table_name}
 ```
 
 ### Multi-Query Pipeline Lineage
 
 ```python
-from clpipe import MultiQueryParser, PipelineLineageBuilder
+from clpipe import Pipeline
 
 queries = [
-    ("raw_events", "CREATE TABLE raw_events AS SELECT user_id, event_type, created_at FROM events"),
-    ("daily_active_users", "CREATE TABLE daily_active_users AS SELECT user_id, DATE(created_at) as date FROM raw_events"),
-    ("user_summary", "CREATE TABLE user_summary AS SELECT u.name, dau.date FROM users u JOIN daily_active_users dau ON u.id = dau.user_id")
+    ("raw_events", """
+        CREATE TABLE raw_events AS
+        SELECT user_id, event_type, event_timestamp, session_id
+        FROM source_events
+        WHERE event_timestamp >= '2024-01-01'
+    """),
+    ("daily_active_users", """
+        CREATE TABLE daily_active_users AS
+        SELECT user_id, DATE(event_timestamp) as activity_date, COUNT(*) as event_count
+        FROM raw_events
+        GROUP BY user_id, DATE(event_timestamp)
+    """),
+    ("user_summary", """
+        CREATE TABLE user_summary AS
+        SELECT u.name, u.email, dau.activity_date, dau.event_count
+        FROM users u
+        JOIN daily_active_users dau ON u.id = dau.user_id
+    """),
 ]
 
-parser = MultiQueryParser(queries)
-graph = parser.parse()
+pipeline = Pipeline(queries, dialect="bigquery")
 
-builder = PipelineLineageBuilder(graph)
-lineage = builder.build()
+# Table execution order
+execution_order = pipeline.table_graph.get_execution_order()
 
-# Trace a column through the entire pipeline
-sources = lineage.get_backward_lineage("user_summary.date")
-print(sources)  # {'raw_events.created_at', 'events.created_at'}
+# Trace a column backward through the pipeline
+sources = pipeline.trace_column_backward("user_summary", "event_count")
+for source in sources:
+    print(f"  {source.table_name}.{source.column_name}")
+
+# Forward lineage / Impact analysis
+impacts = pipeline.trace_column_forward("source_events", "event_timestamp")
+for impact in impacts:
+    print(f"  {impact.table_name}.{impact.column_name}")
+```
+
+### Metadata from SQL Comments
+
+```python
+from clpipe import Pipeline
+
+sql = """
+SELECT
+  user_id,  -- User identifier [pii: false]
+  email,    -- Email address [pii: true, owner: data-team]
+  COUNT(*) as login_count  -- Number of logins [tags: metric engagement]
+FROM user_activity
+GROUP BY user_id, email
+"""
+
+pipeline = Pipeline([("user_metrics", sql)], dialect="bigquery")
+
+# Metadata is automatically extracted from comments
+for col in pipeline.columns.values():
+    if col.pii:
+        print(f"PII Column: {col.full_name}")
+    if col.owner:
+        print(f"Owner: {col.owner}")
 ```
 
 ### Metadata Management and Export
@@ -114,7 +165,7 @@ for col in lineage_graph.columns.values():
     if col.table_name == "raw.orders" and col.column_name == "user_email":
         col.set_source_description("Customer email address")
         col.owner = "data-team"
-        col.pii = True  # Mark as PII
+        col.pii = True
         col.tags = {"contact", "sensitive"}
 
 # Propagate metadata through lineage
@@ -131,7 +182,31 @@ GraphVizExporter.export_to_file(lineage_graph, "lineage.dot")
 
 # Track changes between versions
 diff = new_lineage_graph.diff(old_lineage_graph)
-print(diff.summary())  # Shows added, removed, and modified columns
+print(diff.summary())
+```
+
+### LLM-Powered Description Generation
+
+```python
+from clpipe import MultiQueryParser, PipelineLineageBuilder
+from langchain_ollama import ChatOllama
+
+# Build pipeline
+parser = MultiQueryParser()
+table_graph = parser.parse_queries(sql_queries)
+builder = PipelineLineageBuilder()
+lineage_graph = builder.build(table_graph)
+
+# Configure LLM (Ollama - free, local)
+llm = ChatOllama(model="qwen3-coder:30b", temperature=0.3)
+lineage_graph.llm = llm
+
+# Generate descriptions for all columns
+lineage_graph.generate_all_descriptions(verbose=True)
+
+# View generated descriptions
+for col in lineage_graph.columns.values():
+    print(f"{col.full_name}: {col.description}")
 ```
 
 ## Architecture
@@ -190,23 +265,15 @@ final_tables = pipeline.table_graph.get_final_tables()
 
 # Get upstream dependencies for a table
 deps = pipeline.table_graph.get_dependencies("analytics.user_metrics")
-for dep in deps:
-    print(f"  depends on: {dep.table_name}")
 
 # Get downstream tables (impact analysis)
 downstream = pipeline.table_graph.get_downstream("raw.orders")
-for table in downstream:
-    print(f"  impacts: {table.table_name}")
 
 # Get query execution order (topologically sorted)
 query_order = pipeline.table_graph.topological_sort()
 
 # Get table execution order
 table_order = pipeline.table_graph.get_execution_order()
-
-# Build graphlib-style dependency map
-deps_map = pipeline.table_graph._build_table_dependencies()
-# Returns: Dict[str, Set[str]] - {table_name: {upstream_tables}}
 ```
 
 ### Column Graph (`pipeline.column_graph`)
@@ -218,7 +285,7 @@ The `PipelineLineageGraph` tracks column-level lineage:
 pipeline.column_graph.columns    # Dict[str, ColumnNode]
 pipeline.column_graph.edges      # List[ColumnEdge]
 
-# Backward compatible access (these are property aliases)
+# Backward compatible access (property aliases)
 pipeline.columns  # Same as pipeline.column_graph.columns
 pipeline.edges    # Same as pipeline.column_graph.edges
 
@@ -230,17 +297,9 @@ final_cols = pipeline.column_graph.get_final_columns()
 
 # Get direct upstream columns (one hop back)
 upstream = pipeline.column_graph.get_upstream("analytics.metrics.total_revenue")
-for col in upstream:
-    print(f"  depends on: {col.full_name}")
 
 # Get direct downstream columns (one hop forward)
 downstream = pipeline.column_graph.get_downstream("raw.orders.amount")
-for col in downstream:
-    print(f"  impacts: {col.full_name}")
-
-# Build graphlib-style dependency map
-col_deps = pipeline.column_graph._build_column_dependencies()
-# Returns: Dict[str, Set[str]] - {column_full_name: {upstream_column_full_names}}
 ```
 
 ### Full Lineage Tracing
@@ -250,18 +309,15 @@ For complete lineage (not just direct dependencies), use Pipeline methods:
 ```python
 # Trace backward to ultimate sources (recursive)
 sources = pipeline.trace_column_backward("final_table", "metric")
-# Returns all source columns across the entire pipeline
 
 # Trace forward to all impacts (recursive)
 impacts = pipeline.trace_column_forward("raw.orders", "amount")
-# Returns all downstream columns that depend on this column
 
 # Find specific lineage path between two columns
 path = pipeline.get_lineage_path(
     "raw.orders", "amount",
     "analytics.metrics", "total_revenue"
 )
-# Returns list of edges connecting the two columns
 ```
 
 ## Supported SQL Dialects
@@ -272,38 +328,45 @@ Built on [sqlglot](https://github.com/tobymao/sqlglot), supporting:
 - MySQL
 - Snowflake
 - Redshift
+- DuckDB
 - And many more
 
 Specify dialect when creating the tracer:
 ```python
 tracer = SQLColumnTracer(sql, dialect="postgres")
+pipeline = Pipeline(queries, dialect="snowflake")
 ```
 
 ## Use Cases
 
 - **Data Governance**: Track data lineage for compliance and auditing
 - **Impact Analysis**: Understand downstream effects of schema changes
+- **PII Tracking**: Automatically identify and propagate PII flags through pipelines
 - **Pipeline Optimization**: Identify unused columns and redundant transformations
 - **Data Quality**: Trace data issues back to their source
-- **Documentation**: Auto-generate data flow diagrams
+- **Documentation**: Auto-generate data flow diagrams and column descriptions
 
 ## Development
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/clpipe.git
+git clone https://github.com/clpipe/clpipe.git
 cd clpipe
 
-# Install dependencies
-pip install -e ".[dev]"
+# Install dependencies with uv
+uv pip install -e ".[dev]"
 
 # Run tests
 pytest
+
+# Run linting
+ruff check src/ tests/
+ruff format src/ tests/
 ```
 
 ## License
 
-MIT License - see LICENSE file for details
+MIT License - see LICENSE file for details.
 
 ## Contributing
 
@@ -313,4 +376,5 @@ Contributions welcome! Please read CONTRIBUTING.md for guidelines.
 
 Built with:
 - [sqlglot](https://github.com/tobymao/sqlglot) - SQL parsing and transpilation
+- [LangChain](https://github.com/langchain-ai/langchain) - LLM integration
 - Python's `graphlib` - Topological sorting for dependency resolution
