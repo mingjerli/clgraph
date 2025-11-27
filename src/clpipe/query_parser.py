@@ -117,7 +117,8 @@ class RecursiveQueryParser:
                         )
 
         # 2. Parse FROM clause (may contain subqueries or CTEs)
-        from_clause = select_node.args.get("from")
+        # Note: sqlglot >=28.0.0 uses "from_" instead of "from" (Python keyword)
+        from_clause = select_node.args.get("from_") or select_node.args.get("from")
         if from_clause:
             self._parse_from_sources(from_clause, unit, depth)
 
