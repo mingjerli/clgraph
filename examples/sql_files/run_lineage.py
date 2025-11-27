@@ -140,7 +140,7 @@ def main():
         if details["dep_query_ids"]:
             print(f"    Depends on queries: {', '.join(sorted(details['dep_query_ids']))}")
         if not details["ctes"] and not details["external_sources"] and not details["dep_query_ids"]:
-            print(f"    Sources: (none)")
+            print("    Sources: (none)")
         print()
 
     # -------------------------------------------------------------------------
@@ -589,7 +589,7 @@ def main():
     print("      Example edge access:")
     if pipeline.column_graph.edges:
         first_edge = pipeline.column_graph.edges[0]
-        print(f"        edge = pipeline.column_graph.edges[0]")
+        print("        edge = pipeline.column_graph.edges[0]")
         print(f"        edge.from_node = {first_edge.from_node.full_name}")
         print(f"        edge.to_node = {first_edge.to_node.full_name}")
         print(f"        edge.edge_type = {first_edge.edge_type}")
@@ -608,8 +608,8 @@ def main():
     print(f"  PII columns:    {len(list(all_pii))}")
     print()
     print("  Graph Objects:")
-    print(f"    pipeline.table_graph  -> TableDependencyGraph (tables + queries)")
-    print(f"    pipeline.column_graph -> PipelineLineageGraph (columns + edges)")
+    print("    pipeline.table_graph  -> TableDependencyGraph (tables + queries)")
+    print("    pipeline.column_graph -> PipelineLineageGraph (columns + edges)")
     print()
     print("Analysis complete!")
 

@@ -80,7 +80,7 @@ class ExampleRunner:
             return success, output
 
         except subprocess.TimeoutExpired:
-            return False, f"ERROR: Timeout after 30 seconds"
+            return False, "ERROR: Timeout after 30 seconds"
         except Exception as e:
             return False, f"ERROR: {str(e)}"
 

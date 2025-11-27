@@ -204,7 +204,7 @@ def main():
         print("-" * 80)
         with open(columns_csv) as f:
             lines = f.readlines()
-            for i, line in enumerate(lines[:6]):  # Header + 5 rows
+            for _i, line in enumerate(lines[:6]):  # Header + 5 rows
                 print(f"  {line.rstrip()}")
         print()
 
@@ -247,17 +247,17 @@ def main():
     print("Summary")
     print("=" * 80)
     print()
-    print(f"📊 Pipeline Statistics:")
+    print("📊 Pipeline Statistics:")
     print(f"   • Total columns: {len(lineage_graph.columns)}")
     print(f"   • Total edges: {len(lineage_graph.edges)}")
     print(f"   • PII columns: {len(pii_columns)}")
     print(f"   • Tables: {len(lineage_graph.table_graph.tables)}")
     print()
-    print(f"✅ Exports created:")
-    print(f"   • JSON (machine-readable)")
-    print(f"   • CSV columns (spreadsheet)")
-    print(f"   • CSV tables (spreadsheet)")
-    print(f"   • GraphViz DOT (visualization)")
+    print("✅ Exports created:")
+    print("   • JSON (machine-readable)")
+    print("   • CSV columns (spreadsheet)")
+    print("   • CSV tables (spreadsheet)")
+    print("   • GraphViz DOT (visualization)")
     print()
     print("💡 Next steps:")
     print("   • Use exported JSON for integration with other systems")
