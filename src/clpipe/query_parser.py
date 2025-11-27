@@ -460,7 +460,9 @@ class RecursiveQueryParser:
                 unit.depends_on_units.append(source_unit.unit_id)
         elif isinstance(table_node, exp.Table):
             # UNPIVOT is applied to a base table: table_name UNPIVOT(...)
-            table_name = table_node.this.name if hasattr(table_node.this, "name") else table_node.name
+            table_name = (
+                table_node.this.name if hasattr(table_node.this, "name") else table_node.name
+            )
             unit.depends_on_tables.append(table_name)
 
         # Add to graph

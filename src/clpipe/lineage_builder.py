@@ -301,7 +301,9 @@ class RecursiveLineageBuilder:
                             "type": "pivot_passthrough",
                             "expression": source_col.column_name,
                             "ast_node": None,
-                            "source_columns": [(source_unit_name, source_col.column_name)],  # Use name, not ID
+                            "source_columns": [
+                                (source_unit_name, source_col.column_name)
+                            ],  # Use name, not ID
                         }
                         output_cols.append(col_info)
 
@@ -367,7 +369,9 @@ class RecursiveLineageBuilder:
                             "type": "unpivot_passthrough",
                             "expression": source_col.column_name,
                             "ast_node": None,
-                            "source_columns": [(source_unit_name, source_col.column_name)],  # Add source
+                            "source_columns": [
+                                (source_unit_name, source_col.column_name)
+                            ],  # Add source
                         }
                         output_cols.append(col_info)
         elif unit.depends_on_tables:
