@@ -218,18 +218,15 @@ def example_fallback():
     lineage_graph = builder.build(table_graph)
 
     # Don't set an LLM - columns will use fallback generation
-    print("⚠️  No LLM configured - using fallback humanization")
+    print("⚠️  No LLM configured - columns will show expression-based descriptions")
     print()
 
-    for col in lineage_graph.columns.values():
-        if col.is_computed():
-            col.generate_description(None, lineage_graph)
-
-    print("Generated Descriptions (fallback):")
+    print("Column Information (without LLM):")
     print("-" * 80)
     for col in lineage_graph.columns.values():
-        if col.description:
-            print(f"{col.full_name:40} {col.description}")
+        # Show column expression instead of trying to generate description
+        expr = col.expression if col.expression else "N/A"
+        print(f"{col.full_name:40} Expression: {expr}")
     print()
 
 

@@ -31,7 +31,7 @@ print("=" * 70)
 print("SQL COMMENT METADATA EXTRACTION")
 print("=" * 70)
 
-for full_name, col in sorted(pipeline.columns.items()):
+for _full_name, col in sorted(pipeline.columns.items()):
     # Only show output columns (those starting with query name)
     if col.full_name.startswith("user_metrics."):
         print(f"\n📊 {col.column_name}")
@@ -41,7 +41,7 @@ for full_name, col in sorted(pipeline.columns.items()):
             print(f"   📝 Description: {col.description}")
 
         if col.pii:
-            print(f"   🔒 PII: Yes")
+            print("   🔒 PII: Yes")
 
         if col.owner:
             print(f"   👤 Owner: {col.owner}")

@@ -117,7 +117,17 @@ class RecursiveLineageBuilder:
         """
         Extract output columns from a query unit's SELECT.
         Handles star notation and expands stars when source columns are known.
+
+        Also handles special query types: UNION, PIVOT, UNPIVOT.
         """
+        # Handle special query types that don't have a select_node
+        if unit.unit_type in (QueryUnitType.UNION, QueryUnitType.INTERSECT, QueryUnitType.EXCEPT):
+            return self._extract_union_columns(unit)
+        elif unit.unit_type == QueryUnitType.PIVOT:
+            return self._extract_pivot_columns(unit)
+        elif unit.unit_type == QueryUnitType.UNPIVOT:
+            return self._extract_unpivot_columns(unit)
+
         select_node = unit.select_node
         output_cols = []
 
@@ -202,6 +212,232 @@ class RecursiveLineageBuilder:
                 col_info["source_columns"] = self._extract_source_column_refs(expr)
 
             output_cols.append(col_info)
+
+        return output_cols
+
+    def _extract_union_columns(self, unit: QueryUnit) -> List[Dict]:
+        """
+        Extract output columns from a UNION/INTERSECT/EXCEPT operation.
+
+        For set operations, all branches must have the same column structure.
+        We use the first branch's columns as the output schema.
+        """
+        output_cols = []
+
+        if not unit.set_operation_branches:
+            # No branches - return empty
+            return output_cols
+
+        # Get the first branch unit
+        first_branch_id = unit.set_operation_branches[0]
+        if first_branch_id not in self.unit_columns_cache:
+            # Branch not yet processed - this shouldn't happen in topological order
+            # Return empty for now
+            return output_cols
+
+        # Use first branch's columns as the output schema
+        first_branch_cols = self.unit_columns_cache[first_branch_id]
+
+        for i, branch_col_node in enumerate(first_branch_cols):
+            col_info = {
+                "index": i,
+                "name": branch_col_node.column_name,
+                "is_star": branch_col_node.is_star,
+                "type": "union_column",
+                "expression": f"{unit.set_operation_type}({branch_col_node.column_name})",
+                "source_branches": unit.set_operation_branches,
+                "ast_node": None,  # No AST node for UNION columns
+            }
+            output_cols.append(col_info)
+
+        return output_cols
+
+    def _extract_pivot_columns(self, unit: QueryUnit) -> List[Dict]:
+        """
+        Extract output columns from a PIVOT operation.
+
+        PIVOT transforms rows into columns. The output has:
+        - All columns from the source except the pivot column and aggregated column
+        - New columns for each pivot value (e.g., Q1, Q2, Q3, Q4)
+        """
+        output_cols = []
+
+        if not unit.pivot_config:
+            return output_cols
+
+        # Get aggregated column names (e.g., "revenue" from "SUM(revenue)")
+        # These are needed for both passthrough and pivot value columns
+        aggregations = unit.pivot_config.get("aggregations", [])
+        aggregated_cols = set()
+        for agg in aggregations:
+            # Extract column name from aggregation (e.g., "revenue" from "SUM(revenue)")
+            # Simple extraction - assumes format like SUM(col_name)
+            if "(" in agg and ")" in agg:
+                col_part = agg.split("(")[1].split(")")[0].strip()
+                aggregated_cols.add(col_part)
+
+        # Get source unit columns if available
+        if unit.depends_on_units:
+            source_unit_id = unit.depends_on_units[0]
+            source_unit = self.unit_graph.units[source_unit_id]
+            source_unit_name = source_unit.name  # Use name, not ID
+
+            if source_unit_id in self.unit_columns_cache:
+                source_cols = self.unit_columns_cache[source_unit_id]
+
+                # Add non-pivoted columns (columns that aren't the pivot column or aggregated columns)
+                pivot_column = unit.pivot_config.get("pivot_column", "")
+
+                for i, source_col in enumerate(source_cols):
+                    if (
+                        source_col.column_name != pivot_column
+                        and source_col.column_name not in aggregated_cols
+                        and not source_col.is_star
+                    ):
+                        col_info = {
+                            "index": i,
+                            "name": source_col.column_name,
+                            "is_star": False,
+                            "type": "pivot_passthrough",
+                            "expression": source_col.column_name,
+                            "ast_node": None,
+                            "source_columns": [
+                                (source_unit_name, source_col.column_name)
+                            ],  # Use name, not ID
+                        }
+                        output_cols.append(col_info)
+
+        # Add pivot value columns (the new columns created by PIVOT)
+        value_columns = unit.pivot_config.get("value_columns", [])
+        base_idx = len(output_cols)
+
+        # Get aggregated columns as source (e.g., "revenue" from "SUM(revenue)")
+        # These pivot value columns derive from the aggregated column
+        pivot_source_cols = []
+        if unit.depends_on_units:
+            source_unit_id = unit.depends_on_units[0]
+            source_unit = self.unit_graph.units[source_unit_id]
+            source_unit_name = source_unit.name  # Use name, not ID
+            for agg_col in aggregated_cols:
+                pivot_source_cols.append((source_unit_name, agg_col))  # Use name, not ID
+
+        for i, value_col in enumerate(value_columns):
+            col_info = {
+                "index": base_idx + i,
+                "name": value_col,
+                "is_star": False,
+                "type": "pivot_value",
+                "expression": f"PIVOT({value_col})",
+                "ast_node": None,
+                "source_columns": pivot_source_cols,
+            }
+            output_cols.append(col_info)
+
+        return output_cols
+
+    def _extract_unpivot_columns(self, unit: QueryUnit) -> List[Dict]:
+        """
+        Extract output columns from an UNPIVOT operation.
+
+        UNPIVOT transforms columns into rows. The output has:
+        - All columns from the source except the unpivoted columns
+        - A new value column (containing the values)
+        - A new name column (containing the original column names)
+        """
+        output_cols = []
+
+        if not unit.unpivot_config:
+            return output_cols
+
+        # Get source unit columns if available
+        if unit.depends_on_units:
+            source_unit_id = unit.depends_on_units[0]
+            source_unit = self.unit_graph.units[source_unit_id]
+            source_unit_name = source_unit.name  # Use name, not ID
+
+            if source_unit_id in self.unit_columns_cache:
+                source_cols = self.unit_columns_cache[source_unit_id]
+                unpivot_columns = set(unit.unpivot_config.get("unpivot_columns", []))
+
+                # Add non-unpivoted columns (passthrough columns)
+                for i, source_col in enumerate(source_cols):
+                    if source_col.column_name not in unpivot_columns and not source_col.is_star:
+                        col_info = {
+                            "index": i,
+                            "name": source_col.column_name,
+                            "is_star": False,
+                            "type": "unpivot_passthrough",
+                            "expression": source_col.column_name,
+                            "ast_node": None,
+                            "source_columns": [
+                                (source_unit_name, source_col.column_name)
+                            ],  # Add source
+                        }
+                        output_cols.append(col_info)
+        elif unit.depends_on_tables:
+            # UNPIVOT on a table - use external_table_columns to infer passthrough columns
+            table_name = unit.depends_on_tables[0]
+            unpivot_columns = set(unit.unpivot_config.get("unpivot_columns", []))
+
+            if table_name in self.external_table_columns:
+                table_cols = self.external_table_columns[table_name]
+                for i, col_name in enumerate(table_cols):
+                    if col_name not in unpivot_columns:
+                        col_info = {
+                            "index": i,
+                            "name": col_name,
+                            "is_star": False,
+                            "type": "unpivot_passthrough",
+                            "expression": col_name,
+                            "ast_node": None,
+                            "source_columns": [(table_name, col_name)],
+                        }
+                        output_cols.append(col_info)
+
+        # Add the value column
+        # The value column derives from all the unpivoted columns
+        value_column = unit.unpivot_config.get("value_column", "value")
+        unpivot_columns = unit.unpivot_config.get("unpivot_columns", [])
+
+        # Build source_columns for the value column
+        value_source_cols = []
+        if unit.depends_on_units:
+            # UNPIVOT on a subquery - reference the source unit
+            source_unit_id = unit.depends_on_units[0]
+            source_unit = self.unit_graph.units[source_unit_id]
+            source_unit_name = source_unit.name
+            for unpivot_col in unpivot_columns:
+                value_source_cols.append((source_unit_name, unpivot_col))
+        elif unit.depends_on_tables:
+            # UNPIVOT on a table - reference the table columns
+            table_name = unit.depends_on_tables[0]
+            for unpivot_col in unpivot_columns:
+                value_source_cols.append((table_name, unpivot_col))
+
+        col_info = {
+            "index": len(output_cols),
+            "name": value_column,
+            "is_star": False,
+            "type": "unpivot_value",
+            "expression": f"UNPIVOT({value_column})",
+            "ast_node": None,
+            "source_columns": value_source_cols,
+        }
+        output_cols.append(col_info)
+
+        # Add the name column
+        # The name column is generated (doesn't have direct source columns)
+        name_column = unit.unpivot_config.get("name_column", "name")
+        col_info = {
+            "index": len(output_cols),
+            "name": name_column,
+            "is_star": False,
+            "type": "unpivot_name",
+            "expression": f"UNPIVOT({name_column})",
+            "ast_node": None,
+            "source_columns": [],  # Generated column, no direct source
+        }
+        output_cols.append(col_info)
 
         return output_cols
 
@@ -312,6 +548,32 @@ class RecursiveLineageBuilder:
                             expression=col_info["expression"],
                         )
                         self.lineage_graph.add_edge(edge)
+
+                # Don't process normal source_refs for this column
+                return
+
+            # Special case: UNION/INTERSECT/EXCEPT columns
+            # These need edges from all branch columns with the same position
+            if col_info.get("type") == "union_column" and "source_branches" in col_info:
+                source_branches = col_info["source_branches"]
+                col_index = col_info.get("index", 0)
+
+                # Create edges from each branch's corresponding column
+                for branch_id in source_branches:
+                    if branch_id in self.unit_columns_cache:
+                        branch_cols = self.unit_columns_cache[branch_id]
+                        # Get the column at the same position in the branch
+                        if col_index < len(branch_cols):
+                            branch_col_node = branch_cols[col_index]
+                            edge = ColumnEdge(
+                                from_node=branch_col_node,
+                                to_node=output_node,
+                                edge_type="union",
+                                transformation=unit.set_operation_type or "union",
+                                context=unit.unit_type.value,
+                                expression=col_info["expression"],
+                            )
+                            self.lineage_graph.add_edge(edge)
 
                 # Don't process normal source_refs for this column
                 return
@@ -679,6 +941,11 @@ class RecursiveLineageBuilder:
         Returns True if we know ALL columns in this unit (no stars in SELECT).
         Returns False if the unit has SELECT * or other unresolvable column patterns.
         """
+        # Skip for units without select_node (UNION, PIVOT, UNPIVOT)
+        # For these types, assume columns are resolved from their source units
+        if unit.select_node is None:
+            return True
+
         # Check the SELECT expressions for any star notation
         for expr in unit.select_node.expressions:
             # Check for direct star: SELECT *
@@ -870,6 +1137,10 @@ class RecursiveLineageBuilder:
         This is a readability issue - lineage should be obvious from SQL.
         """
         warnings = []
+
+        # Skip validation for units without select_node (UNION, PIVOT, UNPIVOT)
+        if unit.select_node is None:
+            return warnings
 
         # Check if this query has JOINs
         joins = unit.select_node.args.get("joins", [])
