@@ -265,16 +265,35 @@ class RecursiveLineageBuilder:
         if not unit.pivot_config:
             return output_cols
 
+        # Get aggregated column names (e.g., "revenue" from "SUM(revenue)")
+        # These are needed for both passthrough and pivot value columns
+        aggregations = unit.pivot_config.get("aggregations", [])
+        aggregated_cols = set()
+        for agg in aggregations:
+            # Extract column name from aggregation (e.g., "revenue" from "SUM(revenue)")
+            # Simple extraction - assumes format like SUM(col_name)
+            if "(" in agg and ")" in agg:
+                col_part = agg.split("(")[1].split(")")[0].strip()
+                aggregated_cols.add(col_part)
+
         # Get source unit columns if available
         if unit.depends_on_units:
             source_unit_id = unit.depends_on_units[0]
+            source_unit = self.unit_graph.units[source_unit_id]
+            source_unit_name = source_unit.name  # Use name, not ID
+
             if source_unit_id in self.unit_columns_cache:
                 source_cols = self.unit_columns_cache[source_unit_id]
 
                 # Add non-pivoted columns (columns that aren't the pivot column or aggregated columns)
                 pivot_column = unit.pivot_config.get("pivot_column", "")
+
                 for i, source_col in enumerate(source_cols):
-                    if source_col.column_name != pivot_column and not source_col.is_star:
+                    if (
+                        source_col.column_name != pivot_column
+                        and source_col.column_name not in aggregated_cols
+                        and not source_col.is_star
+                    ):
                         col_info = {
                             "index": i,
                             "name": source_col.column_name,
@@ -282,12 +301,24 @@ class RecursiveLineageBuilder:
                             "type": "pivot_passthrough",
                             "expression": source_col.column_name,
                             "ast_node": None,
+                            "source_columns": [(source_unit_name, source_col.column_name)],  # Use name, not ID
                         }
                         output_cols.append(col_info)
 
         # Add pivot value columns (the new columns created by PIVOT)
         value_columns = unit.pivot_config.get("value_columns", [])
         base_idx = len(output_cols)
+
+        # Get aggregated columns as source (e.g., "revenue" from "SUM(revenue)")
+        # These pivot value columns derive from the aggregated column
+        pivot_source_cols = []
+        if unit.depends_on_units:
+            source_unit_id = unit.depends_on_units[0]
+            source_unit = self.unit_graph.units[source_unit_id]
+            source_unit_name = source_unit.name  # Use name, not ID
+            for agg_col in aggregated_cols:
+                pivot_source_cols.append((source_unit_name, agg_col))  # Use name, not ID
+
         for i, value_col in enumerate(value_columns):
             col_info = {
                 "index": base_idx + i,
@@ -296,6 +327,7 @@ class RecursiveLineageBuilder:
                 "type": "pivot_value",
                 "expression": f"PIVOT({value_col})",
                 "ast_node": None,
+                "source_columns": pivot_source_cols,
             }
             output_cols.append(col_info)
 
