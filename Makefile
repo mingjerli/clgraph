@@ -1,4 +1,4 @@
-.PHONY: help setup test test-verbose test-coverage clean lint lint-fix lint-fix-unsafe format format-check type-check check pre-commit install build publish-test publish docs
+.PHONY: help setup test test-verbose test-coverage clean lint lint-fix lint-fix-unsafe format format-check type-check check check-examples-verbose pre-commit install build publish-test publish docs
 
 # Default target
 help:
@@ -14,6 +14,7 @@ help:
 	@echo "  make format-check   - Check formatting without modifying files"
 	@echo "  make type-check     - Run type checking with mypy"
 	@echo "  make check          - Run all checks (format, lint, type-check, test)"
+	@echo "  make check-examples-verbose - Run all examples with verbose output"
 	@echo "  make pre-commit     - Run pre-commit hook (ruff + ty)"
 	@echo "  make install        - Install package in editable mode"
 	@echo "  make build          - Build distribution packages"
@@ -97,6 +98,11 @@ type-check:
 check: format lint type-check test
 	@echo ""
 	@echo "✓ All checks passed!"
+
+# Run all examples with verbose output
+check-examples-verbose:
+	@echo "Running all examples (verbose)..."
+	@uv run python run_all_examples.py --verbose
 
 # Pre-commit: format code, fix lint issues, and run the git pre-commit hook
 pre-commit:

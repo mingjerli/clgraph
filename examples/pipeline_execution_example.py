@@ -1,7 +1,7 @@
 """
-Phase 4 Execution Adapters Demo
+Pipeline Execution Example
 
-This example demonstrates the three execution modes:
+This example demonstrates the three execution modes for SQL pipelines:
 1. Synchronous native execution with pipeline.run()
 2. Asynchronous native execution with pipeline.async_run()
 3. Airflow DAG generation with pipeline.to_airflow_dag()

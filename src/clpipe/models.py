@@ -33,18 +33,32 @@ class QueryUnitType(Enum):
     SUBQUERY_HAVING = "subquery_having"  # Subquery in HAVING
     DERIVED_TABLE = "derived_table"  # Inline view
 
+    # Set operations
+    UNION = "union"  # UNION or UNION ALL operation
+    INTERSECT = "intersect"  # INTERSECT operation
+    EXCEPT = "except"  # EXCEPT operation
+    SUBQUERY_UNION = "subquery_union"  # SELECT branch in a UNION/INTERSECT/EXCEPT
+
+    # Table transformations
+    PIVOT = "pivot"  # PIVOT operation
+    UNPIVOT = "unpivot"  # UNPIVOT operation
+    SUBQUERY_PIVOT_SOURCE = "subquery_pivot_source"  # Source query for PIVOT/UNPIVOT
+
 
 @dataclass
 class QueryUnit:
     """
-    Represents a single SELECT statement in any context.
+    Represents a single query unit in any context.
+
+    Can be a SELECT statement, or a set operation (UNION/INTERSECT/EXCEPT),
+    or a table transformation (PIVOT/UNPIVOT).
     This is the fundamental unit of lineage tracing.
     """
 
     unit_id: str  # Unique identifier (e.g., "main", "cte:monthly_sales", "subq:0")
     unit_type: QueryUnitType
     name: Optional[str]  # CTE name or alias
-    select_node: exp.Select  # The actual SELECT AST node
+    select_node: Optional[exp.Select]  # The actual SELECT AST node (None for set operations)
     parent_unit: Optional["QueryUnit"]  # Parent query unit (None for main query)
 
     # Dependencies
@@ -57,6 +71,18 @@ class QueryUnit:
 
     # Columns
     output_columns: List[Dict] = field(default_factory=list)  # What this unit produces
+
+    # Set operations (UNION, INTERSECT, EXCEPT)
+    set_operation_type: Optional[str] = None  # "union", "union_all", "intersect", "except"
+    set_operation_branches: List[str] = field(default_factory=list)  # unit_ids of branches
+
+    # PIVOT operations
+    pivot_config: Optional[Dict[str, Any]] = None  # Configuration for PIVOT
+    # Example: {'pivot_column': 'quarter', 'aggregations': ['SUM(revenue)'], 'value_columns': ['Q1', 'Q2', 'Q3', 'Q4']}
+
+    # UNPIVOT operations
+    unpivot_config: Optional[Dict[str, Any]] = None  # Configuration for UNPIVOT
+    # Example: {'value_column': 'revenue', 'unpivot_columns': ['q1', 'q2', 'q3', 'q4'], 'name_column': 'quarter'}
 
     # Metadata
     depth: int = 0  # Nesting depth (0 = main query)
@@ -92,7 +118,13 @@ class QueryUnitGraph:
     def add_unit(self, unit: QueryUnit):
         """Add a query unit to the graph"""
         self.units[unit.unit_id] = unit
-        if unit.unit_type == QueryUnitType.MAIN_QUERY:
+        # Set operations can also be top-level units
+        if unit.unit_type in (
+            QueryUnitType.MAIN_QUERY,
+            QueryUnitType.UNION,
+            QueryUnitType.INTERSECT,
+            QueryUnitType.EXCEPT,
+        ):
             self.main_unit_id = unit.unit_id
 
     def get_topological_order(self) -> List[QueryUnit]:

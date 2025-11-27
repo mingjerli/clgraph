@@ -38,6 +38,12 @@ def visualize_query_units(query_graph: QueryUnitGraph) -> graphviz.Digraph:
         "subquery_select": "#FFC107",  # Amber
         "subquery_where": "#9C27B0",  # Purple
         "subquery_having": "#E91E63",  # Pink
+        "union": "#00BCD4",  # Cyan
+        "intersect": "#00BCD4",  # Cyan
+        "except": "#00BCD4",  # Cyan
+        "subquery_union": "#80DEEA",  # Light Cyan
+        "pivot": "#8BC34A",  # Light Green
+        "unpivot": "#CDDC39",  # Lime
     }
 
     # Icons for different unit types
@@ -48,26 +54,45 @@ def visualize_query_units(query_graph: QueryUnitGraph) -> graphviz.Digraph:
         "subquery_select": "🔹",
         "subquery_where": "🔶",
         "subquery_having": "🔷",
+        "union": "🔀",
+        "intersect": "∩",
+        "except": "−",
+        "subquery_union": "🔹",
+        "pivot": "↻",
+        "unpivot": "↺",
     }
 
     # Track table nodes to avoid duplicates
     table_nodes_created = set()
 
-    # Add all query unit nodes first
+    # Group units by depth for hierarchical layout
+    units_by_depth = {}
+    max_depth = 0
     for unit in query_graph.units.values():
-        color = colors.get(unit.unit_type.value, "#9E9E9E")
-        icon = icons.get(unit.unit_type.value, "❓")
+        depth = unit.depth
+        if depth not in units_by_depth:
+            units_by_depth[depth] = []
+        units_by_depth[depth].append(unit)
+        max_depth = max(max_depth, depth)
 
-        # Create multi-line label with better formatting
-        label = f"{icon} {unit.name}\\n({unit.unit_type.value})\\nDepth: {unit.depth}"
+    # Add query unit nodes grouped by depth (reverse order for LR layout)
+    for depth in sorted(units_by_depth.keys(), reverse=True):
+        with dot.subgraph() as s:
+            s.attr(rank="same")  # Place all nodes at this depth at the same rank
+            for unit in units_by_depth[depth]:
+                color = colors.get(unit.unit_type.value, "#9E9E9E")
+                icon = icons.get(unit.unit_type.value, "❓")
 
-        dot.node(
-            unit.unit_id,
-            label=label,
-            fillcolor=color,
-            fontcolor="white",
-            tooltip=f"Unit: {unit.name}, Type: {unit.unit_type.value}, Depth: {unit.depth}",
-        )
+                # Create multi-line label with better formatting
+                label = f"{icon} {unit.name}\\n({unit.unit_type.value})\\nDepth: {unit.depth}"
+
+                s.node(
+                    unit.unit_id,
+                    label=label,
+                    fillcolor=color,
+                    fontcolor="white",
+                    tooltip=f"Unit: {unit.name}, Type: {unit.unit_type.value}, Depth: {unit.depth}",
+                )
 
     # Add table nodes (external base tables)
     for unit in query_graph.units.values():
@@ -96,14 +121,24 @@ def visualize_query_units(query_graph: QueryUnitGraph) -> graphviz.Digraph:
             # Get dependency unit for better labeling
             dep_unit = query_graph.units.get(dep_unit_id)
             edge_label = "uses"
-            if dep_unit and dep_unit.unit_type.value == "cte":
-                edge_label = "uses CTE"
+            edge_color = "#2196F3"
+
+            if dep_unit:
+                if dep_unit.unit_type.value == "cte":
+                    edge_label = "uses CTE"
+                elif dep_unit.unit_type.value == "subquery_union":
+                    # For set operation branches, show the operation type
+                    if unit.set_operation_type:
+                        edge_label = f"{unit.set_operation_type.upper()} branch"
+                    else:
+                        edge_label = "branch"
+                    edge_color = "#00BCD4"  # Cyan for set operations
 
             dot.edge(
                 dep_unit_id,
                 unit.unit_id,
                 label=edge_label,
-                color="#2196F3",
+                color=edge_color,
                 penwidth="2.0",  # Thicker edges for unit dependencies
             )
 
