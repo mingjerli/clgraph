@@ -180,6 +180,13 @@ def visualize_query_structure_from_lineage(
         "subquery_select": "#FFC107",  # Amber
         "subquery_where": "#9C27B0",  # Purple
         "subquery_having": "#E91E63",  # Pink
+        "union": "#8BC34A",  # Light Green
+        "intersect": "#CDDC39",  # Lime
+        "except": "#FFEB3B",  # Yellow
+        "subquery_union": "#FFC107",  # Amber
+        "pivot": "#00BCD4",  # Cyan
+        "unpivot": "#009688",  # Teal
+        "subquery_pivot_source": "#FF9800",  # Orange
     }
 
     # Icons for different node types
@@ -191,6 +198,13 @@ def visualize_query_structure_from_lineage(
         "subquery_select": "🔹",
         "subquery_where": "🔶",
         "subquery_having": "🔷",
+        "union": "🔀",
+        "intersect": "∩",
+        "except": "−",
+        "subquery_union": "🔹",
+        "pivot": "↻",
+        "unpivot": "↺",
+        "subquery_pivot_source": "🔸",
     }
 
     # Track which nodes and edges we've created
@@ -331,6 +345,13 @@ def visualize_column_lineage(
         "subquery_select": "#FFE0B2",  # Lighter orange
         "subquery_where": "#E1BEE7",  # Light purple
         "subquery_having": "#F8BBD0",  # Light pink
+        "union": "#DCEDC8",  # Light lime
+        "intersect": "#F0F4C3",  # Light lime yellow
+        "except": "#FFF9C4",  # Light yellow
+        "subquery_union": "#FFE0B2",  # Lighter orange
+        "pivot": "#B2EBF2",  # Light cyan
+        "unpivot": "#B2DFDB",  # Light teal
+        "subquery_pivot_source": "#FFCCBC",  # Light orange
     }
 
     # Filter nodes by layer if specified
@@ -382,6 +403,13 @@ def visualize_column_lineage(
                     "subquery_select": "🔹",
                     "subquery_where": "🔶",
                     "subquery_having": "🔷",
+                    "union": "🔀",
+                    "intersect": "∩",
+                    "except": "−",
+                    "subquery_union": "🔹",
+                    "pivot": "↻",
+                    "unpivot": "↺",
+                    "subquery_pivot_source": "🔸",
                 }
                 icon = icons.get(unit_type, "❓")
 

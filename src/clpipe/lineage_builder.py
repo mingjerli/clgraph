@@ -370,6 +370,25 @@ class RecursiveLineageBuilder:
                             "source_columns": [(source_unit_name, source_col.column_name)],  # Add source
                         }
                         output_cols.append(col_info)
+        elif unit.depends_on_tables:
+            # UNPIVOT on a table - use external_table_columns to infer passthrough columns
+            table_name = unit.depends_on_tables[0]
+            unpivot_columns = set(unit.unpivot_config.get("unpivot_columns", []))
+
+            if table_name in self.external_table_columns:
+                table_cols = self.external_table_columns[table_name]
+                for i, col_name in enumerate(table_cols):
+                    if col_name not in unpivot_columns:
+                        col_info = {
+                            "index": i,
+                            "name": col_name,
+                            "is_star": False,
+                            "type": "unpivot_passthrough",
+                            "expression": col_name,
+                            "ast_node": None,
+                            "source_columns": [(table_name, col_name)],
+                        }
+                        output_cols.append(col_info)
 
         # Add the value column
         # The value column derives from all the unpivoted columns
