@@ -394,16 +394,19 @@ class RecursiveQueryParser:
 
     def _parse_unpivot(
         self,
-        unpivot_node: exp.Unnest,
+        unpivot_node: exp.Pivot,  # Note: sqlglot uses Pivot class for both PIVOT and UNPIVOT
         name: str,
         parent_unit: QueryUnit,
         depth: int,
+        table_node,  # Can be exp.Table or exp.Subquery
     ) -> QueryUnit:
         """
         Parse UNPIVOT operation.
 
         UNPIVOT transforms columns into rows.
-        Example: UNPIVOT(revenue FOR quarter IN (q1, q2, q3, q4))
+        Example: UNPIVOT(revenue FOR quarter IN (q1_revenue, q2_revenue, q3_revenue, q4_revenue))
+
+        In sqlglot, UNPIVOT is represented as a Pivot node with unpivot=True.
         """
         # Create unit for UNPIVOT operation
         unit_id = self._generate_unit_id(QueryUnitType.UNPIVOT, name)
@@ -420,41 +423,45 @@ class RecursiveQueryParser:
         unpivot_config = {}
 
         # For UNPIVOT, we need to extract:
-        # - value_column: The new column for values
-        # - name_column: The new column for column names
-        # - unpivot_columns: The columns being unpivoted
+        # - value_column: The new column for unpivoted values (e.g., "revenue")
+        # - name_column: The new column for column names (e.g., "quarter")
+        # - unpivot_columns: The columns being unpivoted (e.g., [q1_revenue, q2_revenue, ...])
 
-        # This is a simplified implementation - actual UNPIVOT parsing
-        # depends on how sqlglot represents it (might be in args)
-        if hasattr(unpivot_node, "args"):
-            args = unpivot_node.args
-            # Extract configuration from args
-            # This will need to be adjusted based on actual sqlglot structure
-            if "alias" in args:
-                unpivot_config["value_column"] = str(args["alias"])
+        # Get value column from expressions (e.g., revenue)
+        if hasattr(unpivot_node, "expressions") and unpivot_node.expressions:
+            unpivot_config["value_column"] = str(unpivot_node.expressions[0])
+
+        # Get name column and unpivot columns from fields (the FOR ... IN clause)
+        if hasattr(unpivot_node, "fields") and unpivot_node.fields:
+            for field in unpivot_node.fields:
+                if isinstance(field, exp.In):
+                    # The 'this' is the name column (e.g., quarter)
+                    unpivot_config["name_column"] = str(field.this)
+                    # The 'expressions' are the columns being unpivoted
+                    if hasattr(field, "expressions"):
+                        unpivot_config["unpivot_columns"] = [str(col) for col in field.expressions]
 
         unit.unpivot_config = unpivot_config
 
-        # Parse the source (table or subquery)
-        source = unpivot_node.this if hasattr(unpivot_node, "this") else None
-        if source:
-            if isinstance(source, exp.Subquery):
-                # Source is a subquery
-                source_select = source.this
-                if isinstance(source_select, exp.Select):
-                    source_name = f"{name}_source"
-                    source_unit = self._parse_select_unit(
-                        select_node=source_select,
-                        unit_type=QueryUnitType.SUBQUERY_PIVOT_SOURCE,
-                        name=source_name,
-                        parent_unit=unit,
-                        depth=depth + 1,
-                    )
-                    unit.depends_on_units.append(source_unit.unit_id)
-            elif isinstance(source, exp.Table):
-                # Source is a base table
-                table_name = source.this.name if hasattr(source.this, "name") else source.name
-                unit.depends_on_tables.append(table_name)
+        # Parse the source
+        # table_node can be either a Table or a Subquery
+        if isinstance(table_node, exp.Subquery):
+            # UNPIVOT is applied to a subquery: (SELECT ...) UNPIVOT(...)
+            source_select = table_node.this
+            if isinstance(source_select, exp.Select):
+                source_name = f"{name}_source"
+                source_unit = self._parse_select_unit(
+                    select_node=source_select,
+                    unit_type=QueryUnitType.SUBQUERY_PIVOT_SOURCE,
+                    name=source_name,
+                    parent_unit=unit,
+                    depth=depth + 1,
+                )
+                unit.depends_on_units.append(source_unit.unit_id)
+        elif isinstance(table_node, exp.Table):
+            # UNPIVOT is applied to a base table: table_name UNPIVOT(...)
+            table_name = table_node.this.name if hasattr(table_node.this, "name") else table_node.name
+            unit.depends_on_tables.append(table_name)
 
         # Add to graph
         self.unit_graph.add_unit(unit)
@@ -488,6 +495,9 @@ class RecursiveQueryParser:
                     # Process PIVOT/UNPIVOT operations
                     for pivot_node in source_node.args["pivots"]:
                         if isinstance(pivot_node, exp.Pivot):
+                            # Check if this is UNPIVOT (has unpivot=True attribute)
+                            is_unpivot = pivot_node.args.get("unpivot", False)
+
                             pivot_name = (
                                 source_node.alias
                                 if hasattr(source_node, "alias") and source_node.alias
@@ -495,22 +505,31 @@ class RecursiveQueryParser:
                             )
                             self.subquery_counter += 1
 
-                            # Parse PIVOT operation
-                            pivot_unit = self._parse_pivot(
-                                pivot_node=pivot_node,
-                                name=pivot_name,
-                                parent_unit=parent_unit,
-                                depth=depth + 1,
-                                table_node=source_node,
-                            )
+                            # Parse UNPIVOT or PIVOT operation
+                            if is_unpivot:
+                                pivot_unit = self._parse_unpivot(
+                                    unpivot_node=pivot_node,
+                                    name=pivot_name,
+                                    parent_unit=parent_unit,
+                                    depth=depth + 1,
+                                    table_node=source_node,
+                                )
+                            else:
+                                pivot_unit = self._parse_pivot(
+                                    pivot_node=pivot_node,
+                                    name=pivot_name,
+                                    parent_unit=parent_unit,
+                                    depth=depth + 1,
+                                    table_node=source_node,
+                                )
 
                             # Add dependency
                             if pivot_unit.unit_id not in parent_unit.depends_on_units:
                                 parent_unit.depends_on_units.append(pivot_unit.unit_id)
 
-                            # Store alias mapping for PIVOT
+                            # Store alias mapping for PIVOT/UNPIVOT
                             parent_unit.alias_mapping[pivot_name] = (pivot_name, True)
-                            return  # PIVOT processed, skip normal table processing
+                            return  # PIVOT/UNPIVOT processed, skip normal table processing
 
                 # Get the actual table name (not alias)
                 table_name = (
