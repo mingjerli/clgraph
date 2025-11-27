@@ -350,11 +350,14 @@ class RecursiveLineageBuilder:
         # Get source unit columns if available
         if unit.depends_on_units:
             source_unit_id = unit.depends_on_units[0]
+            source_unit = self.unit_graph.units[source_unit_id]
+            source_unit_name = source_unit.name  # Use name, not ID
+
             if source_unit_id in self.unit_columns_cache:
                 source_cols = self.unit_columns_cache[source_unit_id]
                 unpivot_columns = set(unit.unpivot_config.get("unpivot_columns", []))
 
-                # Add non-unpivoted columns
+                # Add non-unpivoted columns (passthrough columns)
                 for i, source_col in enumerate(source_cols):
                     if source_col.column_name not in unpivot_columns and not source_col.is_star:
                         col_info = {
@@ -364,11 +367,30 @@ class RecursiveLineageBuilder:
                             "type": "unpivot_passthrough",
                             "expression": source_col.column_name,
                             "ast_node": None,
+                            "source_columns": [(source_unit_name, source_col.column_name)],  # Add source
                         }
                         output_cols.append(col_info)
 
         # Add the value column
+        # The value column derives from all the unpivoted columns
         value_column = unit.unpivot_config.get("value_column", "value")
+        unpivot_columns = unit.unpivot_config.get("unpivot_columns", [])
+
+        # Build source_columns for the value column
+        value_source_cols = []
+        if unit.depends_on_units:
+            # UNPIVOT on a subquery - reference the source unit
+            source_unit_id = unit.depends_on_units[0]
+            source_unit = self.unit_graph.units[source_unit_id]
+            source_unit_name = source_unit.name
+            for unpivot_col in unpivot_columns:
+                value_source_cols.append((source_unit_name, unpivot_col))
+        elif unit.depends_on_tables:
+            # UNPIVOT on a table - reference the table columns
+            table_name = unit.depends_on_tables[0]
+            for unpivot_col in unpivot_columns:
+                value_source_cols.append((table_name, unpivot_col))
+
         col_info = {
             "index": len(output_cols),
             "name": value_column,
@@ -376,10 +398,12 @@ class RecursiveLineageBuilder:
             "type": "unpivot_value",
             "expression": f"UNPIVOT({value_column})",
             "ast_node": None,
+            "source_columns": value_source_cols,
         }
         output_cols.append(col_info)
 
         # Add the name column
+        # The name column is generated (doesn't have direct source columns)
         name_column = unit.unpivot_config.get("name_column", "name")
         col_info = {
             "index": len(output_cols),
@@ -388,6 +412,7 @@ class RecursiveLineageBuilder:
             "type": "unpivot_name",
             "expression": f"UNPIVOT({name_column})",
             "ast_node": None,
+            "source_columns": [],  # Generated column, no direct source
         }
         output_cols.append(col_info)
 
