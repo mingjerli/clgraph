@@ -213,3 +213,6 @@ python/
 # Backup files
 *-backup-*.zip
 *.backup
+
+# Plan files
+plans/
