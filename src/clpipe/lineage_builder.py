@@ -131,6 +131,10 @@ class RecursiveLineageBuilder:
         select_node = unit.select_node
         output_cols = []
 
+        # Guard against None select_node or missing expressions
+        if not select_node or not select_node.expressions:
+            return output_cols
+
         for i, expr in enumerate(select_node.expressions):
             col_info = {"index": i, "ast_node": expr}
 
