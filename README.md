@@ -360,7 +360,7 @@ We built clpipe to prove this approach works. By combining lineage-friendly SQL 
 
 ```bash
 # Clone the repository
-git clone https://github.com/clpipe/clpipe.git
+git clone https://github.com/mingjerli/clpipe.git
 cd clpipe
 
 # Install dependencies with uv

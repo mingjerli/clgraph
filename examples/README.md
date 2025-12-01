@@ -265,7 +265,7 @@ After exploring these examples, check out:
 ## Support
 
 For questions or issues:
-- GitHub Issues: https://github.com/clpipe/clpipe/issues
+- GitHub Issues: https://github.com/mingjerli/clpipe/issues
 - Documentation: (link to docs site)
 
 ---
