@@ -337,6 +337,16 @@ tracer = SQLColumnTracer(sql, dialect="postgres")
 pipeline = Pipeline(queries, dialect="snowflake")
 ```
 
+## Why We Built This
+
+Column lineage is notoriously difficult. Traditional tools reverse-engineer lineage from query logs and execution metadata, requiring expensive platform integration and complex infrastructure. Most open-source alternatives focus only on table-level lineage or single-query column analysis.
+
+**Our insight**: When SQL is written with explicit column names and clear transformations (what we call "lineage-friendly SQL"), static analysis can provide *perfect* column lineage—without database access, without runtime integration, and without query logs.
+
+We built clpipe to prove this approach works. By combining lineage-friendly SQL with perfect static analysis, we solve 90% of column lineage needs with 10% of the complexity of enterprise tools. No database required. No infrastructure to maintain. Just pure Python analyzing your SQL files.
+
+**Read more**: [Why We Built This (Full Story)](https://clpipe.dev/concepts/why-we-built-this/)
+
 ## Use Cases
 
 - **Data Governance**: Track data lineage for compliance and auditing
