@@ -1,5 +1,19 @@
+# Include package metadata and documentation
 include README.md
 include LICENSE
+include CHANGELOG.md
+include CONTRIBUTING.md
+include QUICKSTART.md
 include pyproject.toml
+
+# Include type information for PEP 561
+recursive-include src/clpipe py.typed
+
+# Include all Python files
 recursive-include src *.py
 recursive-include tests *.py
+
+# Exclude unnecessary files
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude .DS_Store

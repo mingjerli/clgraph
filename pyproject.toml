@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "clpipe"
-version = "0.1.0"
+version = "0.0.1"
 description = "Column lineage and pipeline dependency analysis for SQL"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "Your Name", email = "your.email@example.com"}
+    {name = "Ming Jer Lee", email = "mingjer@clpipe.dev"}
 ]
 keywords = ["sql", "lineage", "column-lineage", "data-lineage", "pipeline", "sqlglot"]
 classifiers = [
@@ -23,7 +23,9 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Software Development :: Quality Assurance",
     "Topic :: Database",
+    "Topic :: Scientific/Engineering :: Information Analysis",
 ]
 
 dependencies = [
@@ -46,6 +48,10 @@ dev = [
     "jinja2>=3.0.0",
     "duckdb>=0.9.0",
 ]
+build = [
+    "build>=1.0.0",
+    "twine>=4.0.0",
+]
 examples = [
     "streamlit>=1.28.0",
     "pandas>=2.0.0",
@@ -56,10 +62,10 @@ templates = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/clpipe"
-Documentation = "https://github.com/yourusername/clpipe#readme"
-Repository = "https://github.com/yourusername/clpipe"
-Issues = "https://github.com/yourusername/clpipe/issues"
+Homepage = "https://github.com/clpipe/clpipe"
+Documentation = "https://github.com/clpipe/clpipe#readme"
+Repository = "https://github.com/clpipe/clpipe"
+Issues = "https://github.com/clpipe/clpipe/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/clpipe"]
@@ -75,7 +81,7 @@ addopts = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = [
@@ -97,7 +103,7 @@ indent-style = "space"
 line-ending = "auto"
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
