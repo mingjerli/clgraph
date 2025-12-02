@@ -25,14 +25,13 @@ set -e
 
 echo "🔍 Running pre-commit checks..."
 
-# Run ruff format check
+# Run ruff format to auto-format files
 echo ""
-echo "[1/3] Running ruff format check..."
-if ! uv run ruff format --check src/ tests/ examples/; then
-    echo "❌ Ruff formatting check failed"
-    echo "💡 Run 'uv run ruff format src/ tests/ examples/' to auto-format"
-    exit 1
-fi
+echo "[1/3] Running ruff format..."
+uv run ruff format .
+
+# Stage any formatting changes
+git add -u
 
 # Run ruff for linting
 echo ""
@@ -61,7 +60,7 @@ chmod +x "$HOOK_PATH"
 echo "✅ Git hooks installed successfully!"
 echo ""
 echo "The pre-commit hook will now run:"
-echo "  - Ruff format check"
+echo "  - Ruff auto-format (automatically formats and stages changes)"
 echo "  - Ruff linting"
 echo "  - Type checking (warnings only)"
 echo ""
