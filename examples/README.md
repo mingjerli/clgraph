@@ -1,11 +1,11 @@
-# clpipe Examples
+# clgraph Examples
 
-This directory contains comprehensive examples demonstrating various features of clpipe for SQL column lineage analysis.
+This directory contains comprehensive examples demonstrating various features of clgraph for SQL column lineage analysis.
 
 ## Basic Examples
 
 ### `simple_example.py`
-Basic introduction to clpipe with CTEs and joins.
+Basic introduction to clgraph with CTEs and joins.
 
 **Run:**
 ```bash
@@ -265,7 +265,7 @@ After exploring these examples, check out:
 ## Support
 
 For questions or issues:
-- GitHub Issues: https://github.com/mingjerli/clpipe/issues
+- GitHub Issues: https://github.com/mingjerli/clgraph/issues
 - Documentation: (link to docs site)
 
 ---

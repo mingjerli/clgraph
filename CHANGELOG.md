@@ -79,5 +79,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Detailed API documentation in code
 - Multiple working examples in `/examples` directory
 
-[0.0.2]: https://github.com/mingjerli/clpipe/releases/tag/v0.0.2
-[0.0.1]: https://github.com/mingjerli/clpipe/releases/tag/v0.0.1
+[0.0.2]: https://github.com/mingjerli/clgraph/releases/tag/v0.0.2
+[0.0.1]: https://github.com/mingjerli/clgraph/releases/tag/v0.0.1

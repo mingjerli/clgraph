@@ -4,7 +4,7 @@ Tests for Pipeline.split() functionality.
 
 import pytest
 
-from clpipe.pipeline import Pipeline
+from clgraph.pipeline import Pipeline
 
 # Check if DuckDB is available
 try:

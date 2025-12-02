@@ -9,7 +9,7 @@ from typing import Optional
 
 import graphviz
 
-from clpipe import ColumnLineageGraph, QueryUnitGraph
+from clgraph import ColumnLineageGraph, QueryUnitGraph
 
 
 def visualize_query_units(query_graph: QueryUnitGraph) -> graphviz.Digraph:

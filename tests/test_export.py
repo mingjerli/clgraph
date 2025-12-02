@@ -12,9 +12,9 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clpipe.export import CSVExporter, GraphVizExporter, JSONExporter
-from clpipe.models import ColumnNode, DescriptionSource
-from clpipe.pipeline import Pipeline
+from clgraph.export import CSVExporter, GraphVizExporter, JSONExporter
+from clgraph.models import ColumnNode, DescriptionSource
+from clgraph.pipeline import Pipeline
 
 
 def create_test_graph():

@@ -10,10 +10,10 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clpipe.column import propagate_metadata
-from clpipe.models import ColumnEdge, ColumnNode, DescriptionSource
-from clpipe.pipeline import Pipeline
-from clpipe.table import TableDependencyGraph
+from clgraph.column import propagate_metadata
+from clgraph.models import ColumnEdge, ColumnNode, DescriptionSource
+from clgraph.pipeline import Pipeline
+from clgraph.table import TableDependencyGraph
 
 
 def test_propagate_owner_single_source():

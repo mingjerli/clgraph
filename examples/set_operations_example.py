@@ -1,11 +1,11 @@
 """
 Example demonstrating SQL column lineage analysis with set operations.
 
-This example shows how clpipe analyzes UNION, INTERSECT, and EXCEPT operations,
+This example shows how clgraph analyzes UNION, INTERSECT, and EXCEPT operations,
 tracking column lineage across multiple query branches.
 """
 
-from clpipe import SQLColumnTracer
+from clgraph import SQLColumnTracer
 
 
 def union_all_example():

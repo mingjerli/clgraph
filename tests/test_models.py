@@ -2,7 +2,7 @@
 Tests for data models with new UNION and PIVOT/UNPIVOT support.
 """
 
-from clpipe.models import QueryUnit, QueryUnitGraph, QueryUnitType
+from clgraph.models import QueryUnit, QueryUnitGraph, QueryUnitType
 
 
 class TestQueryUnitTypeEnum:

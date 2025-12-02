@@ -1,6 +1,6 @@
 # E-Commerce SQL Pipeline Example
 
-This example demonstrates clpipe's SQL lineage analysis and pipeline execution using DuckDB.
+This example demonstrates clgraph's SQL lineage analysis and pipeline execution using DuckDB.
 
 ## Two Ways to Run
 
@@ -12,7 +12,7 @@ This example demonstrates clpipe's SQL lineage analysis and pipeline execution u
 ## Quick Start
 
 ```bash
-cd clpipe
+cd clgraph
 
 # Lineage analysis only
 uv run python examples/sql_files/run_lineage.py
@@ -57,7 +57,7 @@ source_order_items─┘                                           └──► 
 
 ```python
 from pathlib import Path
-from clpipe import Pipeline
+from clgraph import Pipeline
 
 # Load all SQL files
 sql_dir = Path("examples/sql_files")
@@ -109,7 +109,7 @@ for col in pii_cols:
 
 ```python
 import duckdb
-from clpipe import Pipeline
+from clgraph import Pipeline
 
 conn = duckdb.connect(":memory:")
 

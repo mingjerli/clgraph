@@ -2,7 +2,7 @@
 Simple example demonstrating SQL column lineage analysis
 """
 
-from clpipe import SQLColumnTracer
+from clgraph import SQLColumnTracer
 
 # Example SQL query with CTE and joins
 sql = """

@@ -4,7 +4,7 @@ Tests for metadata extraction from SQL comments.
 
 import sqlglot
 
-from clpipe.metadata_parser import ColumnMetadata, MetadataExtractor
+from clgraph.metadata_parser import ColumnMetadata, MetadataExtractor
 
 
 class TestColumnMetadata:

@@ -1585,7 +1585,7 @@ class Pipeline:
 
         # Set default values only if not provided by user
         dag_params.setdefault("catchup", False)
-        dag_params.setdefault("tags", ["clpipe"])
+        dag_params.setdefault("tags", ["clgraph"])
 
         table_graph = self.table_graph
 

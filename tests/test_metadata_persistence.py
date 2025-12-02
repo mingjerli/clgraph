@@ -11,9 +11,9 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clpipe.models import ColumnNode, DescriptionSource
-from clpipe.pipeline import Pipeline
-from clpipe.table import TableDependencyGraph, TableNode
+from clgraph.models import ColumnNode, DescriptionSource
+from clgraph.pipeline import Pipeline
+from clgraph.table import TableDependencyGraph, TableNode
 
 
 def test_save_and_load_metadata():

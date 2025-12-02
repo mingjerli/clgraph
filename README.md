@@ -1,4 +1,4 @@
-# clpipe
+# clgraph
 
 A powerful Python library for SQL column lineage analysis and pipeline dependency tracking.
 
@@ -32,12 +32,12 @@ A powerful Python library for SQL column lineage analysis and pipeline dependenc
 ## Installation
 
 ```bash
-pip install clpipe
+pip install clgraph
 ```
 
 Or with uv:
 ```bash
-uv pip install clpipe
+uv pip install clgraph
 ```
 
 ## Quick Start
@@ -45,7 +45,7 @@ uv pip install clpipe
 ### Single Query Column Lineage
 
 ```python
-from clpipe import SQLColumnTracer
+from clgraph import SQLColumnTracer
 
 sql = """
 WITH monthly_sales AS (
@@ -80,7 +80,7 @@ source_tables = {node.table_name for node in input_nodes if node.table_name}
 ### Multi-Query Pipeline Lineage
 
 ```python
-from clpipe import Pipeline
+from clgraph import Pipeline
 
 queries = [
     ("raw_events", """
@@ -122,7 +122,7 @@ for impact in impacts:
 ### Metadata from SQL Comments
 
 ```python
-from clpipe import Pipeline
+from clgraph import Pipeline
 
 sql = """
 SELECT
@@ -146,7 +146,7 @@ for col in pipeline.columns.values():
 ### Metadata Management and Export
 
 ```python
-from clpipe import (
+from clgraph import (
     MultiQueryParser,
     PipelineLineageBuilder,
     JSONExporter,
@@ -188,7 +188,7 @@ print(diff.summary())
 ### LLM-Powered Description Generation
 
 ```python
-from clpipe import MultiQueryParser, PipelineLineageBuilder
+from clgraph import MultiQueryParser, PipelineLineageBuilder
 from langchain_ollama import ChatOllama
 
 # Build pipeline
@@ -239,7 +239,7 @@ Handles multiple related queries as a pipeline:
 A `Pipeline` contains two graph structures for lineage analysis:
 
 ```python
-from clpipe import Pipeline
+from clgraph import Pipeline
 
 pipeline = Pipeline(queries, dialect="bigquery")
 
@@ -343,9 +343,9 @@ Column lineage is notoriously difficult. Traditional tools reverse-engineer line
 
 **Our insight**: When SQL is written with explicit column names and clear transformations (what we call "lineage-friendly SQL"), static analysis can provide *perfect* column lineage—without database access, without runtime integration, and without query logs.
 
-We built clpipe to prove this approach works. By combining lineage-friendly SQL with perfect static analysis, we solve 90% of column lineage needs with 10% of the complexity of enterprise tools. No database required. No infrastructure to maintain. Just pure Python analyzing your SQL files.
+We built clgraph to prove this approach works. By combining lineage-friendly SQL with perfect static analysis, we solve 90% of column lineage needs with 10% of the complexity of enterprise tools. No database required. No infrastructure to maintain. Just pure Python analyzing your SQL files.
 
-**Read more**: [Why We Built This (Full Story)](https://clpipe.dev/concepts/why-we-built-this/)
+**Read more**: [Why We Built This (Full Story)](https://clgraph.dev/concepts/why-we-built-this/)
 
 ## Use Cases
 
@@ -360,8 +360,8 @@ We built clpipe to prove this approach works. By combining lineage-friendly SQL 
 
 ```bash
 # Clone the repository
-git clone https://github.com/mingjerli/clpipe.git
-cd clpipe
+git clone https://github.com/mingjerli/clgraph.git
+cd clgraph
 
 # Install dependencies with uv
 uv pip install -e ".[dev]"

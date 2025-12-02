@@ -5,7 +5,7 @@ Demonstrates how inline SQL comments can automatically populate
 column metadata (descriptions, PII flags, ownership, tags).
 """
 
-from clpipe.pipeline import Pipeline
+from clgraph.pipeline import Pipeline
 
 # SQL with inline metadata comments
 sql = """

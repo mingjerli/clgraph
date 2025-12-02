@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from clpipe.pipeline import Pipeline
+from clgraph.pipeline import Pipeline
 
 # Check if DuckDB is available
 try:

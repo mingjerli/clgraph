@@ -4,8 +4,8 @@ Tests for PIVOT/UNPIVOT parsing functionality.
 
 import pytest
 
-from clpipe.models import QueryUnitType
-from clpipe.query_parser import RecursiveQueryParser
+from clgraph.models import QueryUnitType
+from clgraph.query_parser import RecursiveQueryParser
 
 
 class TestPivotBasic:

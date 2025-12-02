@@ -6,7 +6,7 @@ A powerful library for tracing data lineage through SQL queries and multi-query 
 
 from importlib.metadata import version
 
-__version__ = version("clpipe")
+__version__ = version("clgraph")
 
 # Import main public API from parser
 # Import diff functionality
