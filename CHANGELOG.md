@@ -1,0 +1,73 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.1.0] - 2025-12-02
+
+### Added
+
+#### Core Features
+- **Single Query Column Lineage**: Perfect column-level lineage tracking for any SQL query
+  - Recursive query parsing with arbitrary CTE and subquery nesting
+  - Bottom-up lineage building with dependency-ordered processing
+  - Star notation preservation with EXCEPT/REPLACE support
+  - Forward and backward lineage tracing capabilities
+
+- **Multi-Query Pipeline Analysis**: Cross-query lineage tracking
+  - Table dependency graph construction
+  - Pipeline-level column lineage across multiple queries
+  - Template variable support ({{variable}} syntax)
+  - Pipeline-wide impact analysis
+
+- **Metadata Management System**
+  - Column metadata tracking (descriptions, ownership, PII flags, custom tags)
+  - Automatic metadata propagation through lineage
+  - Inline SQL comment parsing (`-- description [pii: true]`)
+  - LLM integration for description generation (Ollama, OpenAI, etc.)
+  - Pipeline diff tracking between versions
+
+#### Export Functionality
+- JSON export for machine-readable integration
+- CSV export for spreadsheet analysis
+- GraphViz DOT format export for visualization
+
+#### Supported SQL Dialects
+- BigQuery, PostgreSQL, MySQL, Snowflake, Redshift, DuckDB, and more via sqlglot
+
+#### API Components
+- `SQLColumnTracer` - Single query lineage analysis
+- `Pipeline` - Multi-query pipeline analysis
+- `MultiQueryParser` - Query parsing and table dependency resolution
+- `PipelineLineageBuilder` - Cross-query lineage construction
+- `RecursiveQueryParser` - Query structure parsing
+- `RecursiveLineageBuilder` - Single query lineage building
+- Export classes: `JSONExporter`, `CSVExporter`, `GraphVizExporter`
+- Diff classes: `PipelineDiff`, `ColumnDiff`
+
+#### Developer Experience
+- Comprehensive test suite with 16 test modules
+- Example scripts demonstrating all major features
+- GitHub Actions CI/CD with testing, linting, and formatting
+- Development tooling: pytest, ruff, mypy
+- Git pre-commit hook installation script
+
+### Dependencies
+- sqlglot >= 20.0.0 (SQL parsing)
+- graphviz >= 0.20.0 (visualization)
+- jinja2 >= 3.0.0 (templating)
+- langchain >= 1.0.5 (LLM integration)
+- langchain-core >= 1.0.4
+- langchain-ollama >= 1.0.0
+- cloudpickle >= 3.1.2
+
+### Documentation
+- Comprehensive README with quickstart examples
+- QUICKSTART.md for rapid onboarding
+- CONTRIBUTING.md for contributor guidelines
+- Detailed API documentation in code
+- Multiple working examples in `/examples` directory
+
+[0.1.0]: https://github.com/clpipe/clpipe/releases/tag/v0.1.0
