@@ -4,7 +4,7 @@ E-Commerce Pipeline Execution with DuckDB
 This script demonstrates how to:
 1. Generate fake source data
 2. Execute a SQL pipeline against DuckDB
-3. Use clpipe's pipeline.run() for orchestrated execution
+3. Use clgraph's pipeline.run() for orchestrated execution
 """
 
 import random
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import duckdb
 
-from clpipe import Pipeline
+from clgraph import Pipeline
 
 
 def generate_fake_data(

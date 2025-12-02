@@ -67,7 +67,7 @@ class ExampleRunner:
                 capture_output=True,
                 text=True,
                 timeout=30,  # 30 second timeout per example
-                cwd=self.examples_dir.parent,  # Run from clpipe/ directory
+                cwd=self.examples_dir.parent,  # Run from clgraph/ directory
             )
 
             output = result.stdout + result.stderr
@@ -84,7 +84,7 @@ class ExampleRunner:
         """Print script header."""
         print()
         print("=" * 80)
-        print(f"{BOLD}Running All clpipe Examples{RESET}")
+        print(f"{BOLD}Running All clgraph Examples{RESET}")
         print("=" * 80)
         print()
 

@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "clpipe"
+name = "clgraph"
 version = "0.0.2"
 description = "Column lineage and pipeline dependency analysis for SQL"
 readme = "README.md"
@@ -62,13 +62,13 @@ templates = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/clpipe/clpipe"
-Documentation = "https://github.com/clpipe/clpipe#readme"
-Repository = "https://github.com/clpipe/clpipe"
-Issues = "https://github.com/clpipe/clpipe/issues"
+Homepage = "https://github.com/mingjerli/clgraph"
+Documentation = "https://github.com/mingjerli/clgraph#readme"
+Repository = "https://github.com/mingjerli/clgraph"
+Issues = "https://github.com/mingjerli/clgraph/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/clpipe"]
+packages = ["src/clgraph"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

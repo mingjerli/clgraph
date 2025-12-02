@@ -4,7 +4,7 @@ Tests for Pipeline factory methods.
 
 import pytest
 
-from clpipe.pipeline import Pipeline
+from clgraph.pipeline import Pipeline
 
 
 class TestPipelineFromTuples:

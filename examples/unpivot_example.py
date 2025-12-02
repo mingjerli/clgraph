@@ -1,11 +1,11 @@
 """
 Example demonstrating SQL column lineage analysis with UNPIVOT operations.
 
-This example shows how clpipe analyzes UNPIVOT operations, which transform
+This example shows how clgraph analyzes UNPIVOT operations, which transform
 columns into rows for normalization and easier analysis.
 """
 
-from clpipe import SQLColumnTracer
+from clgraph import SQLColumnTracer
 
 
 def basic_unpivot_example():

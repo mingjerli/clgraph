@@ -16,8 +16,8 @@ from pathlib import Path
 # Add src to path for direct execution
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clpipe.multi_query import MultiQueryParser
-from clpipe.pipeline import PipelineLineageBuilder
+from clgraph.multi_query import MultiQueryParser
+from clgraph.pipeline import PipelineLineageBuilder
 
 
 def example_with_ollama():

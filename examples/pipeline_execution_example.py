@@ -11,7 +11,7 @@ import asyncio
 import time
 from datetime import datetime
 
-from clpipe.pipeline import Pipeline
+from clgraph.pipeline import Pipeline
 
 
 # ============================================================================

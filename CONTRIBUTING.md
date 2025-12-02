@@ -6,8 +6,8 @@ Thank you for your interest in contributing! This document provides guidelines f
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/clpipe.git
-cd clpipe
+git clone https://github.com/yourusername/clgraph.git
+cd clgraph
 ```
 
 2. Create a virtual environment:
@@ -30,7 +30,7 @@ pytest
 
 Run with coverage:
 ```bash
-pytest --cov=clpipe --cov-report=html
+pytest --cov=clgraph --cov-report=html
 ```
 
 Run specific test file:

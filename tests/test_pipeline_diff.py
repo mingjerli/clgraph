@@ -10,9 +10,9 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clpipe.models import ColumnEdge, ColumnNode
-from clpipe.pipeline import Pipeline
-from clpipe.table import TableDependencyGraph
+from clgraph.models import ColumnEdge, ColumnNode
+from clgraph.pipeline import Pipeline
+from clgraph.table import TableDependencyGraph
 
 
 def test_diff_no_changes():

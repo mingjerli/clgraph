@@ -10,8 +10,8 @@ Tests the complete flow:
 
 import pytest
 
-from clpipe.models import DescriptionSource
-from clpipe.pipeline import Pipeline
+from clgraph.models import DescriptionSource
+from clgraph.pipeline import Pipeline
 
 
 class TestMetadataIntegration:

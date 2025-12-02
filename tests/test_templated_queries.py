@@ -5,8 +5,8 @@ Ensures that template variables like {{project}} are properly handled
 and don't break table name resolution in column lineage.
 """
 
-from clpipe.multi_query import MultiQueryParser
-from clpipe.pipeline import PipelineLineageBuilder
+from clgraph.multi_query import MultiQueryParser
+from clgraph.pipeline import PipelineLineageBuilder
 
 
 def test_templated_query_with_joins():

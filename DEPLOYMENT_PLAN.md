@@ -8,16 +8,16 @@ This document outlines the complete plan for extracting the SQL parser as a stan
 
 The SQL parser has been successfully extracted into a standalone Python library:
 
-**Location**: `/Users/mingjerli/repo/clpipe/clpipe/`
+**Location**: `/Users/mingjerli/repo/clgraph/clgraph/`
 
 **Structure**:
 ```
-clpipe/
+clgraph/
 ├── .github/
 │   └── workflows/
 │       └── test.yml           # CI/CD for testing
 ├── src/
-│   └── clpipe/
+│   └── clgraph/
 │       ├── __init__.py        # Public API exports
 │       └── parser.py          # Core parser logic (2259 lines)
 ├── tests/
@@ -52,7 +52,7 @@ uv venv
 uv pip install -e ".[dev]"
 
 # For production
-pip install clpipe
+pip install clgraph
 ```
 
 **Testing**:
@@ -100,7 +100,7 @@ clvisualize/
 ```
 
 **Key Changes**:
-1. Remove `sql_parser.py` - use `clpipe` from PyPI
+1. Remove `sql_parser.py` - use `clgraph` from PyPI
 2. Each app in its own Docker container
 3. Nginx for reverse proxy and SSL
 4. Single docker-compose for local dev and deployment
@@ -217,7 +217,7 @@ docker-compose up -d
 ### Option 1: Monorepo (Simpler)
 ```
 company-platform/
-├── clpipe/          # Python library
+├── clgraph/          # Python library
 ├── clvisualize/         # Streamlit apps
 ├── website/             # Marketing site
 └── docker-compose.yml   # Deploy all together
@@ -228,19 +228,19 @@ company-platform/
 
 ### Option 2: Multi-repo (Recommended)
 ```
-clpipe/              # Separate repo, PyPI package
-clvisualize/             # Separate repo, depends on clpipe
+clgraph/              # Separate repo, PyPI package
+clvisualize/             # Separate repo, depends on clgraph
 company-website/         # Separate repo, embeds demos
 ```
 
-**Pros**: Clear separation, independent deployments, easier to open-source clpipe
+**Pros**: Clear separation, independent deployments, easier to open-source clgraph
 **Cons**: More repos to manage, need to coordinate releases
 
 ## Publishing Strategy
 
 ### SQL Lineage Library
-1. Push to GitHub: `github.com/yourcompany/clpipe`
-2. Publish to PyPI: `pip install clpipe`
+1. Push to GitHub: `github.com/yourcompany/clgraph`
+2. Publish to PyPI: `pip install clgraph`
 3. Versioning: Semantic versioning (0.1.0 → 0.2.0 → 1.0.0)
 4. Documentation: ReadTheDocs or GitHub Pages
 
@@ -272,7 +272,7 @@ company-website/         # Separate repo, embeds demos
 
 ## Next Actions
 
-1. [ ] Initialize git repo for clpipe
+1. [ ] Initialize git repo for clgraph
 2. [ ] Create GitHub repository
 3. [ ] Push code and create first release
 4. [ ] Restructure clvisualize as described above
@@ -285,7 +285,7 @@ company-website/         # Separate repo, embeds demos
 
 ## Notes
 
-- Keep clpipe library focused - no UI dependencies
+- Keep clgraph library focused - no UI dependencies
 - Demo apps should be lightweight and fast
 - Consider adding analytics to website (Google Analytics, Plausible)
 - Plan for scaling: Can move to Kubernetes later if needed

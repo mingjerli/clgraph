@@ -13,7 +13,7 @@ Author: Generated following Phase2_MULTI_QUERY_LINEAGE_DESIGN.md
 
 import pytest
 
-from clpipe import (
+from clgraph import (
     MultiQueryParser,
     PipelineLineageBuilder,
     SQLOperation,

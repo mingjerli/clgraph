@@ -1,11 +1,11 @@
 """
 Example demonstrating SQL column lineage analysis with PIVOT operations.
 
-This example shows how clpipe analyzes PIVOT operations, which transform
+This example shows how clgraph analyzes PIVOT operations, which transform
 rows into columns for easier analysis and reporting.
 """
 
-from clpipe import SQLColumnTracer
+from clgraph import SQLColumnTracer
 
 
 def basic_pivot_example():

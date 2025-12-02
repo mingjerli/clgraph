@@ -1,13 +1,13 @@
 """
 E-Commerce Pipeline Lineage Analysis
 
-This script demonstrates how to use clpipe to analyze the SQL pipeline
+This script demonstrates how to use clgraph to analyze the SQL pipeline
 in this example directory.
 """
 
 from pathlib import Path
 
-from clpipe import Pipeline
+from clgraph import Pipeline
 
 
 def load_sql_queries(sql_dir: Path) -> list[tuple[str, str]]:
@@ -149,7 +149,7 @@ def main():
     print("4. BACKWARD LINEAGE (Three levels of detail)")
     print("-" * 80)
     print("""
-  clpipe provides three methods for backward lineage tracing:
+  clgraph provides three methods for backward lineage tracing:
 
   | Method                        | Returns                      | Use Case                           |
   |-------------------------------|------------------------------|-------------------------------------|
@@ -266,7 +266,7 @@ def main():
     print("5. FORWARD LINEAGE / IMPACT ANALYSIS (Three levels of detail)")
     print("-" * 80)
     print("""
-  clpipe provides three methods for forward lineage (impact analysis):
+  clgraph provides three methods for forward lineage (impact analysis):
 
   | Method                       | Returns                      | Use Case                            |
   |------------------------------|------------------------------|-------------------------------------|

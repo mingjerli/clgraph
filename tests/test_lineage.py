@@ -26,8 +26,8 @@ Total: 56 test cases
 
 import pytest
 
-# Import from the clpipe library
-from clpipe import (
+# Import from the clgraph library
+from clgraph import (
     ColumnLineageGraph,
     QueryUnit,
     QueryUnitGraph,

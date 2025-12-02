@@ -2,7 +2,7 @@
 Example demonstrating multi-query pipeline lineage analysis
 """
 
-from clpipe import Pipeline
+from clgraph import Pipeline
 
 # Example: Data pipeline with multiple dependent queries
 queries = [

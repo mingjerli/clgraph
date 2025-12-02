@@ -1,7 +1,7 @@
 """
 E-Commerce Pipeline Metadata Management
 
-This script demonstrates how to use clpipe's metadata capabilities:
+This script demonstrates how to use clgraph's metadata capabilities:
 1. Parse inline SQL comment metadata
 2. Manually assign metadata (PII, owner, tags)
 3. Propagate metadata through lineage
@@ -16,7 +16,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from clpipe import Pipeline
+from clgraph import Pipeline
 
 
 def load_sql_queries(sql_dir: Path) -> list[tuple[str, str]]:
@@ -57,7 +57,7 @@ def main():
     print("1. INLINE SQL COMMENT METADATA")
     print("-" * 80)
     print("""
-  clpipe can parse structured metadata from SQL comments in the format:
+  clgraph can parse structured metadata from SQL comments in the format:
     <description> [key: value, key2: value2, ...]
 
   Example SQL:
@@ -193,7 +193,7 @@ def main():
     print("4. DESCRIPTION GENERATION")
     print("-" * 80)
     print("""
-  clpipe can generate descriptions for columns that don't have them.
+  clgraph can generate descriptions for columns that don't have them.
 
   Supported LLM backends:
     - Ollama (local, free): ollama pull llama3.2
@@ -267,7 +267,7 @@ def main():
         for col in sample_cols:
             try:
                 # Import the generate function
-                from clpipe.column import generate_description
+                from clgraph.column import generate_description
 
                 generate_description(col, pipeline.llm, pipeline)
                 print(f"    {col.table_name}.{col.column_name}:")

@@ -6,7 +6,7 @@
 
 ```bash
 # Navigate to the library
-cd clpipe
+cd clgraph
 
 # Create virtual environment
 uv venv
@@ -57,8 +57,8 @@ mypy src/
 python -m build
 
 # This creates:
-# - dist/clpipe-0.1.0.tar.gz (source distribution)
-# - dist/clpipe-0.1.0-py3-none-any.whl (wheel)
+# - dist/clgraph-0.1.0.tar.gz (source distribution)
+# - dist/clgraph-0.1.0-py3-none-any.whl (wheel)
 ```
 
 ### Publishing to PyPI
@@ -83,21 +83,21 @@ twine upload dist/*
 
 ```bash
 # From PyPI (once published)
-pip install clpipe
+pip install clgraph
 
 # From source
-pip install git+https://github.com/yourusername/clpipe.git
+pip install git+https://github.com/yourusername/clgraph.git
 
 # For development
-git clone https://github.com/yourusername/clpipe.git
-cd clpipe
+git clone https://github.com/yourusername/clgraph.git
+cd clgraph
 pip install -e .
 ```
 
 ### Basic Usage
 
 ```python
-from clpipe import SQLColumnTracer
+from clgraph import SQLColumnTracer
 
 sql = """
 SELECT
@@ -159,13 +159,13 @@ pytest
 If you get import errors after installation:
 ```bash
 # Make sure you're in the right directory
-cd clpipe
+cd clgraph
 
 # Reinstall in editable mode
 uv pip install -e .
 
 # Verify installation
-python -c "from clpipe import SQLColumnTracer; print('Success!')"
+python -c "from clgraph import SQLColumnTracer; print('Success!')"
 ```
 
 ### Test Failures
@@ -197,6 +197,6 @@ uv pip install -e ".[dev]"
 1. Check out the [README.md](README.md) for detailed documentation
 2. Read the [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines
 3. Review the [DEPLOYMENT_PLAN.md](DEPLOYMENT_PLAN.md) for the overall project strategy
-4. Explore the code in `src/clpipe/parser.py`
+4. Explore the code in `src/clgraph/parser.py`
 5. Run the examples in `examples/`
 6. Write your own queries and test them!
