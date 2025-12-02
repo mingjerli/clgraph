@@ -50,11 +50,7 @@ class ExampleRunner:
 
         # Filter out examples that require LLM API keys if requested
         if self.skip_llm:
-            examples = [
-                ex
-                for ex in examples
-                if "llm_description_generation" not in ex.name
-            ]
+            examples = [ex for ex in examples if "llm_description_generation" not in ex.name]
 
         return examples
 
@@ -153,7 +149,9 @@ class ExampleRunner:
         self.print_header()
 
         if self.skip_llm:
-            print(f"{YELLOW}⚠️  Skipping LLM examples (use without --skip-llm to include them){RESET}")
+            print(
+                f"{YELLOW}⚠️  Skipping LLM examples (use without --skip-llm to include them){RESET}"
+            )
             print()
 
         for idx, example_path in enumerate(examples, 1):
