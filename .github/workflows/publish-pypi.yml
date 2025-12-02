@@ -87,6 +87,7 @@ jobs:
           path: dist/
 
       - name: Publish to TestPyPI
+        continue-on-error: true
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
@@ -95,6 +96,7 @@ jobs:
   publish-pypi:
     name: Publish to PyPI
     needs: publish-testpypi
+    if: always()  # Run even if TestPyPI fails
     runs-on: ubuntu-latest
     environment:
       name: pypi
