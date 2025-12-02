@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.2] - 2025-12-02
+
+### Changed
+- Refactored version management to use single source of truth (pyproject.toml)
+- Version now read dynamically from package metadata via `importlib.metadata.version()`
+
+### Fixed
+- CI/CD pipeline improvements for PyPI publishing workflow
+
 ## [0.0.1] - 2025-12-02
 
 ### Added
@@ -70,4 +79,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Detailed API documentation in code
 - Multiple working examples in `/examples` directory
 
+[0.0.2]: https://github.com/mingjerli/clpipe/releases/tag/v0.0.2
 [0.0.1]: https://github.com/mingjerli/clpipe/releases/tag/v0.0.1

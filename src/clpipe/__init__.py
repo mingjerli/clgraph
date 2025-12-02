@@ -4,7 +4,9 @@ SQL Lineage - Column lineage and pipeline dependency analysis for SQL
 A powerful library for tracing data lineage through SQL queries and multi-query pipelines.
 """
 
-__version__ = "0.0.1"
+from importlib.metadata import version
+
+__version__ = version("clpipe")
 
 # Import main public API from parser
 # Import diff functionality
