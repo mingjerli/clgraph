@@ -74,7 +74,7 @@ class PipelineLineageBuilder:
                     query_lineage = lineage_builder.build()
 
                     # Store query lineage
-                    pipeline.query_lineages[query_id] = query_lineage
+                    pipeline.query_graphs[query_id] = query_lineage
                     query.query_lineage = query_lineage
 
                     # Step 2b: Add columns to pipeline graph
@@ -370,7 +370,7 @@ class Pipeline:
 
         # Column-level lineage graph
         self.column_graph: PipelineLineageGraph = PipelineLineageGraph()
-        self.query_lineages: Dict[str, ColumnLineageGraph] = {}
+        self.query_graphs: Dict[str, ColumnLineageGraph] = {}
         self.llm: Optional[Any] = None  # LangChain BaseChatModel
 
         # Convert tuples to plain SQL strings for MultiQueryParser
@@ -657,7 +657,7 @@ class Pipeline:
         instance.dialect = "bigquery"
         instance.query_mapping = {}
         instance.column_graph = PipelineLineageGraph()
-        instance.query_lineages = {}
+        instance.query_graphs = {}
         instance.llm = None
         instance.table_graph = table_graph
         return instance

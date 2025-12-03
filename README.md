@@ -68,7 +68,7 @@ JOIN monthly_sales ms ON u.id = ms.user_id
 pipeline = Pipeline.from_sql_string(sql, dialect="bigquery")
 
 # Get output columns from the query's lineage
-query_lineage = pipeline.query_lineages["select"]
+query_lineage = pipeline.query_graphs["select"]
 print(query_lineage)
 
 # Get source tables
@@ -179,36 +179,27 @@ for col in pipeline.columns.values():
 ### Metadata Management and Export
 
 ```python
-from clgraph import (
-    MultiQueryParser,
-    PipelineLineageBuilder,
-    JSONExporter,
-    CSVExporter,
-    GraphVizExporter
-)
+from clgraph import Pipeline, JSONExporter, CSVExporter, GraphVizExporter
 
 # Build pipeline
-sql_queries = [
-    """
+queries = [
+    ("raw.orders", """
         CREATE TABLE raw.orders AS
         SELECT order_id, user_email, amount, order_date
         FROM source.orders
-    """,
-    """
+    """),
+    ("analytics.revenue", """
         CREATE TABLE analytics.revenue AS
         SELECT user_email, SUM(amount) as total_revenue
         FROM raw.orders
         GROUP BY user_email
-    """,
+    """),
 ]
 
-parser = MultiQueryParser()
-table_graph = parser.parse_queries(sql_queries)
-builder = PipelineLineageBuilder()
-lineage_graph = builder.build(table_graph)
+pipeline = Pipeline(queries, dialect="bigquery")
 
 # Set source metadata
-for col in lineage_graph.columns.values():
+for col in pipeline.columns.values():
     if col.table_name == "raw.orders" and col.column_name == "user_email":
         col.set_source_description("Customer email address")
         col.owner = "data-team"
@@ -216,10 +207,10 @@ for col in lineage_graph.columns.values():
         col.tags = {"contact", "sensitive"}
 
 # Propagate metadata through lineage
-lineage_graph.propagate_all_metadata()
+pipeline.propagate_all_metadata()
 
 # Find all PII columns
-pii_columns = lineage_graph.get_pii_columns()
+pii_columns = pipeline.column_graph.get_pii_columns()
 print(f"Found {len(pii_columns)} PII columns:")
 for col in pii_columns:
     print(f"  {col}")
@@ -232,51 +223,48 @@ print("-" * 60)
 
 # Export to different formats
 print("Exporting to multiple formats...")
-JSONExporter.export_to_file(lineage_graph, "lineage.json")
-CSVExporter.export_columns_to_file(lineage_graph, "columns.csv")
-GraphVizExporter.export_to_file(lineage_graph, "lineage.dot")
+JSONExporter.export_to_file(pipeline.column_graph, "lineage.json")
+CSVExporter.export_columns_to_file(pipeline.column_graph, "columns.csv")
+GraphVizExporter.export_to_file(pipeline.column_graph, "lineage.dot")
 print("✓ Exported to lineage.json, columns.csv, lineage.dot")
 ```
 
 ### LLM-Powered Description Generation
 
 ```python
-from clgraph import MultiQueryParser, PipelineLineageBuilder
+from clgraph import Pipeline
 from langchain_ollama import ChatOllama
 
 # Build pipeline
-sql_queries = [
-    """
+queries = [
+    ("raw.orders", """
         CREATE TABLE raw.orders AS
         SELECT order_id, user_email, amount, order_date
         FROM source.orders
-    """,
-    """
+    """),
+    ("analytics.revenue", """
         CREATE TABLE analytics.revenue AS
         SELECT user_email, SUM(amount) as total_revenue
         FROM raw.orders
         GROUP BY user_email
-    """,
+    """),
 ]
 
-parser = MultiQueryParser()
-table_graph = parser.parse_queries(sql_queries)
-builder = PipelineLineageBuilder()
-lineage_graph = builder.build(table_graph)
+pipeline = Pipeline(queries, dialect="bigquery")
 
-# Configure LLM (Ollama - free, local)
+# Configure LLM (Ollama - free, local), or replace to any LangChain Chat models.
 llm = ChatOllama(model="qwen3-coder:30b", temperature=0.3)
-lineage_graph.llm = llm
+pipeline.column_graph.llm = llm
 
 # Generate descriptions for all columns
-print(f"Generating descriptions for {len(lineage_graph.columns)} columns...")
-lineage_graph.generate_all_descriptions(verbose=True)
+print(f"Generating descriptions for {len(pipeline.columns)} columns...")
+pipeline.generate_all_descriptions(verbose=True)
 
 print("-" * 60)
 
 # View generated descriptions
 columns_with_descriptions = [
-    col for col in lineage_graph.columns.values() if col.description
+    col for col in pipeline.columns.values() if col.description
 ]
 print(f"Generated descriptions for {len(columns_with_descriptions)} columns:")
 for col in columns_with_descriptions:
@@ -286,28 +274,29 @@ for col in columns_with_descriptions:
 
 ## Architecture
 
-The library consists of three main components:
+### Conceptual Structure
 
-### 1. Query Parser (`RecursiveQueryParser`)
-Parses SQL into a `QueryUnitGraph` representing the structure:
-- Main query
-- CTEs (Common Table Expressions)
-- Subqueries (in FROM, SELECT, WHERE, HAVING clauses)
-- Dependency relationships
+clgraph analyzes SQL through a hierarchical decomposition:
 
-### 2. Lineage Builder (`RecursiveLineageBuilder`)
-Builds a `ColumnLineageGraph` showing column-level dependencies:
-- Column nodes (sources and derived columns)
-- Edges representing transformations
-- Support for star notation and modifiers
-- Forward and backward lineage queries
+1. **Pipeline** - A collection of SQL statements that together form a data pipeline
+   - Example: Multiple CREATE TABLE statements that depend on each other
+   - Represents the entire data transformation workflow
 
-### 3. Multi-Query Support (`MultiQueryParser`, `PipelineLineageBuilder`)
-Handles multiple related queries as a pipeline:
-- Table dependency resolution
-- Cross-query column lineage
-- Template variable support
-- Pipeline-wide impact analysis
+2. **SQL Statement** - Each statement can break into multiple query units
+   - Example: A CREATE TABLE statement with CTEs contains multiple query units
+   - Typically mutates or creates a database object (table, view, etc.)
+
+3. **Query Unit** - A SELECT statement representing a table-like object
+   - Can be a main query, CTE (Common Table Expression), or subquery
+   - Represents a temporary or real table in the dependency graph
+   - Each query unit reads from tables and produces columns
+
+4. **Column Expressions** - Within each query unit, individual column definitions
+   - Example: `SUM(amount) as total_revenue` is a column expression
+   - Represents the transformation logic for a single output column
+   - Tracks dependencies on input columns
+
+This hierarchy allows clgraph to trace column lineage at any level: from pipeline-wide dependencies down to individual expression transformations.
 
 ## Pipeline Graph Objects
 
