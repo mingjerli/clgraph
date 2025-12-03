@@ -214,6 +214,9 @@ class ColumnNode:
             return False
         return self.full_name == other.full_name
 
+    def __repr__(self):
+        return f"ColumnNode('{self.full_name}')"
+
     def get_display_name(self) -> str:
         """Get human-readable display name for UI"""
         if not self.is_star:
@@ -281,6 +284,9 @@ class ColumnEdge:
             return False
         return self.from_node == other.from_node and self.to_node == other.to_node
 
+    def __repr__(self):
+        return f"ColumnEdge({self.from_node.full_name!r} -> {self.to_node.full_name!r})"
+
 
 @dataclass
 class ColumnLineageGraph:
@@ -329,6 +335,37 @@ class ColumnLineageGraph:
     def get_edges_to(self, node: ColumnNode) -> List[ColumnEdge]:
         """Get all edges pointing to a node"""
         return [e for e in self.edges if e.to_node == node]
+
+    def __repr__(self) -> str:
+        query_units = sorted({n.unit_id for n in self.nodes.values() if n.unit_id})
+        node_lines = sorted(
+            (
+                f"{node.full_name} (layer={node.layer}, type={node.node_type})"
+                for node in self.nodes.values()
+            ),
+            key=lambda s: s,
+        )
+        edges = sorted(
+            (
+                f"{edge.from_node.full_name} -> {edge.to_node.full_name} ({edge.edge_type})"
+                for edge in self.edges
+            ),
+            key=lambda s: s,
+        )
+        query_units_display = ", ".join(query_units)
+        nodes_display = "\n  ".join(node_lines)
+        edges_display = "\n  ".join(edges)
+        return (
+            "ColumnLineageGraph(\n"
+            f"  query_units=[{query_units_display}]\n"
+            "  nodes=[\n"
+            f"  {nodes_display}\n"
+            "  ]\n"
+            "  edges=[\n"
+            f"  {edges_display}\n"
+            "  ]\n"
+            ")"
+        )
 
 
 # ============================================================================

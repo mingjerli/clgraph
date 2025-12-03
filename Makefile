@@ -1,4 +1,4 @@
-.PHONY: help setup test test-verbose test-coverage clean lint lint-fix lint-fix-unsafe format format-check type-check check check-examples-verbose pre-commit install install-hooks build publish-test publish docs
+.PHONY: help setup test test-verbose test-coverage test-docs test-docs-verbose clean lint lint-fix lint-fix-unsafe format format-check type-check check check-examples-verbose pre-commit install install-hooks build publish-test publish docs
 
 # Default target
 help:
@@ -7,13 +7,15 @@ help:
 	@echo "  make test           - Run tests locally"
 	@echo "  make test-verbose   - Run tests with verbose output"
 	@echo "  make test-coverage  - Run tests with coverage report"
+	@echo "  make test-docs      - Test README documentation examples"
+	@echo "  make test-docs-verbose - Test README examples with detailed output"
 	@echo "  make lint           - Run linting checks (ruff)"
 	@echo "  make lint-fix       - Auto-fix linting issues"
 	@echo "  make lint-fix-unsafe- Auto-fix linting issues (including unsafe fixes)"
 	@echo "  make format         - Format code with ruff"
 	@echo "  make format-check   - Check formatting without modifying files"
 	@echo "  make type-check     - Run type checking with mypy"
-	@echo "  make check          - Run all checks (format, lint, type-check, test)"
+	@echo "  make check          - Run all checks (format, lint, type-check, test, test-docs)"
 	@echo "  make check-examples-verbose - Run all examples with verbose output"
 	@echo "  make pre-commit     - Run pre-commit hook (ruff + ty)"
 	@echo "  make install        - Install package in editable mode"
@@ -65,6 +67,18 @@ test-coverage:
 	uv run python -m pytest tests/ -v --cov=clpipe --cov-report=term-missing --cov-report=html
 	@echo "✓ Coverage report generated in htmlcov/"
 
+# Test README documentation examples
+test-docs:
+	@echo "Testing README documentation examples..."
+	uv run pytest tests/test_readme_examples.py -v -s
+	@echo "✓ Documentation tests complete!"
+
+# Test README with standalone script (detailed output)
+test-docs-verbose:
+	@echo "Testing README examples with detailed output..."
+	uv run python tests/markdown_examples.py README.md -v
+	@echo "✓ Documentation tests complete!"
+
 # Run linting checks
 lint:
 	@echo "Running linting checks..."
@@ -102,7 +116,7 @@ type-check:
 	@echo "✓ Type checking complete!"
 
 # Run all checks
-check: format lint type-check test
+check: format lint type-check test test-docs
 	@echo ""
 	@echo "✓ All checks passed!"
 
