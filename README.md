@@ -210,7 +210,7 @@ for col in pipeline.columns.values():
 pipeline.propagate_all_metadata()
 
 # Find all PII columns
-pii_columns = pipeline.column_graph.get_pii_columns()
+pii_columns = pipeline.get_pii_columns()
 print(f"Found {len(pii_columns)} PII columns:")
 for col in pii_columns:
     print(f"  {col}")
@@ -223,14 +223,15 @@ print("-" * 60)
 
 # Export to different formats
 print("Exporting to multiple formats...")
-JSONExporter.export_to_file(pipeline.column_graph, "lineage.json")
-CSVExporter.export_columns_to_file(pipeline.column_graph, "columns.csv")
-GraphVizExporter.export_to_file(pipeline.column_graph, "lineage.dot")
+JSONExporter.export_to_file(pipeline, "lineage.json")
+CSVExporter.export_columns_to_file(pipeline, "columns.csv")
+GraphVizExporter.export_to_file(pipeline, "lineage.dot")
 print("✓ Exported to lineage.json, columns.csv, lineage.dot")
 ```
 
 ### LLM-Powered Description Generation
 
+<!-- skip-test -->
 ```python
 from clgraph import Pipeline
 from langchain_ollama import ChatOllama
