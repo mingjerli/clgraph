@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "clgraph-lineage": {
+      "command": "python",
+      "args": [
+        "/path/to/clgraph/examples/mcp_server.py",
+        "--config",
+        "/path/to/clgraph/examples/mcp_config_example.json"
+      ],
+      "env": {
+        "PYTHONPATH": "/path/to/clgraph/src"
+      }
+    }
+  }
+}

@@ -64,6 +64,9 @@ nlp = [
     "chromadb>=0.4.0",
     "sentence-transformers>=2.2.0",
 ]
+mcp = [
+    "mcp>=0.9.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/mingjerli/clgraph"

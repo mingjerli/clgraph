@@ -1,0 +1,22 @@
+{
+  "dialect": "bigquery",
+  "enable_nlp": true,
+  "embedding_model": "all-MiniLM-L6-v2",
+  "collection_name": "my_lineage",
+  "retrieval_k": 5,
+  "rebuild_index": false,
+  "queries": [
+    {
+      "name": "raw_events",
+      "sql": "CREATE TABLE raw_events AS SELECT event_id, user_id, user_email, event_type, event_timestamp, revenue_amount FROM source_events"
+    },
+    {
+      "name": "daily_metrics",
+      "sql": "CREATE TABLE daily_metrics AS SELECT DATE(event_timestamp) as event_date, user_id, user_email, COUNT(*) as event_count, SUM(revenue_amount) as total_revenue FROM raw_events GROUP BY 1, 2, 3"
+    },
+    {
+      "name": "user_summary",
+      "sql": "CREATE TABLE user_summary AS SELECT user_id, user_email, SUM(total_revenue) as lifetime_revenue, SUM(event_count) as total_events FROM daily_metrics GROUP BY user_id, user_email"
+    }
+  ]
+}
