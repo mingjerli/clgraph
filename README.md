@@ -1,6 +1,6 @@
 # clgraph
 
-A powerful Python library for SQL column lineage analysis and pipeline dependency tracking.
+A Python library for parsing SQL queries into lineage graphs, enabling column-level dependency tracking, metadata propagation, and impact analysis.
 
 ## Features
 
@@ -45,7 +45,7 @@ uv pip install clgraph
 ### Single Query Column Lineage
 
 ```python
-from clgraph import SQLColumnTracer
+from clgraph import Pipeline
 
 sql = """
 WITH monthly_sales AS (
@@ -64,17 +64,20 @@ FROM users u
 JOIN monthly_sales ms ON u.id = ms.user_id
 """
 
-tracer = SQLColumnTracer(sql, dialect="bigquery")
-lineage = tracer.build_column_lineage_graph()
+# Pipeline works for single queries too
+pipeline = Pipeline.from_sql_string(sql, dialect="bigquery")
 
-# Get output columns
-output_cols = lineage.get_output_nodes()
-for col in output_cols:
-    print(f"  {col.column_name}")
+# Get output columns from the query's lineage
+query_lineage = pipeline.query_graphs["select"]
+print(query_lineage)
 
 # Get source tables
-input_nodes = lineage.get_input_nodes()
+input_nodes = query_lineage.get_input_nodes()
 source_tables = {node.table_name for node in input_nodes if node.table_name}
+print("-"*60)
+print(f"{len(source_tables)} source tables:")
+for table in source_tables:
+    print(f"  {table}")
 ```
 
 ### Multi-Query Pipeline Lineage
@@ -105,18 +108,31 @@ queries = [
 
 pipeline = Pipeline(queries, dialect="bigquery")
 
+# Show pipeline structure
+print(f"Pipeline with {len(pipeline.table_graph.queries)} queries")
+print("-" * 60)
+
 # Table execution order
 execution_order = pipeline.table_graph.get_execution_order()
+print(f"Execution order ({len(execution_order)} tables):")
+for i, table in enumerate(execution_order, 1):
+    print(f"  {i}. {table}")
+
+print("-" * 60)
 
 # Trace a column backward through the pipeline
 sources = pipeline.trace_column_backward("user_summary", "event_count")
+print(f"Backward lineage for user_summary.event_count ({len(sources)} sources):")
 for source in sources:
-    print(f"  {source.table_name}.{source.column_name}")
+    print(f"  {source}")
+
+print("-" * 60)
 
 # Forward lineage / Impact analysis
 impacts = pipeline.trace_column_forward("source_events", "event_timestamp")
+print(f"Forward lineage for source_events.event_timestamp ({len(impacts)} impacts):")
 for impact in impacts:
-    print(f"  {impact.table_name}.{impact.column_name}")
+    print(f"  {impact}")
 ```
 
 ### Metadata from SQL Comments
@@ -133,35 +149,57 @@ FROM user_activity
 GROUP BY user_id, email
 """
 
-pipeline = Pipeline([("user_metrics", sql)], dialect="bigquery")
+pipeline = Pipeline.from_sql_string(sql, dialect="bigquery")
 
 # Metadata is automatically extracted from comments
-for col in pipeline.columns.values():
-    if col.pii:
-        print(f"PII Column: {col.full_name}")
+print(f"Total columns: {len(pipeline.columns)}")
+print("-" * 60)
+
+pii_columns = [col for col in pipeline.columns.values() if col.pii]
+print(f"PII columns ({len(pii_columns)}):")
+for col in pii_columns:
+    print(f"  {col.full_name}")
     if col.owner:
-        print(f"Owner: {col.owner}")
+        print(f"    Owner: {col.owner}")
+    if col.tags:
+        print(f"    Tags: {', '.join(col.tags)}")
+
+print("-" * 60)
+
+# Show all column metadata
+for col in pipeline.columns.values():
+    if col.sql_metadata:
+        print(f"{col.full_name}:")
+        if col.sql_metadata.description:
+            print(f"  Description: {col.sql_metadata.description}")
+        if col.sql_metadata.pii is not None:
+            print(f"  PII: {col.sql_metadata.pii}")
 ```
 
 ### Metadata Management and Export
 
 ```python
-from clgraph import (
-    MultiQueryParser,
-    PipelineLineageBuilder,
-    JSONExporter,
-    CSVExporter,
-    GraphVizExporter
-)
+from clgraph import Pipeline, JSONExporter, CSVExporter, GraphVizExporter
 
 # Build pipeline
-parser = MultiQueryParser()
-table_graph = parser.parse_queries(sql_queries)
-builder = PipelineLineageBuilder()
-lineage_graph = builder.build(table_graph)
+queries = [
+    ("raw.orders", """
+        CREATE TABLE raw.orders AS
+        SELECT order_id, user_email, amount, order_date
+        FROM source.orders
+    """),
+    ("analytics.revenue", """
+        CREATE TABLE analytics.revenue AS
+        SELECT user_email, SUM(amount) as total_revenue
+        FROM raw.orders
+        GROUP BY user_email
+    """),
+]
+
+pipeline = Pipeline(queries, dialect="bigquery")
 
 # Set source metadata
-for col in lineage_graph.columns.values():
+for col in pipeline.columns.values():
     if col.table_name == "raw.orders" and col.column_name == "user_email":
         col.set_source_description("Customer email address")
         col.owner = "data-team"
@@ -169,75 +207,103 @@ for col in lineage_graph.columns.values():
         col.tags = {"contact", "sensitive"}
 
 # Propagate metadata through lineage
-lineage_graph.propagate_all_metadata()
+pipeline.propagate_all_metadata()
 
 # Find all PII columns
-pii_columns = lineage_graph.get_pii_columns()
-print(f"Found {len(pii_columns)} PII columns")
+pii_columns = pipeline.get_pii_columns()
+print(f"Found {len(pii_columns)} PII columns:")
+for col in pii_columns:
+    print(f"  {col}")
+    if col.owner:
+        print(f"    Owner: {col.owner}")
+    if col.tags:
+        print(f"    Tags: {', '.join(col.tags)}")
+
+print("-" * 60)
 
 # Export to different formats
-JSONExporter.export_to_file(lineage_graph, "lineage.json")
-CSVExporter.export_columns_to_file(lineage_graph, "columns.csv")
-GraphVizExporter.export_to_file(lineage_graph, "lineage.dot")
-
-# Track changes between versions
-diff = new_lineage_graph.diff(old_lineage_graph)
-print(diff.summary())
+print("Exporting to multiple formats...")
+JSONExporter.export_to_file(pipeline, "lineage.json")
+CSVExporter.export_columns_to_file(pipeline, "columns.csv")
+GraphVizExporter.export_to_file(pipeline, "lineage.dot")
+print("✓ Exported to lineage.json, columns.csv, lineage.dot")
 ```
 
 ### LLM-Powered Description Generation
 
+<!-- skip-test -->
 ```python
-from clgraph import MultiQueryParser, PipelineLineageBuilder
+from clgraph import Pipeline
 from langchain_ollama import ChatOllama
 
 # Build pipeline
-parser = MultiQueryParser()
-table_graph = parser.parse_queries(sql_queries)
-builder = PipelineLineageBuilder()
-lineage_graph = builder.build(table_graph)
+queries = [
+    ("raw.orders", """
+        CREATE TABLE raw.orders AS
+        SELECT order_id, user_email, amount, order_date
+        FROM source.orders
+    """),
+    ("analytics.revenue", """
+        CREATE TABLE analytics.revenue AS
+        SELECT user_email, SUM(amount) as total_revenue
+        FROM raw.orders
+        GROUP BY user_email
+    """),
+]
 
-# Configure LLM (Ollama - free, local)
+pipeline = Pipeline(queries, dialect="bigquery")
+
+# Configure LLM (Ollama - free, local), or replace to any LangChain Chat models.
 llm = ChatOllama(model="qwen3-coder:30b", temperature=0.3)
-lineage_graph.llm = llm
+pipeline.column_graph.llm = llm
 
 # Generate descriptions for all columns
-lineage_graph.generate_all_descriptions(verbose=True)
+print(f"Generating descriptions for {len(pipeline.columns)} columns...")
+pipeline.generate_all_descriptions(verbose=True)
+
+print("-" * 60)
 
 # View generated descriptions
-for col in lineage_graph.columns.values():
-    print(f"{col.full_name}: {col.description}")
+columns_with_descriptions = [
+    col for col in pipeline.columns.values() if col.description
+]
+print(f"Generated descriptions for {len(columns_with_descriptions)} columns:")
+for col in columns_with_descriptions:
+    print(f"  {col.full_name}:")
+    print(f"    {col.description}")
 ```
 
 ## Architecture
 
-The library consists of three main components:
+### Conceptual Structure
 
-### 1. Query Parser (`RecursiveQueryParser`)
-Parses SQL into a `QueryUnitGraph` representing the structure:
-- Main query
-- CTEs (Common Table Expressions)
-- Subqueries (in FROM, SELECT, WHERE, HAVING clauses)
-- Dependency relationships
+clgraph analyzes SQL through a hierarchical decomposition:
 
-### 2. Lineage Builder (`RecursiveLineageBuilder`)
-Builds a `ColumnLineageGraph` showing column-level dependencies:
-- Column nodes (sources and derived columns)
-- Edges representing transformations
-- Support for star notation and modifiers
-- Forward and backward lineage queries
+1. **Pipeline** - A collection of SQL statements that together form a data pipeline
+   - Example: Multiple CREATE TABLE statements that depend on each other
+   - Represents the entire data transformation workflow
 
-### 3. Multi-Query Support (`MultiQueryParser`, `PipelineLineageBuilder`)
-Handles multiple related queries as a pipeline:
-- Table dependency resolution
-- Cross-query column lineage
-- Template variable support
-- Pipeline-wide impact analysis
+2. **SQL Statement** - Each statement can break into multiple query units
+   - Example: A CREATE TABLE statement with CTEs contains multiple query units
+   - Typically mutates or creates a database object (table, view, etc.)
+
+3. **Query Unit** - A SELECT statement representing a table-like object
+   - Can be a main query, CTE (Common Table Expression), or subquery
+   - Represents a temporary or real table in the dependency graph
+   - Each query unit reads from tables and produces columns
+
+4. **Column Expressions** - Within each query unit, individual column definitions
+   - Example: `SUM(amount) as total_revenue` is a column expression
+   - Represents the transformation logic for a single output column
+   - Tracks dependencies on input columns
+
+This hierarchy allows clgraph to trace column lineage at any level: from pipeline-wide dependencies down to individual expression transformations.
 
 ## Pipeline Graph Objects
 
 A `Pipeline` contains two graph structures for lineage analysis:
 
+<!-- skip-test -->
 ```python
 from clgraph import Pipeline
 
@@ -252,6 +318,7 @@ pipeline = Pipeline(queries, dialect="bigquery")
 
 The `TableDependencyGraph` tracks table-level dependencies:
 
+<!-- skip-test -->
 ```python
 # Access tables and queries
 pipeline.table_graph.tables      # Dict[str, TableNode]
@@ -280,6 +347,7 @@ table_order = pipeline.table_graph.get_execution_order()
 
 The `PipelineLineageGraph` tracks column-level lineage:
 
+<!-- skip-test -->
 ```python
 # Access columns and edges
 pipeline.column_graph.columns    # Dict[str, ColumnNode]
@@ -306,6 +374,7 @@ downstream = pipeline.column_graph.get_downstream("raw.orders.amount")
 
 For complete lineage (not just direct dependencies), use Pipeline methods:
 
+<!-- skip-test -->
 ```python
 # Trace backward to ultimate sources (recursive)
 sources = pipeline.trace_column_backward("final_table", "metric")
@@ -332,6 +401,8 @@ Built on [sqlglot](https://github.com/tobymao/sqlglot), supporting:
 - And many more
 
 Specify dialect when creating the tracer:
+
+<!-- skip-test -->
 ```python
 tracer = SQLColumnTracer(sql, dialect="postgres")
 pipeline = Pipeline(queries, dialect="snowflake")
