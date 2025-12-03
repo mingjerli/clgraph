@@ -1,0 +1,17 @@
+# Requirements for NLP Vector Database RAG Example
+# Install with: pip install -r requirements-nlp.txt
+
+# Base clgraph dependencies
+clgraph>=0.0.2
+
+# Vector database
+chromadb>=0.4.0
+
+# Embeddings
+sentence-transformers>=2.2.0
+torch>=2.0.0  # Required by sentence-transformers
+
+# Optional: LLM integration
+# Uncomment if you want to use LLM-powered RAG
+# langchain>=0.1.0
+# langchain-ollama>=0.1.0
