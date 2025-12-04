@@ -80,6 +80,37 @@ for table in source_tables:
     print(f"  {table}")
 ```
 
+**Output:**
+```
+ColumnLineageGraph(
+  query_units=[cte:monthly_sales, main]
+  nodes=[
+  monthly_sales.month (layer=cte, type=expression)
+  monthly_sales.total_amount (layer=cte, type=aggregate)
+  monthly_sales.user_id (layer=cte, type=direct_column)
+  orders.amount (layer=input, type=base_column)
+  orders.order_date (layer=input, type=base_column)
+  orders.user_id (layer=input, type=base_column)
+  output.month (layer=output, type=direct_column)
+  output.name (layer=output, type=direct_column)
+  output.total_amount (layer=output, type=direct_column)
+  users.name (layer=input, type=base_column)
+  ]
+  edges=[
+  monthly_sales.month -> output.month (direct_column)
+  monthly_sales.total_amount -> output.total_amount (direct_column)
+  orders.amount -> monthly_sales.total_amount (aggregate)
+  orders.order_date -> monthly_sales.month (expression)
+  orders.user_id -> monthly_sales.user_id (direct_column)
+  users.name -> output.name (direct_column)
+  ]
+)
+------------------------------------------------------------
+2 source tables:
+  users
+  orders
+```
+
 ### Multi-Query Pipeline Lineage
 
 ```python
@@ -135,6 +166,24 @@ for impact in impacts:
     print(f"  {impact}")
 ```
 
+**Output:**
+```
+Pipeline with 3 queries
+------------------------------------------------------------
+Execution order (5 tables):
+  1. source_events
+  2. users
+  3. raw_events
+  4. daily_active_users
+  5. user_summary
+------------------------------------------------------------
+Backward lineage for user_summary.event_count (1 sources):
+  ColumnNode('daily_active_users:raw_events.*')
+------------------------------------------------------------
+Forward lineage for source_events.event_timestamp (1 impacts):
+  ColumnNode('user_summary:user_summary.activity_date')
+```
+
 ### Metadata from SQL Comments
 
 ```python
@@ -174,6 +223,16 @@ for col in pipeline.columns.values():
             print(f"  Description: {col.sql_metadata.description}")
         if col.sql_metadata.pii is not None:
             print(f"  PII: {col.sql_metadata.pii}")
+```
+
+**Output:**
+```
+Total columns: 6
+------------------------------------------------------------
+PII columns (1):
+  select:select.email
+    Owner: data-team
+------------------------------------------------------------
 ```
 
 ### Metadata Management and Export
@@ -229,6 +288,25 @@ GraphVizExporter.export_to_file(pipeline, "lineage.dot")
 print("✓ Exported to lineage.json, columns.csv, lineage.dot")
 ```
 
+**Output:**
+```
+📊 Propagating metadata for 8 columns...
+✅ Done! Propagated metadata for 8 columns
+Found 3 PII columns:
+  ColumnNode('raw.orders:raw.orders.user_email')
+    Owner: data-team
+    Tags: contact, sensitive
+  ColumnNode('analytics.revenue:analytics.revenue.user_email')
+    Owner: data-team
+    Tags: contact, sensitive
+  ColumnNode('analytics.revenue:raw.orders.user_email')
+    Owner: data-team
+    Tags: contact, sensitive
+------------------------------------------------------------
+Exporting to multiple formats...
+✓ Exported to lineage.json, columns.csv, lineage.dot
+```
+
 ### LLM-Powered Description Generation
 
 <!-- skip-test -->
@@ -255,7 +333,7 @@ pipeline = Pipeline(queries, dialect="bigquery")
 
 # Configure LLM (Ollama - free, local), or replace to any LangChain Chat models.
 llm = ChatOllama(model="qwen3-coder:30b", temperature=0.3)
-pipeline.column_graph.llm = llm
+pipeline.llm = llm
 
 # Generate descriptions for all columns
 print(f"Generating descriptions for {len(pipeline.columns)} columns...")
@@ -271,6 +349,31 @@ print(f"Generated descriptions for {len(columns_with_descriptions)} columns:")
 for col in columns_with_descriptions:
     print(f"  {col.full_name}:")
     print(f"    {col.description}")
+```
+
+**Output:**
+```
+Generating descriptions for 12 columns...
+📊 Generating descriptions for 8 columns...
+✅ Done! Generated 8 descriptions
+------------------------------------------------------------
+Generated descriptions for 8 columns:
+  raw.orders:raw.orders.order_id:
+    Unique identifier for each customer order placed in the system per order record.
+  raw.orders:raw.orders.user_email:
+    User email addresses from the orders table, one per order record.
+  raw.orders:raw.orders.amount:
+    Order total amount in USD per customer.
+  raw.orders:raw.orders.order_date:
+    Order date when customers placed their purchases per day.
+  analytics.revenue:analytics.revenue.user_email:
+    User email addresses from order records, one per order entry.
+  analytics.revenue:raw.orders.user_email:
+    User email addresses from order records, one per order entry.
+  analytics.revenue:analytics.revenue.total_revenue:
+    Total revenue aggregated per customer from order amounts in USD.
+  analytics.revenue:raw.orders.amount:
+    Order total amount in USD per customer from raw orders table.
 ```
 
 ## Architecture

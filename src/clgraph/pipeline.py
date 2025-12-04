@@ -1341,6 +1341,22 @@ class Pipeline:
             table.read_by = [self.query_mapping.get(qid, qid) for qid in table.read_by]
             table.modified_by = [self.query_mapping.get(qid, qid) for qid in table.modified_by]
 
+    def __repr__(self):
+        """Show topologically sorted SQL statements"""
+        sorted_query_ids = self.table_graph.topological_sort()
+        query_strs = []
+
+        for query_id in sorted_query_ids:
+            query = self.table_graph.queries[query_id]
+            # Truncate SQL to first 60 chars for readability
+            sql_preview = query.sql.strip().replace("\n", " ")
+            if len(sql_preview) > 60:
+                sql_preview = sql_preview[:57] + "..."
+            query_strs.append(f"{query_id}: {sql_preview}")
+
+        queries_display = "\n  ".join(query_strs)
+        return f"Pipeline(\n  {queries_display}\n)"
+
     def split(self, sinks: List) -> List["Pipeline"]:
         """
         Split pipeline into non-overlapping subpipelines based on target tables.

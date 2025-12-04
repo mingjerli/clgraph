@@ -96,6 +96,9 @@ class QueryUnit:
             return False
         return self.unit_id == other.unit_id
 
+    def __repr__(self):
+        return f"{self.unit_type.value}:{self.unit_id}"
+
     def is_leaf(self) -> bool:
         """Check if this is a leaf unit (only depends on base tables)"""
         return len(self.depends_on_units) == 0
@@ -146,6 +149,13 @@ class QueryUnitGraph:
             if unit.name == name:
                 return unit
         return None
+
+    def __repr__(self):
+        """Show topologically sorted query units"""
+        sorted_units = self.get_topological_order()
+        unit_reprs = [repr(unit) for unit in sorted_units]
+        units_str = ", ".join(unit_reprs)
+        return f"QueryUnitGraph([{units_str}])"
 
 
 # ============================================================================
