@@ -467,10 +467,15 @@ source_cols = pipeline.column_graph.get_source_columns()
 final_cols = pipeline.column_graph.get_final_columns()
 
 # Get direct upstream columns (one hop back)
-upstream = pipeline.column_graph.get_upstream("analytics.metrics.total_revenue")
+# Note: get_upstream() takes the column's full_name (includes query_id prefix)
+col = pipeline.get_column("analytics.metrics", "total_revenue")
+if col:
+    upstream = pipeline.column_graph.get_upstream(col.full_name)
 
 # Get direct downstream columns (one hop forward)
-downstream = pipeline.column_graph.get_downstream("raw.orders.amount")
+col = pipeline.get_column("raw.orders", "amount")
+if col:
+    downstream = pipeline.column_graph.get_downstream(col.full_name)
 ```
 
 ### Full Lineage Tracing
