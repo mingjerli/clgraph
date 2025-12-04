@@ -333,7 +333,7 @@ pipeline = Pipeline(queries, dialect="bigquery")
 
 # Configure LLM (Ollama - free, local), or replace to any LangChain Chat models.
 llm = ChatOllama(model="qwen3-coder:30b", temperature=0.3)
-pipeline.column_graph.llm = llm
+pipeline.llm = llm
 
 # Generate descriptions for all columns
 print(f"Generating descriptions for {len(pipeline.columns)} columns...")
@@ -349,6 +349,31 @@ print(f"Generated descriptions for {len(columns_with_descriptions)} columns:")
 for col in columns_with_descriptions:
     print(f"  {col.full_name}:")
     print(f"    {col.description}")
+```
+
+**Output:**
+```
+Generating descriptions for 12 columns...
+📊 Generating descriptions for 8 columns...
+✅ Done! Generated 8 descriptions
+------------------------------------------------------------
+Generated descriptions for 8 columns:
+  raw.orders:raw.orders.order_id:
+    Unique identifier for each customer order placed in the system per order record.
+  raw.orders:raw.orders.user_email:
+    User email addresses from the orders table, one per order record.
+  raw.orders:raw.orders.amount:
+    Order total amount in USD per customer.
+  raw.orders:raw.orders.order_date:
+    Order date when customers placed their purchases per day.
+  analytics.revenue:analytics.revenue.user_email:
+    User email addresses from order records, one per order entry.
+  analytics.revenue:raw.orders.user_email:
+    User email addresses from order records, one per order entry.
+  analytics.revenue:analytics.revenue.total_revenue:
+    Total revenue aggregated per customer from order amounts in USD.
+  analytics.revenue:raw.orders.amount:
+    Order total amount in USD per customer from raw orders table.
 ```
 
 ## Architecture
