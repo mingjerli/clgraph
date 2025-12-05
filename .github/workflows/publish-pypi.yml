@@ -100,7 +100,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/clpipe/
+      url: https://pypi.org/project/clgraph/
     permissions:
       id-token: write  # Required for trusted publishing
 

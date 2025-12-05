@@ -2,6 +2,18 @@
 
 A Python library for parsing SQL queries into lineage graphs, enabling column-level dependency tracking, metadata propagation, and impact analysis.
 
+## Why We Built This
+
+Column lineage is notoriously difficult. Traditional tools reverse-engineer lineage from query logs and execution metadata, requiring expensive platform integration and complex infrastructure. Most open-source alternatives focus only on table-level lineage or single-query column analysis.
+
+**Our insight**: When SQL is written with explicit column names and clear transformations (what we call "[lineage-friendly SQL](https://clgraph.dev/blog/writing-lineage-friendly-sql/)"), static analysis can provide *perfect* column lineage—without database access, without runtime integration, and without query logs.
+
+We built clgraph to prove this approach works. By combining lineage-friendly SQL with perfect static analysis, we solve 90% of column lineage needs with 10% of the complexity of enterprise tools. No database required. No infrastructure to maintain. Just pure Python analyzing your SQL files.
+
+**Read more**:
+- [Why We Built This (Full Story)](https://clgraph.dev/concepts/why-we-built-this/)
+- [How to Write Lineage-Friendly SQL](https://clgraph.dev/blog/writing-lineage-friendly-sql/)
+
 ## Features
 
 ### Column Lineage Analysis
@@ -378,6 +390,8 @@ Generated descriptions for 8 columns:
 
 ## Architecture
 
+> 📊 **[View the complete architecture diagram](clgraph-simple-diagram.md)** - A visual overview of the 4-stage flow from SQL input to applications.
+
 ### Conceptual Structure
 
 clgraph analyzes SQL through a hierarchical decomposition:
@@ -515,18 +529,6 @@ Specify dialect when creating the tracer:
 tracer = SQLColumnTracer(sql, dialect="postgres")
 pipeline = Pipeline(queries, dialect="snowflake")
 ```
-
-## Why We Built This
-
-Column lineage is notoriously difficult. Traditional tools reverse-engineer lineage from query logs and execution metadata, requiring expensive platform integration and complex infrastructure. Most open-source alternatives focus only on table-level lineage or single-query column analysis.
-
-**Our insight**: When SQL is written with explicit column names and clear transformations (what we call "[lineage-friendly SQL](https://clgraph.dev/blog/writing-lineage-friendly-sql/)"), static analysis can provide *perfect* column lineage—without database access, without runtime integration, and without query logs.
-
-We built clgraph to prove this approach works. By combining lineage-friendly SQL with perfect static analysis, we solve 90% of column lineage needs with 10% of the complexity of enterprise tools. No database required. No infrastructure to maintain. Just pure Python analyzing your SQL files.
-
-**Read more**:
-- [Why We Built This (Full Story)](https://clgraph.dev/concepts/why-we-built-this/)
-- [How to Write Lineage-Friendly SQL](https://clgraph.dev/blog/writing-lineage-friendly-sql/)
 
 ## Use Cases
 
