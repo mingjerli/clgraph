@@ -151,8 +151,8 @@ queries = [
 
 pipeline = Pipeline(queries, dialect="bigquery")
 
-# Show pipeline structure
-print(f"Pipeline with {len(pipeline.table_graph.queries)} queries")
+# Show pipeline structure with query units
+print(pipeline)
 print("-" * 60)
 
 # Table execution order
@@ -180,7 +180,14 @@ for impact in impacts:
 
 **Output:**
 ```
-Pipeline with 3 queries
+Pipeline(
+  raw_events: CREATE TABLE raw_events AS         SELECT user_id, eve...
+    main
+  daily_active_users: CREATE TABLE daily_active_users AS         SELECT use...
+    main
+  user_summary: CREATE TABLE user_summary AS         SELECT u.name, u.em...
+    main
+)
 ------------------------------------------------------------
 Execution order (5 tables):
   1. source_events
