@@ -1342,7 +1342,7 @@ class Pipeline:
             table.modified_by = [self.query_mapping.get(qid, qid) for qid in table.modified_by]
 
     def __repr__(self):
-        """Show topologically sorted SQL statements"""
+        """Show topologically sorted SQL statements with query units"""
         sorted_query_ids = self.table_graph.topological_sort()
         query_strs = []
 
@@ -1352,7 +1352,20 @@ class Pipeline:
             sql_preview = query.sql.strip().replace("\n", " ")
             if len(sql_preview) > 60:
                 sql_preview = sql_preview[:57] + "..."
-            query_strs.append(f"{query_id}: {sql_preview}")
+
+            query_str = f"{query_id}: {sql_preview}"
+
+            # Add query units if lineage exists
+            if query_id in self.query_graphs:
+                query_lineage = self.query_graphs[query_id]
+                # Extract unique unit_ids from nodes
+                unit_ids = sorted({n.unit_id for n in query_lineage.nodes.values() if n.unit_id})
+                if unit_ids:
+                    # Format each unit on its own line with indentation
+                    for unit_id in unit_ids:
+                        query_str += f"\n    {unit_id}"
+
+            query_strs.append(query_str)
 
         queries_display = "\n  ".join(query_strs)
         return f"Pipeline(\n  {queries_display}\n)"
