@@ -909,6 +909,171 @@ class TestCrossQueryLineage:
         # Should have edges connecting them
         assert len(path) > 0
 
+    def test_star_expansion_in_cross_query_edges(self):
+        """
+        Test that * is properly handled in cross-query lineage.
+
+        When upstream query creates a table with known columns, and downstream
+        query uses both * (for COUNT(*)) and specific columns (for SUM(amount)),
+        we should create edges for both:
+        1. All upstream columns -> * node (for COUNT(*))
+        2. Specific column matches (for individual column references)
+        """
+        queries = [
+            """
+            CREATE TABLE staging.user_orders AS
+            SELECT
+                user_id,
+                order_id,
+                amount,
+                order_date
+            FROM raw.orders
+            WHERE status = 'completed'
+            """,
+            """
+            CREATE TABLE analytics.user_metrics AS
+            SELECT
+                user_id,
+                COUNT(*) as order_count,
+                SUM(amount) as total_revenue,
+                AVG(amount) as avg_order_value
+            FROM staging.user_orders
+            GROUP BY user_id
+            """,
+        ]
+
+        parser = MultiQueryParser()
+        table_graph = parser.parse_queries(queries)
+
+        builder = PipelineLineageBuilder()
+        pipeline = builder.build(table_graph)
+
+        # Verify that cross-query edges include connections to * column
+        cross_query_edges = [e for e in pipeline.edges if e.query_id is None]
+
+        # Should have edges from all staging.user_orders columns to the * node
+        star_edges = [
+            e
+            for e in cross_query_edges
+            if e.to_node.column_name == "*" and e.to_node.table_name == "staging.user_orders"
+        ]
+        # All 4 columns from query_0 should connect to the * in query_1
+        assert len(star_edges) == 4
+
+        # Should ALSO have edges for specifically referenced columns (user_id, amount)
+        specific_edges = [
+            e
+            for e in cross_query_edges
+            if e.to_node.column_name in ("user_id", "amount")
+            and e.to_node.table_name == "staging.user_orders"
+            and e.to_node.layer == "input"
+        ]
+        # user_id and amount should each have an edge
+        assert len(specific_edges) >= 2
+
+        # Verify backward lineage traces all the way to source
+        sources = pipeline.trace_column_backward("analytics.user_metrics", "total_revenue")
+        assert any(s.table_name == "raw.orders" and s.column_name == "amount" for s in sources)
+
+    def test_star_except_in_cross_query_edges(self):
+        """
+        Test that SELECT * EXCEPT properly excludes columns in cross-query lineage.
+
+        When downstream query uses SELECT * EXCEPT (col1, col2), we should NOT
+        create cross-query edges for the excepted columns.
+        """
+        queries = [
+            """
+            CREATE TABLE staging.orders AS
+            SELECT
+                order_id,
+                user_id,
+                amount,
+                sensitive_data,
+                order_date
+            FROM raw.orders
+            """,
+            """
+            CREATE TABLE analytics.clean_orders AS
+            SELECT * EXCEPT (sensitive_data)
+            FROM staging.orders
+            """,
+        ]
+
+        parser = MultiQueryParser()
+        table_graph = parser.parse_queries(queries)
+
+        builder = PipelineLineageBuilder()
+        pipeline = builder.build(table_graph)
+
+        # Verify that cross-query edges exclude sensitive_data
+        cross_query_edges = [e for e in pipeline.edges if e.query_id is None]
+
+        # Get edges from staging.orders to the * in analytics
+        star_edges = [
+            e
+            for e in cross_query_edges
+            if e.to_node.column_name == "*" and e.to_node.table_name == "staging.orders"
+        ]
+
+        # Should have edges for order_id, user_id, amount, order_date
+        # Should NOT have edge for sensitive_data
+        edge_from_columns = {e.from_node.column_name for e in star_edges}
+        assert "order_id" in edge_from_columns
+        assert "user_id" in edge_from_columns
+        assert "amount" in edge_from_columns
+        assert "order_date" in edge_from_columns
+        assert "sensitive_data" not in edge_from_columns  # This should be excluded!
+
+    def test_star_replace_in_cross_query_edges(self):
+        """
+        Test that SELECT * REPLACE maintains lineage for replaced columns.
+
+        REPLACE doesn't remove columns, it transforms them. Cross-query edges
+        should still exist for replaced columns.
+        """
+        queries = [
+            """
+            CREATE TABLE staging.orders AS
+            SELECT
+                order_id,
+                user_id,
+                amount,
+                status,
+                order_date
+            FROM raw.orders
+            """,
+            """
+            CREATE TABLE analytics.orders_normalized AS
+            SELECT * REPLACE (UPPER(status) as status)
+            FROM staging.orders
+            """,
+        ]
+
+        parser = MultiQueryParser()
+        table_graph = parser.parse_queries(queries)
+
+        builder = PipelineLineageBuilder()
+        pipeline = builder.build(table_graph)
+
+        # Verify that cross-query edges include ALL columns (including status)
+        cross_query_edges = [e for e in pipeline.edges if e.query_id is None]
+
+        # Get edges from staging.orders to the * in analytics
+        star_edges = [
+            e
+            for e in cross_query_edges
+            if e.to_node.column_name == "*" and e.to_node.table_name == "staging.orders"
+        ]
+
+        # Should have edges for ALL columns including the replaced one
+        edge_from_columns = {e.from_node.column_name for e in star_edges}
+        assert "order_id" in edge_from_columns
+        assert "user_id" in edge_from_columns
+        assert "amount" in edge_from_columns
+        assert "status" in edge_from_columns  # Replaced column should still have edge
+        assert "order_date" in edge_from_columns
+
 
 # ============================================================================
 # Part 4: Edge Cases Tests

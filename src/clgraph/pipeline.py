@@ -149,6 +149,10 @@ class PipelineLineageBuilder:
                 owner=owner,
                 tags=tags,
                 custom_metadata=custom_metadata,
+                # Star expansion fields
+                is_star=node.is_star,
+                except_columns=node.except_columns,
+                replace_columns=node.replace_columns,
             )
             pipeline.add_column(column)
 
@@ -187,6 +191,7 @@ class PipelineLineageBuilder:
           - For each column C in Q1's output:
               - For each query Qi that reads T:
                   - If Qi references T.C, create edge: Q1.C -> Qi.C
+                  - If Qi references T.*, create edges: Q1.C -> Qi.* for ALL columns
         """
         for table_name, table_node in pipeline.table_graph.tables.items():
             # Find query that creates this table
@@ -204,7 +209,56 @@ class PipelineLineageBuilder:
 
             # Find queries that read this table
             for reading_query_id in table_node.read_by:
-                # Match columns by name
+                # Check if reading query has a * column for this table (input layer)
+                input_star_column = None
+                for col in pipeline.columns.values():
+                    if (
+                        col.query_id == reading_query_id
+                        and col.table_name == table_name
+                        and col.column_name == "*"
+                        and col.layer == "input"
+                    ):
+                        input_star_column = col
+                        break
+
+                # Also check if there's an output * in the same query (has EXCEPT/REPLACE)
+                # This is for queries like: SELECT * EXCEPT (...) FROM table
+                output_star_column = None
+                if input_star_column:
+                    for col in pipeline.columns.values():
+                        if (
+                            col.query_id == reading_query_id
+                            and col.column_name == "*"
+                            and col.layer == "output"
+                        ):
+                            output_star_column = col
+                            break
+
+                # Use output * for EXCEPT/REPLACE info, but connect to input *
+                star_column = input_star_column
+                except_columns = output_star_column.except_columns if output_star_column else set()
+
+                # If there's a star column, connect all output columns to it
+                # BUT respect EXCEPT clause - skip columns that are excepted
+                if star_column:
+                    for output_col in output_columns:
+                        # Skip columns in EXCEPT clause
+                        if output_col.column_name in except_columns:
+                            continue
+
+                        edge = ColumnEdge(
+                            from_node=output_col,
+                            to_node=star_column,
+                            edge_type="cross_query",
+                            context="cross_query",
+                            transformation=f"{creating_query_id} -> {reading_query_id}",
+                            query_id=None,  # Cross-query edge
+                        )
+                        pipeline.add_edge(edge)
+
+                # ALWAYS match columns by name (not just when there's no star)
+                # This handles cases where the query uses both * (for COUNT(*))
+                # and specific columns (for SUM(amount), etc.)
                 for output_col in output_columns:
                     # Find corresponding input column in reading query
                     # Search for this column in reading query's lineage
