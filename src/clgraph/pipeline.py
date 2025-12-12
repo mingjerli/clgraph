@@ -69,8 +69,18 @@ class PipelineLineageBuilder:
                 sql_for_lineage = self._extract_select_from_query(query)
 
                 if sql_for_lineage:
+                    # Collect upstream table schemas from already-processed queries
+                    external_table_columns = self._collect_upstream_table_schemas(
+                        pipeline, query, table_graph
+                    )
+
                     # RecursiveLineageBuilder handles parsing internally
-                    lineage_builder = RecursiveLineageBuilder(sql_for_lineage)
+                    # Pass external_table_columns so it can resolve * to actual columns
+                    lineage_builder = RecursiveLineageBuilder(
+                        sql_for_lineage,
+                        external_table_columns=external_table_columns,
+                        dialect=pipeline.dialect,
+                    )
                     query_lineage = lineage_builder.build()
 
                     # Store query lineage
@@ -98,6 +108,171 @@ class PipelineLineageBuilder:
 
         return pipeline
 
+    def _expand_star_nodes_in_pipeline(
+        self, pipeline: "Pipeline", query: ParsedQuery, nodes: list[ColumnNode]
+    ) -> list[ColumnNode]:
+        """
+        Expand * nodes in output layer when upstream columns are known.
+
+        For cross-query scenarios:
+        - If query_1 does SELECT * EXCEPT (col1) FROM staging.table
+        - And staging.table was created by query_0 with known columns
+        - We should expand the * to the actual columns (minus excepted ones)
+
+        This gives users precise column-level lineage instead of just *.
+        """
+        result = []
+
+        # Find all input layer * nodes to get source table info
+        input_star_nodes = {
+            node.table_name: node for node in nodes if node.is_star and node.layer == "input"
+        }
+
+        for node in nodes:
+            # Only expand output layer * nodes
+            if not (node.is_star and node.layer == "output"):
+                result.append(node)
+                continue
+
+            # Get the source table from the corresponding input * node
+            # The output * has EXCEPT/REPLACE info, but we need the source table from input *
+            source_table_name = None
+            except_columns = node.except_columns
+            replace_columns = node.replace_columns
+
+            # Find which input table this output * is selecting from
+            for input_table, input_star in input_star_nodes.items():
+                # Check if the input * feeds into this output *
+                # (in simple cases, there's only one input * per query)
+                # Infer the fully qualified table name for the input table
+                source_table_name = self._infer_table_name(input_star, query) or input_table
+                break
+
+            if not source_table_name:
+                # Can't expand - keep the * node
+                result.append(node)
+                continue
+
+            # Try to find upstream table columns
+            upstream_columns = self._get_upstream_table_columns(pipeline, source_table_name)
+
+            if not upstream_columns:
+                # Can't expand - keep the * node
+                result.append(node)
+                continue
+
+            # Expand the * to individual columns
+            for upstream_col in upstream_columns:
+                col_name = upstream_col.column_name
+
+                # Skip excepted columns
+                if col_name in except_columns:
+                    continue
+
+                # Create expanded column node
+                # Get the properly inferred destination table name
+                dest_table_name = self._infer_table_name(node, query) or node.table_name
+
+                expanded_node = ColumnNode(
+                    column_name=col_name,
+                    table_name=dest_table_name,
+                    full_name=f"{dest_table_name}.{col_name}",
+                    unit_id=node.unit_id,
+                    layer=node.layer,
+                    query_id=node.query_id,
+                    node_type="direct_column",
+                    is_star=False,
+                    # Check if this column is being replaced
+                    expression=(
+                        replace_columns.get(col_name, col_name)
+                        if col_name in replace_columns
+                        else col_name
+                    ),
+                    # Preserve metadata from upstream if available
+                    description=upstream_col.description,
+                    pii=upstream_col.pii,
+                    owner=upstream_col.owner,
+                    tags=upstream_col.tags.copy(),
+                )
+                result.append(expanded_node)
+
+        return result
+
+    def _collect_upstream_table_schemas(
+        self,
+        pipeline: "Pipeline",
+        query: ParsedQuery,
+        table_graph: TableDependencyGraph,
+    ) -> Dict[str, List[str]]:
+        """
+        Collect column names from upstream tables that this query reads from.
+
+        This is used to pass to RecursiveLineageBuilder so it can resolve * properly.
+
+        Args:
+            pipeline: Pipeline being built
+            query: Current query being processed
+            table_graph: Table dependency graph
+
+        Returns:
+            Dict mapping table_name -> list of column names
+            Example: {"staging.orders": ["order_id", "user_id", "amount", "status", "order_date"]}
+        """
+        external_table_columns = {}
+
+        # For each source table this query reads from
+        for source_table in query.source_tables:
+            # Get the table node
+            table_node = table_graph.tables.get(source_table)
+            if not table_node:
+                continue
+
+            # If this table was created by a previous query, get its output columns
+            if table_node.created_by:
+                creating_query_id = table_node.created_by
+
+                # Get output columns from the creating query
+                output_cols = [
+                    col.column_name
+                    for col in pipeline.columns.values()
+                    if col.query_id == creating_query_id
+                    and col.table_name == source_table
+                    and col.layer == "output"
+                    and not col.is_star  # Don't include * nodes
+                ]
+
+                if output_cols:
+                    external_table_columns[source_table] = output_cols
+
+        return external_table_columns
+
+    def _get_upstream_table_columns(
+        self, pipeline: "Pipeline", table_name: str
+    ) -> list[ColumnNode]:
+        """
+        Get columns from an upstream table that was created in the pipeline.
+
+        Returns the output columns from the query that created this table.
+        """
+        # Find which query created this table
+        table_node = pipeline.table_graph.tables.get(table_name)
+        if not table_node or not table_node.created_by:
+            return []
+
+        creating_query_id = table_node.created_by
+
+        # Get output columns from the creating query
+        upstream_cols = [
+            col
+            for col in pipeline.columns.values()
+            if col.query_id == creating_query_id
+            and col.table_name == table_name
+            and col.layer == "output"
+            and not col.is_star  # Don't use * nodes as source
+        ]
+
+        return upstream_cols
+
     def _add_query_columns(
         self,
         pipeline: "Pipeline",
@@ -110,9 +285,17 @@ class PipelineLineageBuilder:
         Note: We add all nodes (both input and output layers) to maintain full lineage.
         Input layer nodes represent source columns, output layer nodes represent derived columns.
         Both are needed for complete lineage tracing.
+
+        Special handling for star expansion:
+        - If output layer has a * node and we know the upstream columns, expand it
+        - This is crucial for cross-query lineage to show exact columns
         """
+        # Check if we need to expand any * nodes in the output layer
+        nodes_to_add = list(query_lineage.nodes.values())
+        expanded_nodes = self._expand_star_nodes_in_pipeline(pipeline, query, nodes_to_add)
+
         # Add columns with table context
-        for node in query_lineage.nodes.values():
+        for node in expanded_nodes:
             # Extract metadata from SQL comments if available
             description = None
             description_source = None
@@ -234,13 +417,34 @@ class PipelineLineageBuilder:
                             output_star_column = col
                             break
 
+                # Check if this query had SELECT * that was expanded to individual output columns
+                # Key indicator: ALL upstream columns appear in output with same names
+                # This distinguishes SELECT * (all columns) from SELECT user_id, COUNT(*) (partial)
+                has_select_star_expanded = False
+                if output_star_column is None and input_star_column is not None:
+                    # Count how many upstream columns appear in output
+                    upstream_col_names = {oc.column_name for oc in output_columns}
+                    output_col_names = {
+                        col.column_name
+                        for col in pipeline.columns.values()
+                        if col.query_id == reading_query_id
+                        and col.layer == "output"
+                        and not col.is_star
+                    }
+                    matching_cols = upstream_col_names & output_col_names
+
+                    # If ALL upstream columns appear in output (or most of them, accounting for EXCEPT),
+                    # then this was likely SELECT * that got expanded
+                    has_select_star_expanded = len(matching_cols) >= len(upstream_col_names) * 0.8
+
                 # Use output * for EXCEPT/REPLACE info, but connect to input *
                 star_column = input_star_column
                 except_columns = output_star_column.except_columns if output_star_column else set()
 
-                # If there's a star column, connect all output columns to it
+                # If there's a star column AND it hasn't been expanded, connect all output columns to it
                 # BUT respect EXCEPT clause - skip columns that are excepted
-                if star_column:
+                # IMPORTANT: Skip this if SELECT * was expanded - we'll create direct edges instead
+                if star_column and not has_select_star_expanded:
                     for output_col in output_columns:
                         # Skip columns in EXCEPT clause
                         if output_col.column_name in except_columns:
@@ -259,15 +463,26 @@ class PipelineLineageBuilder:
                 # ALWAYS match columns by name (not just when there's no star)
                 # This handles cases where the query uses both * (for COUNT(*))
                 # and specific columns (for SUM(amount), etc.)
+                #
+                # Also handles star expansion: when the reading query has SELECT * FROM table,
+                # the star is expanded to individual OUTPUT columns at parse time.
+                # We need to connect upstream columns to those expanded output columns.
                 for output_col in output_columns:
-                    # Find corresponding input column in reading query
-                    # Search for this column in reading query's lineage
+                    # Find corresponding column in reading query by NAME
+                    # This could be:
+                    # 1. Input layer column with same table_name (explicit reference)
+                    # 2. Output layer column with matching name (star-expanded column)
                     for col in pipeline.columns.values():
                         if (
                             col.query_id == reading_query_id
-                            and col.table_name == table_name
                             and col.column_name == output_col.column_name
                         ):
+                            # Check if this is the right column:
+                            # - Input layer: table_name must match
+                            # - Output layer: any match (star-expanded columns)
+                            if col.layer == "input" and col.table_name != table_name:
+                                continue  # Wrong input table
+
                             # Create cross-query edge
                             edge = ColumnEdge(
                                 from_node=output_col,

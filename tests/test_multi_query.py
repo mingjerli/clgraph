@@ -977,10 +977,11 @@ class TestCrossQueryLineage:
 
     def test_star_except_in_cross_query_edges(self):
         """
-        Test that SELECT * EXCEPT properly excludes columns in cross-query lineage.
+        Test that SELECT * EXCEPT properly expands and excludes columns.
 
-        When downstream query uses SELECT * EXCEPT (col1, col2), we should NOT
-        create cross-query edges for the excepted columns.
+        When downstream query uses SELECT * EXCEPT (col1, col2):
+        - The * should be expanded to individual columns (not kept as *)
+        - The excepted columns should NOT appear in the output
         """
         queries = [
             """
@@ -1006,31 +1007,43 @@ class TestCrossQueryLineage:
         builder = PipelineLineageBuilder()
         pipeline = builder.build(table_graph)
 
-        # Verify that cross-query edges exclude sensitive_data
-        cross_query_edges = [e for e in pipeline.edges if e.query_id is None]
+        # Find the query ID for the second query
+        second_query_id = list(table_graph.queries.keys())[1]
 
-        # Get edges from staging.orders to the * in analytics
-        star_edges = [
-            e
-            for e in cross_query_edges
-            if e.to_node.column_name == "*" and e.to_node.table_name == "staging.orders"
+        # Verify that * was expanded to individual columns in the output
+        output_columns = [
+            col
+            for col in pipeline.columns.values()
+            if col.query_id == second_query_id
+            and col.layer == "output"
+            and col.table_name == "analytics.clean_orders"
         ]
 
-        # Should have edges for order_id, user_id, amount, order_date
-        # Should NOT have edge for sensitive_data
-        edge_from_columns = {e.from_node.column_name for e in star_edges}
-        assert "order_id" in edge_from_columns
-        assert "user_id" in edge_from_columns
-        assert "amount" in edge_from_columns
-        assert "order_date" in edge_from_columns
-        assert "sensitive_data" not in edge_from_columns  # This should be excluded!
+        output_col_names = {col.column_name for col in output_columns}
+
+        # Should have 4 columns (5 total minus 1 excepted)
+        assert len(output_columns) == 4
+
+        # Should have these columns
+        assert "order_id" in output_col_names
+        assert "user_id" in output_col_names
+        assert "amount" in output_col_names
+        assert "order_date" in output_col_names
+
+        # Should NOT have the excepted column
+        assert "sensitive_data" not in output_col_names
+
+        # Should NOT have a * column
+        assert "*" not in output_col_names
 
     def test_star_replace_in_cross_query_edges(self):
         """
-        Test that SELECT * REPLACE maintains lineage for replaced columns.
+        Test that SELECT * REPLACE expands columns with transformations.
 
-        REPLACE doesn't remove columns, it transforms them. Cross-query edges
-        should still exist for replaced columns.
+        When downstream query uses SELECT * REPLACE:
+        - The * should be expanded to individual columns (not kept as *)
+        - All columns should be present (REPLACE transforms, doesn't remove)
+        - Replaced columns should show the transformation expression
         """
         queries = [
             """
@@ -1056,23 +1069,36 @@ class TestCrossQueryLineage:
         builder = PipelineLineageBuilder()
         pipeline = builder.build(table_graph)
 
-        # Verify that cross-query edges include ALL columns (including status)
-        cross_query_edges = [e for e in pipeline.edges if e.query_id is None]
+        # Find the query ID for the second query
+        second_query_id = list(table_graph.queries.keys())[1]
 
-        # Get edges from staging.orders to the * in analytics
-        star_edges = [
-            e
-            for e in cross_query_edges
-            if e.to_node.column_name == "*" and e.to_node.table_name == "staging.orders"
+        # Verify that * was expanded to individual columns in the output
+        output_columns = [
+            col
+            for col in pipeline.columns.values()
+            if col.query_id == second_query_id
+            and col.layer == "output"
+            and col.table_name == "analytics.orders_normalized"
         ]
 
-        # Should have edges for ALL columns including the replaced one
-        edge_from_columns = {e.from_node.column_name for e in star_edges}
-        assert "order_id" in edge_from_columns
-        assert "user_id" in edge_from_columns
-        assert "amount" in edge_from_columns
-        assert "status" in edge_from_columns  # Replaced column should still have edge
-        assert "order_date" in edge_from_columns
+        output_col_names = {col.column_name for col in output_columns}
+
+        # Should have all 5 columns (REPLACE doesn't remove columns)
+        assert len(output_columns) == 5
+
+        # Should have ALL columns including the replaced one
+        assert "order_id" in output_col_names
+        assert "user_id" in output_col_names
+        assert "amount" in output_col_names
+        assert "status" in output_col_names  # Replaced column
+        assert "order_date" in output_col_names
+
+        # Should NOT have a * column
+        assert "*" not in output_col_names
+
+        # Verify the replaced column has the transformation expression
+        status_col = next(col for col in output_columns if col.column_name == "status")
+        assert "UPPER" in status_col.expression
 
 
 # ============================================================================

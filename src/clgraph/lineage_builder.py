@@ -199,9 +199,23 @@ class RecursiveLineageBuilder:
 
                 # STAR EXPANSION: Try to expand star if we know the source columns
                 # This only applies to the main query output (not CTEs/subqueries)
-                if unit.unit_type == QueryUnitType.MAIN_QUERY and col_info.get("source_unit"):
-                    source_unit_id = str(col_info["source_unit"])
-                    expanded_cols = self._try_expand_star(unit, source_unit_id, col_info)
+                if unit.unit_type == QueryUnitType.MAIN_QUERY:
+                    expanded_cols = None
+
+                    # Case 1: Source is a CTE or subquery (internal query unit)
+                    if col_info.get("source_unit"):
+                        source_unit_id = str(col_info["source_unit"])
+                        expanded_cols = self._try_expand_star(unit, source_unit_id, col_info)
+
+                    # Case 2: Source is an external table with known columns
+                    elif col_info.get("source_table"):
+                        source_table = col_info["source_table"]
+                        # Type guard: ensure source_table is a string
+                        if isinstance(source_table, str):
+                            expanded_cols = self._try_expand_star_from_external_table(
+                                unit, source_table, col_info
+                            )
+
                     if expanded_cols:
                         # Replace star with expanded columns
                         output_cols.extend(expanded_cols)
@@ -1035,6 +1049,58 @@ class RecursiveLineageBuilder:
                 # Mark this as star-expanded so we can trace it properly
                 "star_expanded": True,
                 "star_source_unit": source_unit_id,
+            }
+            expanded.append(expanded_col)
+
+        return expanded if expanded else None
+
+    def _try_expand_star_from_external_table(
+        self, unit: QueryUnit, source_table: str, star_col_info: Dict
+    ) -> Optional[List[Dict]]:
+        """
+        Try to expand a star from an external table using external_table_columns.
+
+        This handles the cross-query scenario where Query 2 does SELECT * FROM staging.orders,
+        and staging.orders was created by Query 1 with known columns.
+
+        Args:
+            unit: The current query unit (main query)
+            source_table: The external table name (e.g., "staging.orders")
+            star_col_info: The star column info dict
+
+        Returns:
+            List of expanded column dicts, or None if expansion not possible
+        """
+        # Check if we have column information for this external table
+        if source_table not in self.external_table_columns:
+            return None
+
+        column_names = self.external_table_columns[source_table]
+        if not column_names:
+            return None
+
+        # Great! We can expand. Create individual column entries
+        expanded: List[Dict] = []
+        except_cols = star_col_info.get("except_columns", set())
+        replace_cols = star_col_info.get("replace_columns", {})
+
+        for col_name in column_names:
+            # Skip columns in EXCEPT clause
+            if col_name in except_cols:
+                continue
+
+            # Create a new column info for this expanded column
+            expanded_col = {
+                "index": len(expanded),
+                "ast_node": None,  # No specific AST node for expanded columns
+                "is_star": False,  # This is now an explicit column
+                "name": col_name,
+                "type": "direct_column",  # Direct pass-through from source
+                "expression": replace_cols.get(col_name, col_name),  # Use REPLACE if specified
+                "source_columns": [(source_table, col_name)],
+                # Mark this as star-expanded so we can trace it properly
+                "star_expanded": True,
+                "star_source_table": source_table,
             }
             expanded.append(expanded_col)
 
