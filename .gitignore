@@ -216,3 +216,10 @@ python/
 
 # Plan files
 plans/
+
+# Test artifacts and output files
+*.csv
+*.dot
+*.json
+*.pkl
+docs/
