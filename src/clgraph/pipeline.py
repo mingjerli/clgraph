@@ -627,7 +627,12 @@ class Pipeline:
         dag = pipeline.to_airflow_dag(executor=execute_sql, dag_id="my_pipeline")
     """
 
-    def __init__(self, queries: List[Tuple[str, str]], dialect: str = "bigquery"):
+    def __init__(
+        self,
+        queries: List[Tuple[str, str]],
+        dialect: str = "bigquery",
+        template_context: Optional[Dict[str, Any]] = None,
+    ):
         """
         Create pipeline from queries.
 
@@ -641,10 +646,20 @@ class Pipeline:
         Args:
             queries: List of (query_id, sql) tuples
             dialect: SQL dialect (bigquery, snowflake, etc.)
+            template_context: Optional dictionary of template variables for Jinja2/variable substitution
+                Example: {"env": "prod", "project": "my_project"}
+
+        Example:
+            # With template variables
+            queries = [
+                ("staging", "CREATE TABLE {{env}}_staging.orders AS SELECT * FROM {{env}}_raw.orders")
+            ]
+            pipeline = Pipeline(queries, dialect="bigquery", template_context={"env": "prod"})
         """
         from .multi_query import MultiQueryParser
 
         self.dialect = dialect
+        self.template_context = template_context
         self.query_mapping: Dict[str, str] = {}  # Maps auto_id -> user_id
 
         # Column-level lineage graph
@@ -659,9 +674,9 @@ class Pipeline:
             auto_id = f"query_{len(sql_list) - 1}"
             self.query_mapping[auto_id] = user_query_id
 
-        # Parse queries using current API
+        # Parse queries using current API with template support
         parser = MultiQueryParser(dialect=dialect)
-        self.table_graph = parser.parse_queries(sql_list)
+        self.table_graph = parser.parse_queries(sql_list, template_context=template_context)
 
         # Remap auto-generated query IDs to user-provided IDs
         self._remap_query_ids()
@@ -716,13 +731,19 @@ class Pipeline:
         return [col for col in self.columns.values() if col.table_name == table_name]
 
     @classmethod
-    def from_tuples(cls, queries: List[Tuple[str, str]], dialect: str = "bigquery") -> "Pipeline":
+    def from_tuples(
+        cls,
+        queries: List[Tuple[str, str]],
+        dialect: str = "bigquery",
+        template_context: Optional[Dict[str, Any]] = None,
+    ) -> "Pipeline":
         """
         Create pipeline from list of (query_id, sql) tuples.
 
         Args:
             queries: List of (query_id, sql) tuples
             dialect: SQL dialect (bigquery, snowflake, etc.)
+            template_context: Optional dictionary of template variables
 
         Returns:
             Pipeline instance
@@ -732,17 +753,28 @@ class Pipeline:
                 ("staging", "CREATE TABLE staging AS SELECT * FROM raw"),
                 ("final", "CREATE TABLE final AS SELECT * FROM staging"),
             ])
+
+            # With templates
+            pipeline = Pipeline.from_tuples([
+                ("staging", "CREATE TABLE {{env}}_staging.orders AS SELECT * FROM {{env}}_raw.orders"),
+            ], template_context={"env": "prod"})
         """
-        return cls(queries, dialect=dialect)
+        return cls(queries, dialect=dialect, template_context=template_context)
 
     @classmethod
-    def from_dict(cls, queries: Dict[str, str], dialect: str = "bigquery") -> "Pipeline":
+    def from_dict(
+        cls,
+        queries: Dict[str, str],
+        dialect: str = "bigquery",
+        template_context: Optional[Dict[str, Any]] = None,
+    ) -> "Pipeline":
         """
         Create pipeline from dictionary of {query_id: sql}.
 
         Args:
             queries: Dictionary mapping query_id to SQL string
             dialect: SQL dialect (bigquery, snowflake, etc.)
+            template_context: Optional dictionary of template variables
 
         Returns:
             Pipeline instance
@@ -752,12 +784,22 @@ class Pipeline:
                 "staging": "CREATE TABLE staging AS SELECT * FROM raw",
                 "final": "CREATE TABLE final AS SELECT * FROM staging",
             })
+
+            # With templates
+            pipeline = Pipeline.from_dict({
+                "staging": "CREATE TABLE {{env}}_staging.orders AS SELECT * FROM raw.orders"
+            }, template_context={"env": "prod"})
         """
         query_list = list(queries.items())
-        return cls(query_list, dialect=dialect)
+        return cls(query_list, dialect=dialect, template_context=template_context)
 
     @classmethod
-    def from_sql_list(cls, queries: List[str], dialect: str = "bigquery") -> "Pipeline":
+    def from_sql_list(
+        cls,
+        queries: List[str],
+        dialect: str = "bigquery",
+        template_context: Optional[Dict[str, Any]] = None,
+    ) -> "Pipeline":
         """
         Create pipeline from list of SQL strings (auto-generates query IDs).
 
@@ -767,6 +809,7 @@ class Pipeline:
         Args:
             queries: List of SQL query strings
             dialect: SQL dialect (bigquery, snowflake, etc.)
+            template_context: Optional dictionary of template variables
 
         Returns:
             Pipeline instance
@@ -778,6 +821,11 @@ class Pipeline:
                 "CREATE TABLE final AS SELECT * FROM staging",
             ])
             # Query IDs will be: create_staging, insert_staging, create_final
+
+            # With templates
+            pipeline = Pipeline.from_sql_list([
+                "CREATE TABLE {{env}}_staging.orders AS SELECT * FROM raw.orders"
+            ], template_context={"env": "prod"})
         """
         query_list = []
         id_counts: Dict[str, int] = {}
@@ -786,7 +834,7 @@ class Pipeline:
             query_id = cls._generate_query_id(sql, dialect, id_counts)
             query_list.append((query_id, sql))
 
-        return cls(query_list, dialect=dialect)
+        return cls(query_list, dialect=dialect, template_context=template_context)
 
     @staticmethod
     def _generate_query_id(sql: str, dialect: str, id_counts: Dict[str, int]) -> str:
@@ -892,7 +940,12 @@ class Pipeline:
                 return f"{base_id}_{id_counts[base_id]}"
 
     @classmethod
-    def from_sql_string(cls, sql: str, dialect: str = "bigquery") -> "Pipeline":
+    def from_sql_string(
+        cls,
+        sql: str,
+        dialect: str = "bigquery",
+        template_context: Optional[Dict[str, Any]] = None,
+    ) -> "Pipeline":
         """
         Create pipeline from single SQL string with semicolon-separated queries.
 
@@ -902,6 +955,7 @@ class Pipeline:
         Args:
             sql: SQL string with multiple queries separated by semicolons
             dialect: SQL dialect (bigquery, snowflake, etc.)
+            template_context: Optional dictionary of template variables
 
         Returns:
             Pipeline instance
@@ -912,10 +966,16 @@ class Pipeline:
                 CREATE TABLE final AS SELECT * FROM staging
             ''')
             # Query IDs will be: create_staging, create_final
+
+            # With templates
+            pipeline = Pipeline.from_sql_string(
+                "CREATE TABLE {{env}}_staging.orders AS SELECT * FROM raw.orders",
+                template_context={"env": "prod"}
+            )
         """
         # Split by semicolon and filter empty strings
         queries = [q.strip() for q in sql.split(";") if q.strip()]
-        return cls.from_sql_list(queries, dialect=dialect)
+        return cls.from_sql_list(queries, dialect=dialect, template_context=template_context)
 
     @classmethod
     def _create_empty(cls, table_graph: "TableDependencyGraph") -> "Pipeline":
@@ -1548,6 +1608,7 @@ class Pipeline:
         dialect: str = "bigquery",
         pattern: str = "*.sql",
         query_id_from: str = "filename",
+        template_context: Optional[Dict[str, Any]] = None,
     ) -> "Pipeline":
         """
         Create pipeline from SQL files in a directory.
@@ -1559,6 +1620,7 @@ class Pipeline:
             query_id_from: How to determine query ID:
                 - "filename": Use filename without extension (default)
                 - "comment": Extract from first line comment (-- query_id: name)
+            template_context: Optional dictionary of template variables
 
         Returns:
             Pipeline instance
@@ -1571,6 +1633,12 @@ class Pipeline:
             pipeline = Pipeline.from_sql_files(
                 "queries/",
                 query_id_from="comment"
+            )
+
+            # With templates
+            pipeline = Pipeline.from_sql_files(
+                "queries/",
+                template_context={"env": "prod", "project": "my_project"}
             )
         """
         import re
@@ -1601,7 +1669,7 @@ class Pipeline:
 
             queries.append((query_id, sql_content))
 
-        return cls(queries, dialect=dialect)
+        return cls(queries, dialect=dialect, template_context=template_context)
 
     def _remap_query_ids(self):
         """Remap auto-generated query IDs to user-provided IDs"""
