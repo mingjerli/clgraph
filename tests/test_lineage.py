@@ -514,29 +514,49 @@ class TestStarValidation:
         assert len(graph.units) == 1
 
     def test_star_unqualified_multiple_tables_invalid(self):
-        """Unqualified star with multiple tables should fail"""
+        """Unqualified star with multiple tables should generate validation issue"""
+        from clgraph.lineage_builder import RecursiveLineageBuilder
+        from clgraph.models import IssueCategory
+
         query = """
         SELECT *
         FROM users u
         JOIN orders o ON u.id = o.user_id
         """
-        parser = RecursiveQueryParser(query)
+        # Parser now allows this and validation happens in lineage builder
+        builder = RecursiveLineageBuilder(query)
+        lineage_graph = builder.build()
 
-        with pytest.raises(ValueError, match="Ambiguous SELECT"):
-            parser.parse()
+        # Should have validation issue
+        star_issues = [
+            i
+            for i in lineage_graph.issues
+            if i.category == IssueCategory.UNQUALIFIED_STAR_MULTIPLE_TABLES
+        ]
+        assert len(star_issues) >= 1
 
     def test_star_in_cte_validated(self):
         """Star usage in CTEs should also be validated"""
+        from clgraph.lineage_builder import RecursiveLineageBuilder
+        from clgraph.models import IssueCategory
+
         query = """
         WITH bad_cte AS (
             SELECT * FROM users u JOIN orders o ON u.id = o.user_id
         )
         SELECT * FROM bad_cte
         """
-        parser = RecursiveQueryParser(query)
+        # Parser now allows this and validation happens in lineage builder
+        builder = RecursiveLineageBuilder(query)
+        lineage_graph = builder.build()
 
-        with pytest.raises(ValueError, match="Ambiguous SELECT.*CTE"):
-            parser.parse()
+        # Should have validation issue for the CTE
+        star_issues = [
+            i
+            for i in lineage_graph.issues
+            if i.category == IssueCategory.UNQUALIFIED_STAR_MULTIPLE_TABLES
+        ]
+        assert len(star_issues) >= 1
 
     def test_star_except_valid(self):
         """Star with EXCEPT should be valid"""

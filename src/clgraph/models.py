@@ -18,6 +18,81 @@ if TYPE_CHECKING:
     from .metadata_parser import ColumnMetadata
 
 # ============================================================================
+# Validation Models
+# ============================================================================
+
+
+class IssueSeverity(Enum):
+    """Severity level for validation issues"""
+
+    ERROR = "error"  # Prevents lineage construction or causes incorrect results
+    WARNING = "warning"  # May cause issues or is a bad practice
+    INFO = "info"  # Informational, suggestions for improvement
+
+
+class IssueCategory(Enum):
+    """Category of validation issue"""
+
+    # Column reference issues
+    AMBIGUOUS_COLUMN = "ambiguous_column"
+    UNQUALIFIED_COLUMN = "unqualified_column"
+    MISSING_COLUMN = "missing_column"
+
+    # Star notation issues
+    UNQUALIFIED_STAR_MULTIPLE_TABLES = "unqualified_star_multiple_tables"
+    STAR_WITHOUT_SCHEMA = "star_without_schema"
+
+    # Table reference issues
+    MISSING_TABLE = "missing_table"
+    CIRCULAR_DEPENDENCY = "circular_dependency"
+    AMBIGUOUS_TABLE = "ambiguous_table"
+
+    # Expression issues
+    UNSUPPORTED_SYNTAX = "unsupported_syntax"
+    COMPLEX_EXPRESSION = "complex_expression"
+    PARSE_ERROR = "parse_error"
+
+    # Schema issues
+    MISSING_SCHEMA_INFO = "missing_schema_info"
+    SCHEMA_MISMATCH = "schema_mismatch"
+    TYPE_MISMATCH = "type_mismatch"
+
+    # Best practices
+    IMPLICIT_JOIN = "implicit_join"
+    SELECT_STAR_DISCOURAGED = "select_star_discouraged"
+
+
+@dataclass
+class ValidationIssue:
+    """
+    Represents a validation issue found during SQL parsing or lineage construction.
+
+    Issues are collected during parsing and lineage building to provide users
+    with actionable feedback on SQL quality and correctness.
+    """
+
+    severity: IssueSeverity
+    category: IssueCategory
+    message: str
+    query_id: Optional[str] = None
+    location: Optional[str] = None  # e.g., "line 5, column 10", "SELECT clause"
+    suggestion: Optional[str] = None  # How to fix the issue
+    context: Dict[str, Any] = field(default_factory=dict)  # Additional context
+
+    def __str__(self) -> str:
+        """Human-readable string representation"""
+        parts = [f"[{self.severity.value.upper()}]"]
+        if self.query_id:
+            parts.append(f"Query {self.query_id}")
+        if self.location:
+            parts.append(f"at {self.location}")
+        parts.append(f"- {self.message}")
+        if self.suggestion:
+            parts.append(f"\n  💡 Suggestion: {self.suggestion}")
+        return " ".join(parts)
+
+
+# ============================================================================
 # Query Structure Models
 # ============================================================================
 
@@ -307,7 +382,8 @@ class ColumnLineageGraph:
 
     nodes: Dict[str, ColumnNode] = field(default_factory=dict)  # full_name -> ColumnNode
     edges: List[ColumnEdge] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)  # Validation warnings
+    warnings: List[str] = field(default_factory=list)  # Legacy validation warnings (deprecated)
+    issues: List[ValidationIssue] = field(default_factory=list)  # Structured validation issues
 
     def add_node(self, node: ColumnNode):
         """Add a column node to the graph"""
@@ -326,9 +402,13 @@ class ColumnLineageGraph:
             self.edges.append(edge)
 
     def add_warning(self, warning: str):
-        """Add a validation warning"""
+        """Add a validation warning (deprecated - use add_issue instead)"""
         if warning not in self.warnings:
             self.warnings.append(warning)
+
+    def add_issue(self, issue: ValidationIssue):
+        """Add a structured validation issue"""
+        self.issues.append(issue)
 
     def get_input_nodes(self) -> List[ColumnNode]:
         """Get all input layer nodes"""

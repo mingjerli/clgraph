@@ -15,9 +15,12 @@ from .models import (
     ColumnEdge,
     ColumnLineageGraph,
     ColumnNode,
+    IssueCategory,
+    IssueSeverity,
     QueryUnit,
     QueryUnitGraph,
     QueryUnitType,
+    ValidationIssue,
 )
 from .query_parser import RecursiveQueryParser
 
@@ -49,10 +52,12 @@ class RecursiveLineageBuilder:
         sql_query: str,
         external_table_columns: Optional[Dict[str, List[str]]] = None,
         dialect: str = "bigquery",
+        query_id: Optional[str] = None,
     ):
         self.sql_query = sql_query
         self.external_table_columns = external_table_columns or {}
         self.dialect = dialect
+        self.query_id = query_id
 
         # Parse query structure first
         parser = RecursiveQueryParser(sql_query, dialect=dialect)
@@ -170,6 +175,26 @@ class RecursiveLineageBuilder:
                         source_unit = self._resolve_source_unit(unit, default_table)
                         if source_unit:
                             col_info["source_unit"] = source_unit.unit_id
+
+                    # VALIDATION: Check for unqualified SELECT * with multiple tables
+                    table_count = len(unit.depends_on_tables) + len(unit.depends_on_units)
+                    if table_count > 1:
+                        # This is ambiguous - which table does * refer to?
+                        tables = [str(t) for t in unit.depends_on_tables] + [
+                            str(self.unit_graph.units[uid].name)
+                            for uid in unit.depends_on_units
+                            if uid in self.unit_graph.units
+                        ]
+                        issue = ValidationIssue(
+                            severity=IssueSeverity.ERROR,
+                            category=IssueCategory.UNQUALIFIED_STAR_MULTIPLE_TABLES,
+                            message=f"Unqualified SELECT * with {table_count} tables: {', '.join(tables)}. Cannot determine column sources.",
+                            query_id=self.query_id,
+                            location="SELECT clause",
+                            suggestion=f"Use qualified star (e.g., SELECT {tables[0]}.*, {tables[1]}.* ...) or list columns explicitly",
+                            context={"tables": tables, "table_count": table_count},
+                        )
+                        self.lineage_graph.add_issue(issue)
 
                 col_info["is_star"] = True
                 col_info["name"] = "*"
@@ -1073,10 +1098,35 @@ class RecursiveLineageBuilder:
         """
         # Check if we have column information for this external table
         if source_table not in self.external_table_columns:
+            # VALIDATION: Missing schema information for external table
+            issue = ValidationIssue(
+                severity=IssueSeverity.INFO,
+                category=IssueCategory.STAR_WITHOUT_SCHEMA,
+                message=f"SELECT * from external table '{source_table}' without known schema. Star cannot be expanded to individual columns.",
+                query_id=self.query_id,
+                location="SELECT clause",
+                suggestion=f"Provide schema for '{source_table}' or list columns explicitly",
+                context={
+                    "table": source_table,
+                    "available_schemas": list(self.external_table_columns.keys()),
+                },
+            )
+            self.lineage_graph.add_issue(issue)
             return None
 
         column_names = self.external_table_columns[source_table]
         if not column_names:
+            # VALIDATION: Empty schema information
+            issue = ValidationIssue(
+                severity=IssueSeverity.WARNING,
+                category=IssueCategory.MISSING_SCHEMA_INFO,
+                message=f"Table '{source_table}' has empty schema. Star cannot be expanded.",
+                query_id=self.query_id,
+                location="SELECT clause",
+                suggestion=f"Check schema definition for '{source_table}'",
+                context={"table": source_table},
+            )
+            self.lineage_graph.add_issue(issue)
             return None
 
         # Great! We can expand. Create individual column entries

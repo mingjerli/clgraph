@@ -739,14 +739,9 @@ class RecursiveQueryParser:
 
         if table_count > 1:
             # Ambiguous star usage
-            context = f"{unit.unit_type.value}"
-            if unit.name and unit.unit_type == QueryUnitType.CTE:
-                context = f"CTE '{unit.name}'"
-
-            raise ValueError(
-                f"Ambiguous SELECT * in {context} with {table_count} tables. "
-                f"Use qualified stars like 'alias.*' instead."
-            )
+            # NOTE: We now collect this as a ValidationIssue in RecursiveLineageBuilder
+            # instead of raising an error, so we can continue parsing and find all issues
+            pass
 
     def _generate_unit_id(self, unit_type: QueryUnitType, name: str) -> str:
         """Generate unique unit ID"""

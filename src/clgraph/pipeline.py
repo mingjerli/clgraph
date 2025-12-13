@@ -19,7 +19,16 @@ from sqlglot import exp
 
 from .column import PipelineLineageGraph, generate_description, propagate_metadata
 from .lineage_builder import RecursiveLineageBuilder
-from .models import ColumnEdge, ColumnLineageGraph, ColumnNode, DescriptionSource, ParsedQuery
+from .models import (
+    ColumnEdge,
+    ColumnLineageGraph,
+    ColumnNode,
+    DescriptionSource,
+    IssueCategory,
+    IssueSeverity,
+    ParsedQuery,
+    ValidationIssue,
+)
 from .table import TableDependencyGraph
 
 
@@ -80,6 +89,7 @@ class PipelineLineageBuilder:
                         sql_for_lineage,
                         external_table_columns=external_table_columns,
                         dialect=pipeline.dialect,
+                        query_id=query_id,
                     )
                     query_lineage = lineage_builder.build()
 
@@ -2117,6 +2127,125 @@ class Pipeline:
             "elapsed_seconds": elapsed,
             "total_queries": len(self.table_graph.queries),
         }
+
+    # ========================================================================
+    # Validation Methods
+    # ========================================================================
+
+    def get_all_issues(self) -> List["ValidationIssue"]:
+        """
+        Get all validation issues from all queries in the pipeline.
+
+        Returns combined list of issues from:
+        - Individual query lineage graphs
+        - Pipeline-level lineage graph
+
+        Returns:
+            List of ValidationIssue objects
+        """
+        all_issues: List[ValidationIssue] = []
+
+        # Collect issues from individual query lineage graphs
+        for _query_id, query_lineage in self.query_graphs.items():
+            all_issues.extend(query_lineage.issues)
+
+        # Add pipeline-level issues
+        all_issues.extend(self.column_graph.issues)
+
+        return all_issues
+
+    def get_issues(
+        self,
+        severity: Optional[str | IssueSeverity] = None,
+        category: Optional[str | IssueCategory] = None,
+        query_id: Optional[str] = None,
+    ) -> List["ValidationIssue"]:
+        """
+        Get filtered validation issues.
+
+        Args:
+            severity: Filter by severity ('error', 'warning', 'info' or IssueSeverity enum)
+            category: Filter by category (string or IssueCategory enum)
+            query_id: Filter by query ID
+
+        Returns:
+            Filtered list of ValidationIssue objects
+
+        Example:
+            # Get all errors (using string)
+            errors = pipeline.get_issues(severity='error')
+
+            # Get all errors (using enum)
+            errors = pipeline.get_issues(severity=IssueSeverity.ERROR)
+
+            # Get all star-related issues
+            star_issues = pipeline.get_issues(category=IssueCategory.UNQUALIFIED_STAR_MULTIPLE_TABLES)
+
+            # Get all issues from a specific query
+            query_issues = pipeline.get_issues(query_id='query_1')
+        """
+        issues = self.get_all_issues()
+
+        # Filter by severity
+        if severity:
+            severity_enum = (
+                severity if isinstance(severity, IssueSeverity) else IssueSeverity(severity)
+            )
+            issues = [i for i in issues if i.severity == severity_enum]
+
+        # Filter by category
+        if category:
+            category_enum = (
+                category if isinstance(category, IssueCategory) else IssueCategory(category)
+            )
+            issues = [i for i in issues if i.category == category_enum]
+
+        # Filter by query_id
+        if query_id:
+            issues = [i for i in issues if i.query_id == query_id]
+
+        return issues
+
+    def has_errors(self) -> bool:
+        """Check if pipeline has any ERROR-level issues"""
+        return any(i.severity.value == "error" for i in self.get_all_issues())
+
+    def has_warnings(self) -> bool:
+        """Check if pipeline has any WARNING-level issues"""
+        return any(i.severity.value == "warning" for i in self.get_all_issues())
+
+    def print_issues(self, severity: Optional[str | IssueSeverity] = None):
+        """
+        Print all validation issues in a human-readable format.
+
+        Args:
+            severity: Optional filter by severity ('error', 'warning', 'info' or IssueSeverity enum)
+        """
+        issues = self.get_issues(severity=severity) if severity else self.get_all_issues()
+
+        if not issues:
+            print("✅ No validation issues found!")
+            return
+
+        # Group by severity
+        from collections import defaultdict
+
+        by_severity = defaultdict(list)
+        for issue in issues:
+            by_severity[issue.severity.value].append(issue)
+
+        # Print by severity (errors first, then warnings, then info)
+        for sev in ["error", "warning", "info"]:
+            if sev not in by_severity:
+                continue
+
+            issues_list = by_severity[sev]
+            icon = {"error": "❌", "warning": "⚠️", "info": "ℹ️"}[sev]
+            print(f"\n{icon} {sev.upper()} ({len(issues_list)})")
+            print("=" * 80)
+
+            for issue in issues_list:
+                print(f"\n{issue}")
 
 
 __all__ = [
