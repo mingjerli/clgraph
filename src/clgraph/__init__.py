@@ -14,6 +14,9 @@ from .diff import ColumnDiff, PipelineDiff
 
 # Import export functionality
 from .export import CSVExporter, GraphVizExporter, JSONExporter
+
+# Import validation models
+from .models import IssueCategory, IssueSeverity, ValidationIssue
 from .parser import (
     ColumnEdge,
     ColumnLineageGraph,
@@ -79,6 +82,10 @@ __all__ = [
     "DescriptionSource",
     "PipelineDiff",
     "ColumnDiff",
+    # Validation
+    "ValidationIssue",
+    "IssueSeverity",
+    "IssueCategory",
     # Export
     "JSONExporter",
     "CSVExporter",

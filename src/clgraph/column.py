@@ -8,7 +8,7 @@ plus utility functions for description generation and metadata propagation.
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Set
 
-from .models import ColumnEdge, ColumnNode, DescriptionSource
+from .models import ColumnEdge, ColumnNode, DescriptionSource, ValidationIssue
 
 if TYPE_CHECKING:
     from .pipeline import Pipeline
@@ -172,6 +172,7 @@ class PipelineLineageGraph:
 
     columns: Dict[str, ColumnNode] = field(default_factory=dict)  # full_name -> ColumnNode
     edges: List[ColumnEdge] = field(default_factory=list)
+    issues: List[ValidationIssue] = field(default_factory=list)  # Validation issues
 
     def add_column(self, column: ColumnNode) -> ColumnNode:
         """Add a column node to the graph"""
@@ -181,6 +182,10 @@ class PipelineLineageGraph:
     def add_edge(self, edge: ColumnEdge):
         """Add a lineage edge"""
         self.edges.append(edge)
+
+    def add_issue(self, issue: ValidationIssue):
+        """Add a validation issue"""
+        self.issues.append(issue)
 
     def _build_column_dependencies(self) -> Dict[str, Set[str]]:
         """
