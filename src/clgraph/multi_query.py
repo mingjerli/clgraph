@@ -277,16 +277,29 @@ class MultiQueryParser:
         """
         Get fully qualified table name from Table node.
         Restores templates if present.
+
+        Note: For CREATE TABLE statements, sqlglot returns a Schema object.
+        We extract the Table object from schema.this.
         """
+        # Handle Schema objects (from CREATE TABLE)
+        if isinstance(table_node, exp.Schema):
+            if hasattr(table_node, "this") and table_node.this:
+                table_node = table_node.this
+            else:
+                # Fallback: use the schema's name directly
+                return tokenizer.restore_templates(str(table_node.name))
+
+        # Extract table name parts from Table object
         parts = []
-        if table_node.catalog:
+        if hasattr(table_node, "catalog") and table_node.catalog:
             parts.append(str(table_node.catalog))
-        if table_node.db:
+        if hasattr(table_node, "db") and table_node.db:
             parts.append(str(table_node.db))
-        parts.append(str(table_node.name))
+        if hasattr(table_node, "name"):
+            parts.append(str(table_node.name))
 
         # Join parts and restore templates
-        table_name = ".".join(parts)
+        table_name = ".".join(parts) if parts else str(table_node)
         return tokenizer.restore_templates(table_name)
 
 
