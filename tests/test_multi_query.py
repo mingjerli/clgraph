@@ -960,16 +960,18 @@ class TestCrossQueryLineage:
         # All 4 columns from query_0 should connect to the * in query_1
         assert len(star_edges) == 4
 
-        # Should ALSO have edges for specifically referenced columns (user_id, amount)
-        specific_edges = [
+        # With unified column naming, edges for specifically referenced columns
+        # (user_id, amount) flow naturally through the shared column nodes.
+        # Verify edges exist from intermediate table columns to final output
+        edges_to_output = [
             e
-            for e in cross_query_edges
-            if e.to_node.column_name in ("user_id", "amount")
-            and e.to_node.table_name == "staging.user_orders"
-            and e.to_node.layer == "input"
+            for e in pipeline.edges
+            if e.from_node.table_name == "staging.user_orders"
+            and e.from_node.column_name in ("user_id", "amount")
+            and e.to_node.table_name == "analytics.user_metrics"
         ]
-        # user_id and amount should each have an edge
-        assert len(specific_edges) >= 2
+        # user_id and amount should each have edges to output
+        assert len(edges_to_output) >= 2, f"Expected >= 2 edges, got {len(edges_to_output)}"
 
         # Verify backward lineage traces all the way to source
         sources = pipeline.trace_column_backward("analytics.user_metrics", "total_revenue")

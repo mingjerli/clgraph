@@ -56,18 +56,22 @@ class TestSelectStarExpansion:
         assert output_col_names == {"order_id", "user_id", "amount", "status"}
         assert all(not col.is_star for col in query2_output)
 
-        # Verify cross-query edges connect individual columns
-        cross_query_edges = [e for e in pipeline.edges if e.edge_type == "cross_query"]
-
-        # Should have 4 edges connecting individual columns (not to *)
-        individual_edges = [
-            e for e in cross_query_edges if not e.to_node.is_star and e.to_node.layer == "output"
+        # With unified column naming, edges from intermediate table columns to
+        # output columns flow naturally through shared nodes.
+        #
+        # Verify edges connect intermediate columns to final output
+        edges_to_output = [
+            e
+            for e in pipeline.edges
+            if e.from_node.table_name == "staging.orders"
+            and e.to_node.table_name == "analytics.orders_copy"
+            and not e.to_node.is_star
         ]
-        assert len(individual_edges) == 4
+        assert len(edges_to_output) == 4, f"Expected 4 edges, got {len(edges_to_output)}"
 
         # Should NOT have edges to * node in output layer
         star_edges = [
-            e for e in cross_query_edges if e.to_node.is_star and e.to_node.layer == "output"
+            e for e in pipeline.edges if e.to_node.is_star and e.to_node.layer == "output"
         ]
         assert len(star_edges) == 0
 
@@ -119,14 +123,18 @@ class TestSelectStarExpansion:
         assert output_col_names == {"order_id", "user_id", "amount", "status", "order_date"}
         assert all(not col.is_star for col in query2_output)
 
-        # Verify cross-query edges
-        cross_query_edges = [e for e in pipeline.edges if e.edge_type == "cross_query"]
-
-        # All 5 columns should have direct edges (no * passthrough)
+        # With unified column naming, edges from intermediate table columns to
+        # output columns flow naturally through shared nodes.
+        #
+        # Verify edges connect intermediate columns to final output
         output_edges = [
-            e for e in cross_query_edges if e.to_node.layer == "output" and not e.to_node.is_star
+            e
+            for e in pipeline.edges
+            if e.from_node.table_name == "staging.orders"
+            and e.to_node.table_name == "analytics.orders_normalized"
+            and not e.to_node.is_star
         ]
-        assert len(output_edges) == 5
+        assert len(output_edges) == 5, f"Expected 5 edges, got {len(output_edges)}"
 
         # Verify specific column lineage
         assert any(
@@ -277,24 +285,33 @@ class TestCountStarPreservation:
         ]
         assert len(query2_star) == 1
 
-        # Verify cross-query edges
-        cross_query_edges = [e for e in pipeline.edges if e.edge_type == "cross_query"]
-
-        # Should have edges to * node (for COUNT(*))
+        # With unified column naming, edges to * node for COUNT(*) are created
+        # as cross-query edges since * nodes are query-scoped.
+        #
+        # Check edges from output columns to * node in aggregate query
         star_edges = [
             e
-            for e in cross_query_edges
-            if e.to_node.is_star and e.to_node.table_name == "staging.user_orders"
+            for e in pipeline.edges
+            if e.to_node.is_star
+            and e.to_node.table_name == "staging.user_orders"
+            and e.to_node.query_id == "aggregate"
         ]
         # All 4 upstream columns should connect to *
-        assert len(star_edges) == 4
+        assert len(star_edges) == 4, f"Expected 4 star edges, got {len(star_edges)}"
 
-        # Should ALSO have edges for explicitly referenced columns
+        # Should ALSO have edges for explicitly referenced columns (user_id, amount)
+        # These flow naturally through shared column nodes
         specific_edges = [
-            e for e in cross_query_edges if not e.to_node.is_star and e.to_node.layer == "input"
+            e
+            for e in pipeline.edges
+            if e.from_node.table_name == "staging.user_orders"
+            and e.to_node.table_name == "analytics.user_metrics"
+            and not e.from_node.is_star
         ]
-        # user_id and amount should have specific edges
-        assert len(specific_edges) >= 2
+        # user_id and amount should have edges to output
+        assert len(specific_edges) >= 2, (
+            f"Expected at least 2 specific edges, got {len(specific_edges)}"
+        )
 
     def test_count_star_only(self):
         """
