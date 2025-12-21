@@ -202,23 +202,29 @@ class RecursiveLineageBuilder:
                 col_info["expression"] = expr.sql()
 
                 # Handle EXCEPT/REPLACE
+                # Note: sqlglot 28.x uses 'except_' and 'replace_' (with underscore)
+                # while sqlglot 27.x uses 'except' and 'replace' (without underscore)
                 star_expr = expr.this if isinstance(expr, exp.Column) else expr
-                if hasattr(star_expr, "args") and "except" in star_expr.args:
-                    except_clause = star_expr.args["except"]
-                    if except_clause:
-                        col_info["except_columns"] = {col.name for col in except_clause}
-                        col_info["type"] = "star_except"
+                except_clause = None
+                if hasattr(star_expr, "args"):
+                    # Try both old and new sqlglot key names
+                    except_clause = star_expr.args.get("except") or star_expr.args.get("except_")
+                if except_clause:
+                    col_info["except_columns"] = {col.name for col in except_clause}
+                    col_info["type"] = "star_except"
                 else:
                     col_info["except_columns"] = set()
 
-                if hasattr(star_expr, "args") and "replace" in star_expr.args:
-                    replace_clause = star_expr.args["replace"]
-                    if replace_clause:
-                        col_info["replace_columns"] = {
-                            replace_expr.alias: replace_expr.sql()
-                            for replace_expr in replace_clause
-                            if hasattr(replace_expr, "alias")
-                        }
+                replace_clause = None
+                if hasattr(star_expr, "args"):
+                    # Try both old and new sqlglot key names
+                    replace_clause = star_expr.args.get("replace") or star_expr.args.get("replace_")
+                if replace_clause:
+                    col_info["replace_columns"] = {
+                        replace_expr.alias: replace_expr.sql()
+                        for replace_expr in replace_clause
+                        if hasattr(replace_expr, "alias")
+                    }
                 else:
                     col_info["replace_columns"] = {}
 
@@ -545,18 +551,40 @@ class RecursiveLineageBuilder:
                     output_node.warnings.append(warning)
 
                 # Link to ALL tables involved
-                # For base tables: use * (unknown columns)
+                # For base tables: use individual columns if schema is known, else use *
                 for table_name in unit.depends_on_tables:
-                    table_star_node = self._find_or_create_table_star_node(table_name)
-                    edge = ColumnEdge(
-                        from_node=table_star_node,
-                        to_node=output_node,
-                        edge_type="aggregate",
-                        transformation="ambiguous_aggregate",
-                        context=unit.unit_type.value,
-                        expression=col_info["expression"],
-                    )
-                    self.lineage_graph.add_edge(edge)
+                    # Check if we know the schema for this table from upstream queries
+                    # Use resolver to match short names (e.g., 'events') to full names (e.g., 'staging.events')
+                    resolved_table = self._resolve_external_table_name(table_name)
+                    if resolved_table:
+                        # Schema is known - link to individual columns
+                        column_names = self.external_table_columns[resolved_table]
+                        for col_name in column_names:
+                            # Use the resolved full table name for the node
+                            source_node = self._find_or_create_table_column_node(
+                                resolved_table, col_name
+                            )
+                            edge = ColumnEdge(
+                                from_node=source_node,
+                                to_node=output_node,
+                                edge_type="aggregate",
+                                transformation="ambiguous_aggregate",
+                                context=unit.unit_type.value,
+                                expression=col_info["expression"],
+                            )
+                            self.lineage_graph.add_edge(edge)
+                    else:
+                        # Schema unknown - use star node
+                        table_star_node = self._find_or_create_table_star_node(table_name)
+                        edge = ColumnEdge(
+                            from_node=table_star_node,
+                            to_node=output_node,
+                            edge_type="aggregate",
+                            transformation="ambiguous_aggregate",
+                            context=unit.unit_type.value,
+                            expression=col_info["expression"],
+                        )
+                        self.lineage_graph.add_edge(edge)
 
                 # For query units: link to all explicit columns if fully resolved, else use *
                 for unit_id in unit.depends_on_units:
@@ -822,6 +850,30 @@ class RecursiveLineageBuilder:
         self.lineage_graph.add_node(node)
 
         return node
+
+    def _resolve_external_table_name(self, table_name: str) -> Optional[str]:
+        """
+        Resolve a table name to its full qualified version in external_table_columns.
+
+        The parser may return just 'events' while external_table_columns has 'staging.events'.
+        This method finds the matching full qualified name.
+
+        Args:
+            table_name: Short or full table name (e.g., 'events' or 'staging.events')
+
+        Returns:
+            The full qualified table name if found in external_table_columns, None otherwise
+        """
+        # Direct match
+        if table_name in self.external_table_columns:
+            return table_name
+
+        # Check if any key ends with .{table_name}
+        for full_name in self.external_table_columns:
+            if full_name.endswith(f".{table_name}"):
+                return full_name
+
+        return None
 
     def _find_or_create_table_star_node(self, table_name: str) -> ColumnNode:
         """Find or create star node for a base table"""
@@ -1254,7 +1306,13 @@ class RecursiveLineageBuilder:
     ) -> List[str]:
         """
         Flag unqualified column references when query has JOINs.
-        This is a readability issue - lineage should be obvious from SQL.
+        This is a readability/correctness issue - lineage should be obvious from SQL.
+
+        When multiple tables are joined, unqualified column references can be ambiguous
+        and may resolve incorrectly. This validation:
+        1. Walks ALL expressions (not just top-level columns)
+        2. Finds unqualified column references inside expressions
+        3. Adds ValidationIssue objects for proper issue tracking
         """
         warnings = []
 
@@ -1262,13 +1320,22 @@ class RecursiveLineageBuilder:
         if unit.select_node is None:
             return warnings
 
-        # Check if this query has JOINs
+        # Check if this query has JOINs or multiple tables
         joins = unit.select_node.args.get("joins", [])
-        if not joins or len(joins) == 0:
+        has_multiple_tables = (len(unit.depends_on_tables) + len(unit.depends_on_units) > 1) or (
+            joins and len(joins) > 0
+        )
+
+        if not has_multiple_tables:
             return warnings
 
-        # Query has JOINs - check for unqualified columns
-        for _i, col_info in enumerate(output_cols):
+        # Collect all tables/schemas available for resolution
+        available_tables = list(unit.depends_on_tables) + [
+            self.unit_graph.units[uid].name for uid in unit.depends_on_units
+        ]
+
+        # Query has JOINs or multiple tables - check for unqualified columns
+        for col_info in output_cols:
             # Skip stars (they're explicit about being unqualified)
             if col_info.get("is_star"):
                 continue
@@ -1277,17 +1344,44 @@ class RecursiveLineageBuilder:
             if not expr:
                 continue
 
-            # Check if this is a direct column reference (not an expression)
-            if isinstance(expr, exp.Column):
-                # Check if column is unqualified (no table prefix)
-                table_ref = expr.table if hasattr(expr, "table") else None
-                col_name = expr.name
+            output_col_name = col_info.get("name", "unknown")
 
-                if not table_ref:  # Unqualified!
-                    warnings.append(
-                        f"[SUGGESTION] Unqualified column '{col_name}' in {unit.unit_id} with JOINs. "
-                        f"Use table prefix (e.g., 't.{col_name}') to make column source clearer."
-                    )
+            # Walk the ENTIRE expression to find all column references
+            for node in expr.walk():
+                if isinstance(node, exp.Column) and not isinstance(node.this, exp.Star):
+                    # Check if column is unqualified (no table prefix)
+                    table_ref = node.table if hasattr(node, "table") else None
+                    col_name = node.name
+
+                    if not table_ref:  # Unqualified!
+                        # Add string warning for backward compatibility
+                        warnings.append(
+                            f"Unqualified column '{col_name}' in expression for '{output_col_name}' "
+                            f"with multiple tables. Cannot determine source table."
+                        )
+
+                        # Also add proper ValidationIssue
+                        issue = ValidationIssue(
+                            severity=IssueSeverity.WARNING,
+                            category=IssueCategory.UNQUALIFIED_COLUMN,
+                            message=(
+                                f"Unqualified column '{col_name}' in expression for '{output_col_name}'. "
+                                f"With multiple tables ({', '.join(available_tables)}), "
+                                f"the source table is ambiguous."
+                            ),
+                            query_id=self.query_id,
+                            location=f"SELECT clause: {output_col_name}",
+                            suggestion=(
+                                f"Qualify the column with table name: e.g., 'table_name.{col_name}'"
+                            ),
+                            context={
+                                "column_name": col_name,
+                                "output_column": output_col_name,
+                                "available_tables": available_tables,
+                                "expression": expr.sql() if expr else None,
+                            },
+                        )
+                        self.lineage_graph.add_issue(issue)
 
         return warnings
 

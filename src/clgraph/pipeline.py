@@ -292,9 +292,11 @@ class PipelineLineageBuilder:
         """
         Add all columns from a query to the pipeline graph.
 
-        Note: We add all nodes (both input and output layers) to maintain full lineage.
-        Input layer nodes represent source columns, output layer nodes represent derived columns.
-        Both are needed for complete lineage tracing.
+        Physical table columns (source tables, intermediate tables, output tables) use
+        shared naming (table.column) so the same column appears only once in the graph.
+        When a column already exists, we skip adding it to avoid duplicates.
+
+        Internal structures (CTEs, subqueries) use query-scoped naming to avoid collisions.
 
         Special handling for star expansion:
         - If output layer has a * node and we know the upstream columns, expand it
@@ -306,6 +308,12 @@ class PipelineLineageBuilder:
 
         # Add columns with table context
         for node in expanded_nodes:
+            full_name = self._make_full_name(node, query)
+
+            # Skip if column already exists (shared physical table column)
+            if full_name in pipeline.columns:
+                continue
+
             # Extract metadata from SQL comments if available
             description = None
             description_source = None
@@ -329,7 +337,7 @@ class PipelineLineageBuilder:
             column = ColumnNode(
                 column_name=node.column_name,
                 table_name=self._infer_table_name(node, query) or node.table_name,
-                full_name=self._make_full_name(node, query),
+                full_name=full_name,
                 query_id=query.query_id,
                 unit_id=node.unit_id,
                 node_type=node.node_type,
@@ -357,12 +365,16 @@ class PipelineLineageBuilder:
     ):
         """
         Add all edges from a query to the pipeline graph.
+
+        Handles star expansion: when an edge points to an output * that was expanded,
+        create edges to all expanded columns instead.
         """
         for edge in query_lineage.edges:
             from_full = self._make_full_name(edge.from_node, query)
             to_full = self._make_full_name(edge.to_node, query)
 
             if from_full in pipeline.columns and to_full in pipeline.columns:
+                # Normal case: both nodes exist
                 pipeline_edge = ColumnEdge(
                     from_node=pipeline.columns[from_full],
                     to_node=pipeline.columns[to_full],
@@ -373,145 +385,148 @@ class PipelineLineageBuilder:
                 )
                 pipeline.add_edge(pipeline_edge)
 
+            elif (
+                from_full in pipeline.columns
+                and edge.to_node.is_star
+                and edge.to_node.layer == "output"
+            ):
+                # Output * was expanded - create edges to all expanded columns
+                dest_table = query.destination_table
+                expanded_outputs = [
+                    col
+                    for col in pipeline.columns.values()
+                    if col.table_name == dest_table and col.layer == "output" and not col.is_star
+                ]
+
+                # If input is also a *, get EXCEPT columns
+                except_columns = edge.to_node.except_columns or set()
+
+                # For input *, connect to all matching output columns
+                if edge.from_node.is_star:
+                    # Find the source table for this input *
+                    source_table = self._infer_table_name(edge.from_node, query)
+                    if source_table:
+                        # Get all columns from source table
+                        source_columns = [
+                            col
+                            for col in pipeline.columns.values()
+                            if col.table_name == source_table
+                            and col.layer == "output"
+                            and not col.is_star
+                        ]
+
+                        # Create edge from each source column to matching output column
+                        for source_col in source_columns:
+                            if source_col.column_name in except_columns:
+                                continue
+
+                            # Find matching output column
+                            for output_col in expanded_outputs:
+                                if output_col.column_name == source_col.column_name:
+                                    pipeline_edge = ColumnEdge(
+                                        from_node=source_col,
+                                        to_node=output_col,
+                                        edge_type="direct_column",
+                                        transformation="direct_column",
+                                        context=edge.context,
+                                        query_id=query.query_id,
+                                    )
+                                    pipeline.add_edge(pipeline_edge)
+                                    break
+                else:
+                    # Single input column to expanded outputs
+                    for output_col in expanded_outputs:
+                        pipeline_edge = ColumnEdge(
+                            from_node=pipeline.columns[from_full],
+                            to_node=output_col,
+                            edge_type=edge.edge_type
+                            if hasattr(edge, "edge_type")
+                            else edge.transformation,
+                            transformation=edge.transformation,
+                            context=edge.context,
+                            query_id=query.query_id,
+                        )
+                        pipeline.add_edge(pipeline_edge)
+
     def _add_cross_query_edges(self, pipeline: "Pipeline"):
         """
-        Add edges connecting queries via tables.
+        Add edges connecting upstream columns to downstream * nodes.
 
-        Algorithm:
-        For each table T:
-          - Find query Q1 that creates/modifies T
-          - Find queries [Q2, Q3, ...] that read from T
-          - For each column C in Q1's output:
-              - For each query Qi that reads T:
-                  - If Qi references T.C, create edge: Q1.C -> Qi.C
-                  - If Qi references T.*, create edges: Q1.C -> Qi.* for ALL columns
+        With the new unified naming for physical tables, most cross-query edges
+        flow naturally through shared column nodes. For example:
+        - Query 0 creates: staging.orders.customer_id
+        - Query 1 reads from staging.orders
+        - The single-query lineage for Query 1 has: staging.orders.customer_id -> output
+        - This edge is created automatically in _add_query_edges
+
+        However, we still need to handle * nodes (for COUNT(*), etc.):
+        - When a query uses COUNT(*), we need edges from all upstream columns to *
+        - These edges represent "all columns contribute to this aggregate"
         """
         for table_name, table_node in pipeline.table_graph.tables.items():
             # Find query that creates this table
             if not table_node.created_by:
                 continue  # External source table
 
-            creating_query_id = table_node.created_by
-
-            # Find output columns from creating query
-            output_columns = [
+            # Find output columns from creating query for this table
+            # With unified naming, these are just table_name.column_name
+            table_columns = [
                 col
                 for col in pipeline.columns.values()
-                if col.query_id == creating_query_id and col.table_name == table_name
+                if col.table_name == table_name and col.column_name != "*" and col.layer == "output"
             ]
 
             # Find queries that read this table
             for reading_query_id in table_node.read_by:
-                # Check if reading query has a * column for this table (input layer)
-                input_star_column = None
+                # Check if reading query has a * column for this table
+                # This represents COUNT(*) or similar aggregate usage
+                star_column = None
                 for col in pipeline.columns.values():
                     if (
                         col.query_id == reading_query_id
                         and col.table_name == table_name
                         and col.column_name == "*"
-                        and col.layer == "input"
                     ):
-                        input_star_column = col
+                        star_column = col
                         break
 
-                # Also check if there's an output * in the same query (has EXCEPT/REPLACE)
-                # This is for queries like: SELECT * EXCEPT (...) FROM table
-                output_star_column = None
-                if input_star_column:
-                    for col in pipeline.columns.values():
-                        if (
-                            col.query_id == reading_query_id
-                            and col.column_name == "*"
-                            and col.layer == "output"
-                        ):
-                            output_star_column = col
-                            break
+                # Connect all table columns to the * node
+                if star_column:
+                    # Get EXCEPT columns if any
+                    except_columns = star_column.except_columns or set()
 
-                # Check if this query had SELECT * that was expanded to individual output columns
-                # Key indicator: ALL upstream columns appear in output with same names
-                # This distinguishes SELECT * (all columns) from SELECT user_id, COUNT(*) (partial)
-                has_select_star_expanded = False
-                if output_star_column is None and input_star_column is not None:
-                    # Count how many upstream columns appear in output
-                    upstream_col_names = {oc.column_name for oc in output_columns}
-                    output_col_names = {
-                        col.column_name
-                        for col in pipeline.columns.values()
-                        if col.query_id == reading_query_id
-                        and col.layer == "output"
-                        and not col.is_star
-                    }
-                    matching_cols = upstream_col_names & output_col_names
-
-                    # If ALL upstream columns appear in output (or most of them, accounting for EXCEPT),
-                    # then this was likely SELECT * that got expanded
-                    has_select_star_expanded = len(matching_cols) >= len(upstream_col_names) * 0.8
-
-                # Use output * for EXCEPT/REPLACE info, but connect to input *
-                star_column = input_star_column
-                except_columns = output_star_column.except_columns if output_star_column else set()
-
-                # If there's a star column AND it hasn't been expanded, connect all output columns to it
-                # BUT respect EXCEPT clause - skip columns that are excepted
-                # IMPORTANT: Skip this if SELECT * was expanded - we'll create direct edges instead
-                if star_column and not has_select_star_expanded:
-                    for output_col in output_columns:
+                    for table_col in table_columns:
                         # Skip columns in EXCEPT clause
-                        if output_col.column_name in except_columns:
+                        if table_col.column_name in except_columns:
                             continue
 
                         edge = ColumnEdge(
-                            from_node=output_col,
+                            from_node=table_col,
                             to_node=star_column,
                             edge_type="cross_query",
                             context="cross_query",
-                            transformation=f"{creating_query_id} -> {reading_query_id}",
+                            transformation="all columns -> *",
                             query_id=None,  # Cross-query edge
                         )
                         pipeline.add_edge(edge)
-
-                # ALWAYS match columns by name (not just when there's no star)
-                # This handles cases where the query uses both * (for COUNT(*))
-                # and specific columns (for SUM(amount), etc.)
-                #
-                # Also handles star expansion: when the reading query has SELECT * FROM table,
-                # the star is expanded to individual OUTPUT columns at parse time.
-                # We need to connect upstream columns to those expanded output columns.
-                for output_col in output_columns:
-                    # Find corresponding column in reading query by NAME
-                    # This could be:
-                    # 1. Input layer column with same table_name (explicit reference)
-                    # 2. Output layer column with matching name (star-expanded column)
-                    for col in pipeline.columns.values():
-                        if (
-                            col.query_id == reading_query_id
-                            and col.column_name == output_col.column_name
-                        ):
-                            # Check if this is the right column:
-                            # - Input layer: table_name must match
-                            # - Output layer: any match (star-expanded columns)
-                            if col.layer == "input" and col.table_name != table_name:
-                                continue  # Wrong input table
-
-                            # Create cross-query edge
-                            edge = ColumnEdge(
-                                from_node=output_col,
-                                to_node=col,
-                                edge_type="cross_query",
-                                context="cross_query",
-                                transformation=f"{creating_query_id} -> {reading_query_id}",
-                                query_id=None,  # Cross-query edge
-                            )
-                            pipeline.add_edge(edge)
 
     def _infer_table_name(self, node: ColumnNode, query: ParsedQuery) -> Optional[str]:
         """
         Infer which table this column belongs to.
         Maps table references (aliases) to fully qualified names.
+
+        For queries without a destination table (plain SELECT statements),
+        output columns are assigned to a virtual result table named '{query_id}_result'.
+        This ensures they appear in simplified lineage views.
         """
-        # For output columns, use destination table
+        # For output columns, use destination table or virtual result table
         if node.layer == "output":
-            return query.destination_table
+            if query.destination_table:
+                return query.destination_table
+            else:
+                # Plain SELECT without destination - create virtual result table
+                # Use underscore (not colon) so it's treated as physical table in simplified view
+                return f"{query.query_id}_result"
 
         # For input columns, map table_name to fully qualified name
         if node.table_name:
@@ -544,20 +559,94 @@ class PipelineLineageBuilder:
 
     def _make_full_name(self, node: ColumnNode, query: ParsedQuery) -> str:
         """
-        Create fully qualified column name with query_id prefix for uniqueness.
+        Create fully qualified column name.
 
-        Format: {query_id}:{table_name}.{column_name}
+        Naming convention:
+        - Physical tables: {table_name}.{column_name}
+          Examples: raw.orders.customer_id, staging.orders.amount
+          These are shared nodes - same column appears once regardless of which query uses it
 
-        This ensures columns with the same table.column from different queries
-        don't overwrite each other. For example:
-        - query1:stg_orders.customer_id (output from query1)
-        - query2:stg_orders.customer_id (input to query2)
+        - CTEs: {query_id}:cte:{cte_name}.{column_name}
+          Examples: query_0:cte:order_totals.total
+          Query-scoped to avoid collisions between CTEs with same name in different queries
+
+        - Subqueries: {query_id}:subq:{subq_id}.{column_name}
+          Examples: query_0:subq:derived.count
+          Query-scoped internal structures
+
+        - Other internal: {query_id}:{unit_id}.{column_name}
+          Fallback for other query-internal structures
         """
         table_name = self._infer_table_name(node, query)
-        if table_name:
-            return f"{query.query_id}:{table_name}.{node.column_name}"
+        unit_id = node.unit_id
+
+        # Determine if this is a physical table column or internal structure
+        is_physical_table = self._is_physical_table_column(node, query, table_name)
+
+        if is_physical_table and table_name:
+            # Physical table: use simple table.column naming (shared across queries)
+            return f"{table_name}.{node.column_name}"
+
+        elif unit_id and unit_id.startswith("cte:"):
+            # CTE: query-scoped
+            return f"{query.query_id}:{unit_id}.{node.column_name}"
+
+        elif unit_id and unit_id.startswith("subq:"):
+            # Subquery: query-scoped
+            return f"{query.query_id}:{unit_id}.{node.column_name}"
+
+        elif unit_id and unit_id != "main":
+            # Other internal structure: query-scoped
+            return f"{query.query_id}:{unit_id}.{node.column_name}"
+
         else:
-            return f"{query.query_id}:{query.query_id}.{node.column_name}"
+            # Fallback: use table name if available
+            if table_name:
+                return f"{table_name}.{node.column_name}"
+            else:
+                return f"{query.query_id}:unknown.{node.column_name}"
+
+    def _is_physical_table_column(
+        self, node: ColumnNode, query: ParsedQuery, table_name: Optional[str]
+    ) -> bool:
+        """
+        Determine if a column belongs to a physical table (vs CTE, subquery, etc).
+
+        Physical table columns get shared naming (table.column) so they appear
+        once in the graph regardless of how many queries use them.
+
+        A column is from a physical table if:
+        - It's an input from a source table (listed in query.source_tables)
+        - It's an output to a destination table (query.destination_table)
+        - It has no unit_id or unit_id is 'main' with a real table name
+        """
+        if not table_name:
+            return False
+
+        unit_id = node.unit_id
+
+        # Input layer: check if table is a source table
+        if node.layer == "input":
+            # Source tables are physical tables
+            if table_name in query.source_tables:
+                return True
+            # Also check if it matches any source table by suffix
+            for source in query.source_tables:
+                if source.endswith(f".{table_name}") or source == table_name:
+                    return True
+
+        # Output layer: check if it's the destination table
+        if node.layer == "output":
+            if table_name == query.destination_table:
+                return True
+
+        # No unit_id or main unit_id typically means physical table
+        if unit_id is None or unit_id == "main":
+            # But verify it's not from an internal structure
+            if node.layer in ("input", "output"):
+                return True
+
+        return False
 
     def _extract_select_from_query(self, query: ParsedQuery) -> Optional[str]:
         """
@@ -729,6 +818,32 @@ class Pipeline:
             List of ColumnNodes for the table
         """
         return [col for col in self.columns.values() if col.table_name == table_name]
+
+    def get_simplified_column_graph(self) -> "PipelineLineageGraph":
+        """
+        Get a simplified version of the column lineage graph.
+
+        This removes query-internal structures (CTEs, subqueries) and creates
+        direct edges between physical table columns.
+
+        - Keeps: All physical table columns (raw.*, staging.*, analytics.*, etc.)
+        - Removes: CTE columns, subquery columns
+        - Edges: Traces through CTEs/subqueries to create direct table-to-table edges
+
+        Returns:
+            A new PipelineLineageGraph with only physical table columns and direct edges.
+
+        Example:
+            pipeline = Pipeline(queries, dialect="bigquery")
+            simplified = pipeline.get_simplified_column_graph()
+
+            # Full graph has CTEs
+            print(f"Full: {len(pipeline.columns)} columns")
+
+            # Simplified has only table columns
+            print(f"Simplified: {len(simplified.columns)} columns")
+        """
+        return self.column_graph.to_simplified()
 
     @classmethod
     def from_tuples(
