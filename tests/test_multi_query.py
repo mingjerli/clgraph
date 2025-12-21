@@ -911,12 +911,12 @@ class TestCrossQueryLineage:
 
     def test_star_expansion_in_cross_query_edges(self):
         """
-        Test that * is properly handled in cross-query lineage.
+        Test that * is properly resolved in cross-query lineage when schema is known.
 
         When upstream query creates a table with known columns, and downstream
-        query uses both * (for COUNT(*)) and specific columns (for SUM(amount)),
-        we should create edges for both:
-        1. All upstream columns -> * node (for COUNT(*))
+        query uses both COUNT(*) and specific columns (for SUM(amount)),
+        COUNT(*) should resolve to individual columns (no * node):
+        1. All upstream columns -> aggregate output columns (for COUNT(*))
         2. Specific column matches (for individual column references)
         """
         queries = [
@@ -948,21 +948,32 @@ class TestCrossQueryLineage:
         builder = PipelineLineageBuilder()
         pipeline = builder.build(table_graph)
 
-        # Verify that cross-query edges include connections to * column
-        cross_query_edges = [e for e in pipeline.edges if e.query_id is None]
-
-        # Should have edges from all staging.user_orders columns to the * node
-        star_edges = [
-            e
-            for e in cross_query_edges
-            if e.to_node.column_name == "*" and e.to_node.table_name == "staging.user_orders"
+        # When schema is known from upstream, there should be NO * node
+        # (COUNT(*) resolves to individual columns)
+        star_nodes = [
+            col
+            for col in pipeline.columns.values()
+            if col.is_star and col.table_name == "staging.user_orders"
         ]
-        # All 4 columns from query_0 should connect to the * in query_1
-        assert len(star_edges) == 4
+        assert len(star_nodes) == 0, (
+            f"Expected no * node when schema is known, got {len(star_nodes)}"
+        )
 
-        # With unified column naming, edges for specifically referenced columns
-        # (user_id, amount) flow naturally through the shared column nodes.
+        # COUNT(*) should create edges from all source columns to order_count
+        order_count_edges = [
+            e
+            for e in pipeline.edges
+            if e.to_node.column_name == "order_count"
+            and e.to_node.table_name == "analytics.user_metrics"
+            and e.from_node.table_name == "staging.user_orders"
+        ]
+        source_columns = {e.from_node.column_name for e in order_count_edges}
+        assert source_columns == {"user_id", "order_id", "amount", "order_date"}, (
+            f"Expected edges from all 4 columns for COUNT(*), got {source_columns}"
+        )
+
         # Verify edges exist from intermediate table columns to final output
+        # for specifically referenced columns (user_id, amount)
         edges_to_output = [
             e
             for e in pipeline.edges
@@ -970,7 +981,7 @@ class TestCrossQueryLineage:
             and e.from_node.column_name in ("user_id", "amount")
             and e.to_node.table_name == "analytics.user_metrics"
         ]
-        # user_id and amount should each have edges to output
+        # user_id and amount should each have edges to output (plus COUNT(*) edges)
         assert len(edges_to_output) >= 2, f"Expected >= 2 edges, got {len(edges_to_output)}"
 
         # Verify backward lineage traces all the way to source
@@ -1322,6 +1333,136 @@ class TestRealWorldScenarios:
         # Verify multiple source tables
         source_tables = table_graph.get_source_tables()
         assert len(source_tables) == 3  # raw.users, raw.products, raw.orders
+
+
+# ============================================================================
+# Part 7: Simplified Multi-Query Graph Tests
+# ============================================================================
+
+
+class TestSimplifiedMultiQueryGraph:
+    """Test the simplified multi-query column lineage graph"""
+
+    def test_simplified_keeps_all_tables(self):
+        """Test that simplified graph keeps ALL physical tables (not just source/final)"""
+        from clgraph import Pipeline
+
+        queries = [
+            (
+                "extract",
+                """
+                CREATE TABLE staging.orders AS
+                SELECT order_id, customer_id, amount FROM raw.orders
+                """,
+            ),
+            (
+                "transform",
+                """
+                CREATE TABLE staging.order_summary AS
+                SELECT customer_id, SUM(amount) as total FROM staging.orders GROUP BY customer_id
+                """,
+            ),
+            (
+                "load",
+                """
+                CREATE TABLE analytics.customer_metrics AS
+                SELECT customer_id, total FROM staging.order_summary
+                """,
+            ),
+        ]
+
+        pipeline = Pipeline(queries, dialect="bigquery")
+        simplified = pipeline.get_simplified_column_graph()
+
+        # Should have ALL physical tables (source, intermediate, and final)
+        simplified_tables = {col.table_name for col in simplified.columns.values()}
+        assert "raw.orders" in simplified_tables
+        assert "staging.orders" in simplified_tables
+        assert "staging.order_summary" in simplified_tables
+        assert "analytics.customer_metrics" in simplified_tables
+
+        # Edges should flow through all tables
+        edges = simplified.edges
+        edge_pairs = {(e.from_node.full_name, e.to_node.full_name) for e in edges}
+
+        # raw.orders -> staging.orders
+        assert ("raw.orders.customer_id", "staging.orders.customer_id") in edge_pairs
+        # staging.orders -> staging.order_summary
+        assert ("staging.orders.customer_id", "staging.order_summary.customer_id") in edge_pairs
+        # staging.order_summary -> analytics.customer_metrics
+        assert (
+            "staging.order_summary.customer_id",
+            "analytics.customer_metrics.customer_id",
+        ) in edge_pairs
+
+    def test_simplified_removes_ctes(self):
+        """Test that simplified graph removes CTE columns but keeps all tables"""
+        from clgraph import Pipeline
+
+        queries = [
+            (
+                "with_cte",
+                """
+                CREATE TABLE staging.orders AS
+                WITH filtered AS (
+                    SELECT order_id, customer_id, amount
+                    FROM raw.orders
+                    WHERE status = 'completed'
+                )
+                SELECT order_id, customer_id, amount FROM filtered
+                """,
+            ),
+            (
+                "downstream",
+                """
+                CREATE TABLE analytics.summary AS
+                SELECT customer_id, SUM(amount) as total
+                FROM staging.orders
+                GROUP BY customer_id
+                """,
+            ),
+        ]
+
+        pipeline = Pipeline(queries, dialect="bigquery")
+
+        # Original should have CTE columns
+        original = pipeline.column_graph
+        has_cte = any(":cte:" in name for name in original.columns.keys())
+        assert has_cte, "Original graph should have CTE columns"
+
+        # Simplified should NOT have CTE columns
+        simplified = pipeline.get_simplified_column_graph()
+        has_cte_simplified = any(":cte:" in name for name in simplified.columns.keys())
+        assert not has_cte_simplified, "Simplified graph should not have CTE columns"
+
+        # But should have all physical tables
+        simplified_tables = {col.table_name for col in simplified.columns.values()}
+        assert "raw.orders" in simplified_tables
+        assert "staging.orders" in simplified_tables
+        assert "analytics.summary" in simplified_tables
+
+        # Edges should trace through CTEs to connect tables directly
+        edge_pairs = {(e.from_node.full_name, e.to_node.full_name) for e in simplified.edges}
+        # raw.orders -> staging.orders (directly, no CTE in between)
+        assert ("raw.orders.customer_id", "staging.orders.customer_id") in edge_pairs
+
+    def test_simplified_preserves_issues(self):
+        """Test that simplified graph preserves validation issues"""
+        from clgraph import Pipeline
+
+        # Query with potential issue (star from unknown external table)
+        queries = [
+            (
+                "copy_all",
+                "CREATE TABLE staging.all_data AS SELECT * FROM external.unknown_table",
+            ),
+        ]
+
+        pipeline = Pipeline(queries, dialect="bigquery")
+        simplified = pipeline.get_simplified_column_graph()
+
+        # Issues should be preserved
+        assert len(simplified.issues) == len(pipeline.column_graph.issues)
 
 
 if __name__ == "__main__":

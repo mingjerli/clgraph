@@ -545,18 +545,40 @@ class RecursiveLineageBuilder:
                     output_node.warnings.append(warning)
 
                 # Link to ALL tables involved
-                # For base tables: use * (unknown columns)
+                # For base tables: use individual columns if schema is known, else use *
                 for table_name in unit.depends_on_tables:
-                    table_star_node = self._find_or_create_table_star_node(table_name)
-                    edge = ColumnEdge(
-                        from_node=table_star_node,
-                        to_node=output_node,
-                        edge_type="aggregate",
-                        transformation="ambiguous_aggregate",
-                        context=unit.unit_type.value,
-                        expression=col_info["expression"],
-                    )
-                    self.lineage_graph.add_edge(edge)
+                    # Check if we know the schema for this table from upstream queries
+                    # Use resolver to match short names (e.g., 'events') to full names (e.g., 'staging.events')
+                    resolved_table = self._resolve_external_table_name(table_name)
+                    if resolved_table:
+                        # Schema is known - link to individual columns
+                        column_names = self.external_table_columns[resolved_table]
+                        for col_name in column_names:
+                            # Use the resolved full table name for the node
+                            source_node = self._find_or_create_table_column_node(
+                                resolved_table, col_name
+                            )
+                            edge = ColumnEdge(
+                                from_node=source_node,
+                                to_node=output_node,
+                                edge_type="aggregate",
+                                transformation="ambiguous_aggregate",
+                                context=unit.unit_type.value,
+                                expression=col_info["expression"],
+                            )
+                            self.lineage_graph.add_edge(edge)
+                    else:
+                        # Schema unknown - use star node
+                        table_star_node = self._find_or_create_table_star_node(table_name)
+                        edge = ColumnEdge(
+                            from_node=table_star_node,
+                            to_node=output_node,
+                            edge_type="aggregate",
+                            transformation="ambiguous_aggregate",
+                            context=unit.unit_type.value,
+                            expression=col_info["expression"],
+                        )
+                        self.lineage_graph.add_edge(edge)
 
                 # For query units: link to all explicit columns if fully resolved, else use *
                 for unit_id in unit.depends_on_units:
@@ -822,6 +844,30 @@ class RecursiveLineageBuilder:
         self.lineage_graph.add_node(node)
 
         return node
+
+    def _resolve_external_table_name(self, table_name: str) -> Optional[str]:
+        """
+        Resolve a table name to its full qualified version in external_table_columns.
+
+        The parser may return just 'events' while external_table_columns has 'staging.events'.
+        This method finds the matching full qualified name.
+
+        Args:
+            table_name: Short or full table name (e.g., 'events' or 'staging.events')
+
+        Returns:
+            The full qualified table name if found in external_table_columns, None otherwise
+        """
+        # Direct match
+        if table_name in self.external_table_columns:
+            return table_name
+
+        # Check if any key ends with .{table_name}
+        for full_name in self.external_table_columns:
+            if full_name.endswith(f".{table_name}"):
+                return full_name
+
+        return None
 
     def _find_or_create_table_star_node(self, table_name: str) -> ColumnNode:
         """Find or create star node for a base table"""

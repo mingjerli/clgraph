@@ -241,15 +241,15 @@ class TestSelectStarExpansion:
 
 
 class TestCountStarPreservation:
-    """Test that COUNT(*) and other star usages are preserved correctly."""
+    """Test that COUNT(*) and other star usages are resolved when schema is known."""
 
     def test_count_star_with_explicit_columns(self):
         """
-        Test that COUNT(*) creates edges to * node.
+        Test that COUNT(*) creates edges to individual columns when schema is known.
 
         Query 1 creates table with known columns.
         Query 2 uses COUNT(*) and explicit columns.
-        Expected: Edges to both * node (for COUNT) and individual columns.
+        Expected: COUNT(*) resolves to individual columns from upstream, no * node.
         """
         queries = [
             (
@@ -277,27 +277,29 @@ class TestCountStarPreservation:
 
         pipeline = Pipeline(queries, dialect="bigquery")
 
-        # Verify there's a * node in query 2 input layer
+        # When schema is known from upstream, there should be NO * node
         query2_star = [
             col
             for col in pipeline.columns.values()
             if col.query_id == "aggregate" and col.is_star and col.layer == "input"
         ]
-        assert len(query2_star) == 1
+        assert len(query2_star) == 0, (
+            f"Expected no * node when schema is known, but found {len(query2_star)}"
+        )
 
-        # With unified column naming, edges to * node for COUNT(*) are created
-        # as cross-query edges since * nodes are query-scoped.
-        #
-        # Check edges from output columns to * node in aggregate query
-        star_edges = [
+        # COUNT(*) should create edges to individual columns, not * node
+        # Check edges from staging.user_orders columns to order_count output
+        order_count_edges = [
             e
             for e in pipeline.edges
-            if e.to_node.is_star
-            and e.to_node.table_name == "staging.user_orders"
-            and e.to_node.query_id == "aggregate"
+            if e.to_node.column_name == "order_count"
+            and e.to_node.table_name == "analytics.user_metrics"
         ]
-        # All 4 upstream columns should connect to *
-        assert len(star_edges) == 4, f"Expected 4 star edges, got {len(star_edges)}"
+        # Should have edges from all 4 source columns (user_id, order_id, amount, order_date)
+        source_columns = {e.from_node.column_name for e in order_count_edges}
+        assert source_columns == {"user_id", "order_id", "amount", "order_date"}, (
+            f"Expected edges from all 4 columns, got {source_columns}"
+        )
 
         # Should ALSO have edges for explicitly referenced columns (user_id, amount)
         # These flow naturally through shared column nodes
@@ -308,7 +310,7 @@ class TestCountStarPreservation:
             and e.to_node.table_name == "analytics.user_metrics"
             and not e.from_node.is_star
         ]
-        # user_id and amount should have edges to output
+        # user_id and amount should have edges to output (plus COUNT(*) edges)
         assert len(specific_edges) >= 2, (
             f"Expected at least 2 specific edges, got {len(specific_edges)}"
         )
@@ -318,7 +320,7 @@ class TestCountStarPreservation:
         Test COUNT(*) without other column references.
 
         Query 2 only uses COUNT(*), no other columns.
-        Expected: Only edges to * node.
+        Expected: Edges to individual columns from upstream schema.
         """
         queries = [
             (
@@ -341,11 +343,66 @@ class TestCountStarPreservation:
 
         pipeline = Pipeline(queries, dialect="bigquery")
 
-        # Should have * node for COUNT(*)
-        cross_query_edges = [e for e in pipeline.edges if e.edge_type == "cross_query"]
-        star_edges = [e for e in cross_query_edges if e.to_node.is_star]
-        # All 3 upstream columns should connect to *
-        assert len(star_edges) == 3
+        # With known schema, COUNT(*) should resolve to individual columns
+        # There should be NO * node in the input layer
+        star_nodes = [
+            col for col in pipeline.columns.values() if col.query_id == "count_all" and col.is_star
+        ]
+        assert len(star_nodes) == 0, (
+            f"Expected no * node when schema is known, got {len(star_nodes)}"
+        )
+
+        # COUNT(*) should have edges from all 3 source columns
+        total_events_edges = [
+            e
+            for e in pipeline.edges
+            if e.to_node.column_name == "total_events"
+            and e.to_node.table_name == "analytics.event_count"
+        ]
+        source_columns = {e.from_node.column_name for e in total_events_edges}
+        assert source_columns == {"event_id", "event_type", "timestamp"}, (
+            f"Expected edges from all 3 columns, got {source_columns}"
+        )
+
+    def test_count_star_unknown_schema(self):
+        """
+        Test COUNT(*) when schema is NOT known (single query from external table).
+
+        When we don't have upstream schema info, COUNT(*) should fall back to * node.
+        """
+        queries = [
+            (
+                "count_external",
+                """
+            CREATE TABLE analytics.customer_count AS
+            SELECT COUNT(*) as total_customers
+            FROM external.customers
+            """,
+            ),
+        ]
+
+        pipeline = Pipeline(queries, dialect="bigquery")
+
+        # When schema is unknown, we should have a * node
+        star_nodes = [
+            col
+            for col in pipeline.columns.values()
+            if col.query_id == "count_external" and col.is_star
+        ]
+        assert len(star_nodes) == 1, (
+            f"Expected 1 * node when schema is unknown, got {len(star_nodes)}"
+        )
+
+        # The * node should be from external.customers
+        assert star_nodes[0].table_name == "external.customers"
+
+        # Should have edge from * to total_customers
+        star_edges = [
+            e
+            for e in pipeline.edges
+            if e.from_node.is_star and e.to_node.column_name == "total_customers"
+        ]
+        assert len(star_edges) == 1
 
 
 class TestMixedStarUsage:

@@ -273,6 +273,80 @@ class PipelineLineageGraph:
 
         return [col for col in self.columns.values() if col.full_name not in has_outgoing]
 
+    def to_simplified(self) -> "PipelineLineageGraph":
+        """
+        Create a simplified version of the graph with only physical table columns.
+
+        This removes query-internal structures (CTEs, subqueries) and creates
+        direct edges between physical table columns.
+
+        - Keeps: All physical table columns (raw.*, staging.*, analytics.*, etc.)
+        - Removes: CTE columns (query_id:cte:*), subquery columns (query_id:subq:*)
+        - Edges: Traces through CTEs/subqueries to create direct table-to-table edges
+
+        Returns:
+            A new PipelineLineageGraph with only physical table columns and direct edges.
+        """
+        simplified = PipelineLineageGraph()
+
+        # 1. Identify physical table columns (not CTEs or subqueries)
+        # Physical table columns don't have ":" in their full_name (e.g., "staging.orders.amount")
+        # CTE/subquery columns have format like "query_id:cte:name.column" or "query_id:subq:id.column"
+        table_columns = {
+            name: col
+            for name, col in self.columns.items()
+            if ":" not in name  # Physical table columns don't have query_id prefix
+        }
+
+        # Add physical table columns
+        for col in table_columns.values():
+            simplified.add_column(col)
+
+        # 2. Build adjacency list for backward traversal
+        upstream_map: Dict[str, List[str]] = {name: [] for name in self.columns}
+        for edge in self.edges:
+            upstream_map[edge.to_node.full_name].append(edge.from_node.full_name)
+
+        # 3. For each table column, find upstream table columns (tracing through CTEs)
+        table_col_names = set(table_columns.keys())
+
+        for col_name, col in table_columns.items():
+            # BFS backward to find all reachable table columns
+            visited: Set[str] = set()
+            queue = [col_name]
+
+            while queue:
+                current = queue.pop(0)
+                if current in visited:
+                    continue
+                visited.add(current)
+
+                # Get upstream nodes
+                for upstream in upstream_map.get(current, []):
+                    if upstream in visited:
+                        continue
+
+                    # Check if upstream is a table column
+                    if upstream in table_col_names and upstream != col_name:
+                        # Create direct edge from upstream table column to this table column
+                        upstream_col = self.columns[upstream]
+                        edge = ColumnEdge(
+                            from_node=upstream_col,
+                            to_node=col,
+                            edge_type="simplified",
+                            transformation="direct",
+                            context="simplified",
+                        )
+                        simplified.add_edge(edge)
+                    else:
+                        # Not a table column (CTE/subquery), continue traversal
+                        queue.append(upstream)
+
+        # Copy issues
+        simplified.issues = self.issues.copy()
+
+        return simplified
+
 
 __all__ = [
     "PipelineLineageGraph",

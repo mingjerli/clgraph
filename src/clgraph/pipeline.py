@@ -810,6 +810,32 @@ class Pipeline:
         """
         return [col for col in self.columns.values() if col.table_name == table_name]
 
+    def get_simplified_column_graph(self) -> "PipelineLineageGraph":
+        """
+        Get a simplified version of the column lineage graph.
+
+        This removes query-internal structures (CTEs, subqueries) and creates
+        direct edges between physical table columns.
+
+        - Keeps: All physical table columns (raw.*, staging.*, analytics.*, etc.)
+        - Removes: CTE columns, subquery columns
+        - Edges: Traces through CTEs/subqueries to create direct table-to-table edges
+
+        Returns:
+            A new PipelineLineageGraph with only physical table columns and direct edges.
+
+        Example:
+            pipeline = Pipeline(queries, dialect="bigquery")
+            simplified = pipeline.get_simplified_column_graph()
+
+            # Full graph has CTEs
+            print(f"Full: {len(pipeline.columns)} columns")
+
+            # Simplified has only table columns
+            print(f"Simplified: {len(simplified.columns)} columns")
+        """
+        return self.column_graph.to_simplified()
+
     @classmethod
     def from_tuples(
         cls,
