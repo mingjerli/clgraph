@@ -1300,7 +1300,13 @@ class RecursiveLineageBuilder:
     ) -> List[str]:
         """
         Flag unqualified column references when query has JOINs.
-        This is a readability issue - lineage should be obvious from SQL.
+        This is a readability/correctness issue - lineage should be obvious from SQL.
+
+        When multiple tables are joined, unqualified column references can be ambiguous
+        and may resolve incorrectly. This validation:
+        1. Walks ALL expressions (not just top-level columns)
+        2. Finds unqualified column references inside expressions
+        3. Adds ValidationIssue objects for proper issue tracking
         """
         warnings = []
 
@@ -1308,13 +1314,22 @@ class RecursiveLineageBuilder:
         if unit.select_node is None:
             return warnings
 
-        # Check if this query has JOINs
+        # Check if this query has JOINs or multiple tables
         joins = unit.select_node.args.get("joins", [])
-        if not joins or len(joins) == 0:
+        has_multiple_tables = (len(unit.depends_on_tables) + len(unit.depends_on_units) > 1) or (
+            joins and len(joins) > 0
+        )
+
+        if not has_multiple_tables:
             return warnings
 
-        # Query has JOINs - check for unqualified columns
-        for _i, col_info in enumerate(output_cols):
+        # Collect all tables/schemas available for resolution
+        available_tables = list(unit.depends_on_tables) + [
+            self.unit_graph.units[uid].name for uid in unit.depends_on_units
+        ]
+
+        # Query has JOINs or multiple tables - check for unqualified columns
+        for col_info in output_cols:
             # Skip stars (they're explicit about being unqualified)
             if col_info.get("is_star"):
                 continue
@@ -1323,17 +1338,44 @@ class RecursiveLineageBuilder:
             if not expr:
                 continue
 
-            # Check if this is a direct column reference (not an expression)
-            if isinstance(expr, exp.Column):
-                # Check if column is unqualified (no table prefix)
-                table_ref = expr.table if hasattr(expr, "table") else None
-                col_name = expr.name
+            output_col_name = col_info.get("name", "unknown")
 
-                if not table_ref:  # Unqualified!
-                    warnings.append(
-                        f"[SUGGESTION] Unqualified column '{col_name}' in {unit.unit_id} with JOINs. "
-                        f"Use table prefix (e.g., 't.{col_name}') to make column source clearer."
-                    )
+            # Walk the ENTIRE expression to find all column references
+            for node in expr.walk():
+                if isinstance(node, exp.Column) and not isinstance(node.this, exp.Star):
+                    # Check if column is unqualified (no table prefix)
+                    table_ref = node.table if hasattr(node, "table") else None
+                    col_name = node.name
+
+                    if not table_ref:  # Unqualified!
+                        # Add string warning for backward compatibility
+                        warnings.append(
+                            f"Unqualified column '{col_name}' in expression for '{output_col_name}' "
+                            f"with multiple tables. Cannot determine source table."
+                        )
+
+                        # Also add proper ValidationIssue
+                        issue = ValidationIssue(
+                            severity=IssueSeverity.WARNING,
+                            category=IssueCategory.UNQUALIFIED_COLUMN,
+                            message=(
+                                f"Unqualified column '{col_name}' in expression for '{output_col_name}'. "
+                                f"With multiple tables ({', '.join(available_tables)}), "
+                                f"the source table is ambiguous."
+                            ),
+                            query_id=self.query_id,
+                            location=f"SELECT clause: {output_col_name}",
+                            suggestion=(
+                                f"Qualify the column with table name: e.g., 'table_name.{col_name}'"
+                            ),
+                            context={
+                                "column_name": col_name,
+                                "output_column": output_col_name,
+                                "available_tables": available_tables,
+                                "expression": expr.sql() if expr else None,
+                            },
+                        )
+                        self.lineage_graph.add_issue(issue)
 
         return warnings
 
