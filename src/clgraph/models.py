@@ -8,11 +8,15 @@ Contains all dataclass definitions for:
 - Metadata support models
 """
 
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
 from sqlglot import exp
+
+# Logger for validation issues
+logger = logging.getLogger("clgraph.validation")
 
 if TYPE_CHECKING:
     from .metadata_parser import ColumnMetadata
@@ -407,8 +411,20 @@ class ColumnLineageGraph:
             self.warnings.append(warning)
 
     def add_issue(self, issue: ValidationIssue):
-        """Add a structured validation issue"""
+        """Add a structured validation issue and log it"""
         self.issues.append(issue)
+
+        # Log the issue at appropriate level
+        log_msg = f"[{issue.category.value}] {issue.message}"
+        if issue.query_id:
+            log_msg = f"Query '{issue.query_id}': {log_msg}"
+
+        if issue.severity == IssueSeverity.ERROR:
+            logger.error(log_msg)
+        elif issue.severity == IssueSeverity.WARNING:
+            logger.warning(log_msg)
+        else:
+            logger.info(log_msg)
 
     def get_input_nodes(self) -> List[ColumnNode]:
         """Get all input layer nodes"""

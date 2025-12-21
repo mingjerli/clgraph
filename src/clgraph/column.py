@@ -5,10 +5,20 @@ Contains PipelineLineageGraph for multi-query column lineage,
 plus utility functions for description generation and metadata propagation.
 """
 
+import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Set
 
-from .models import ColumnEdge, ColumnNode, DescriptionSource, ValidationIssue
+from .models import (
+    ColumnEdge,
+    ColumnNode,
+    DescriptionSource,
+    IssueSeverity,
+    ValidationIssue,
+)
+
+# Logger for validation issues
+logger = logging.getLogger("clgraph.validation")
 
 if TYPE_CHECKING:
     from .pipeline import Pipeline
@@ -184,8 +194,20 @@ class PipelineLineageGraph:
         self.edges.append(edge)
 
     def add_issue(self, issue: ValidationIssue):
-        """Add a validation issue"""
+        """Add a validation issue and log it"""
         self.issues.append(issue)
+
+        # Log the issue at appropriate level
+        log_msg = f"[{issue.category.value}] {issue.message}"
+        if issue.query_id:
+            log_msg = f"Query '{issue.query_id}': {log_msg}"
+
+        if issue.severity == IssueSeverity.ERROR:
+            logger.error(log_msg)
+        elif issue.severity == IssueSeverity.WARNING:
+            logger.warning(log_msg)
+        else:
+            logger.info(log_msg)
 
     def _build_column_dependencies(self) -> Dict[str, Set[str]]:
         """
