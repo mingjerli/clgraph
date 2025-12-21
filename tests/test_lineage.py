@@ -1186,6 +1186,100 @@ class TestIntegration:
 
 
 # ============================================================================
+# Test Group 12: Simplified Graph
+# ============================================================================
+
+
+class TestSimplifiedGraph:
+    """Test the to_simplified() method for collapsing intermediate layers"""
+
+    def test_simplified_single_cte(self):
+        """Test simplifying a graph with one CTE"""
+        query = """
+        WITH monthly AS (
+            SELECT user_id, SUM(amount) as total FROM orders GROUP BY user_id
+        )
+        SELECT * FROM monthly
+        """
+        builder = RecursiveLineageBuilder(query)
+        graph = builder.build()
+        simplified = graph.to_simplified()
+
+        # Should only have input and output nodes
+        assert all(n.layer in ("input", "output") for n in simplified.nodes.values())
+
+        # Should have 2 input nodes (orders.user_id, orders.amount)
+        # and 2 output nodes (output.user_id, output.total)
+        input_nodes = simplified.get_input_nodes()
+        output_nodes = simplified.get_output_nodes()
+        assert len(input_nodes) == 2
+        assert len(output_nodes) == 2
+
+        # Should have direct edges from input to output
+        assert len(simplified.edges) == 2
+
+        edge_pairs = {(e.from_node.full_name, e.to_node.full_name) for e in simplified.edges}
+        assert ("orders.user_id", "output.user_id") in edge_pairs
+        assert ("orders.amount", "output.total") in edge_pairs
+
+    def test_simplified_multiple_ctes(self):
+        """Test simplifying a graph with multiple CTEs"""
+        query = """
+        WITH
+          step1 AS (
+            SELECT user_id, amount FROM orders WHERE status = 'completed'
+          ),
+          step2 AS (
+            SELECT user_id, SUM(amount) as total FROM step1 GROUP BY user_id
+          )
+        SELECT user_id, total FROM step2
+        """
+        builder = RecursiveLineageBuilder(query)
+        graph = builder.build()
+        simplified = graph.to_simplified()
+
+        # Original should have 8 nodes (2 input + 2 step1 + 2 step2 + 2 output)
+        assert len(graph.nodes) == 8
+
+        # Simplified should only have 4 nodes (2 input + 2 output)
+        assert len(simplified.nodes) == 4
+
+        # Check edges trace through both CTEs
+        edge_pairs = {(e.from_node.full_name, e.to_node.full_name) for e in simplified.edges}
+        assert ("orders.user_id", "output.user_id") in edge_pairs
+        assert ("orders.amount", "output.total") in edge_pairs
+
+    def test_simplified_preserves_warnings(self):
+        """Test that simplified graph preserves warnings and issues"""
+        query = "SELECT * FROM users, orders"  # Multiple tables with unqualified star
+        builder = RecursiveLineageBuilder(query)
+        graph = builder.build()
+        simplified = graph.to_simplified()
+
+        # Issues should be preserved
+        assert len(simplified.issues) == len(graph.issues)
+
+    def test_simplified_no_intermediate_nodes(self):
+        """Test that simplified graph has no CTE or subquery nodes"""
+        query = """
+        WITH cte1 AS (SELECT id FROM t1),
+             cte2 AS (SELECT id FROM cte1)
+        SELECT id FROM cte2
+        """
+        builder = RecursiveLineageBuilder(query)
+        graph = builder.build()
+        simplified = graph.to_simplified()
+
+        # No CTE nodes in simplified
+        cte_nodes = [n for n in simplified.nodes.values() if n.layer == "cte"]
+        assert len(cte_nodes) == 0
+
+        # Only input and output
+        for node in simplified.nodes.values():
+            assert node.layer in ("input", "output")
+
+
+# ============================================================================
 # Helper Functions for Tests
 # ============================================================================
 

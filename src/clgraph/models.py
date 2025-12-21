@@ -426,6 +426,70 @@ class ColumnLineageGraph:
         """Get all edges pointing to a node"""
         return [e for e in self.edges if e.to_node == node]
 
+    def to_simplified(self) -> "ColumnLineageGraph":
+        """
+        Create a simplified version of the graph with only input and output nodes.
+
+        This collapses all intermediate layers (CTEs, subqueries) and creates
+        direct edges from input nodes to output nodes based on the original
+        lineage relationships.
+
+        Returns:
+            A new ColumnLineageGraph with only input/output nodes and direct edges.
+        """
+        simplified = ColumnLineageGraph()
+
+        # 1. Add only input and output nodes
+        input_nodes = self.get_input_nodes()
+        output_nodes = self.get_output_nodes()
+
+        for node in input_nodes + output_nodes:
+            simplified.add_node(node)
+
+        # 2. Build adjacency list for backward traversal
+        # Map: node.full_name -> list of upstream node.full_names
+        upstream_map: Dict[str, List[str]] = {n: [] for n in self.nodes}
+        for edge in self.edges:
+            upstream_map[edge.to_node.full_name].append(edge.from_node.full_name)
+
+        # 3. For each output node, find all input nodes that are upstream
+        input_full_names = {n.full_name for n in input_nodes}
+
+        for output_node in output_nodes:
+            # BFS/DFS backward to find all reachable input nodes
+            visited: Set[str] = set()
+            queue = [output_node.full_name]
+
+            while queue:
+                current = queue.pop(0)
+                if current in visited:
+                    continue
+                visited.add(current)
+
+                # Check if this is an input node
+                if current in input_full_names and current != output_node.full_name:
+                    # Create direct edge from input to output
+                    input_node = self.nodes[current]
+                    edge = ColumnEdge(
+                        from_node=input_node,
+                        to_node=output_node,
+                        edge_type="simplified",
+                        transformation="direct",
+                        context="simplified",
+                    )
+                    simplified.add_edge(edge)
+
+                # Add upstream nodes to queue
+                for upstream in upstream_map.get(current, []):
+                    if upstream not in visited:
+                        queue.append(upstream)
+
+        # Copy warnings and issues
+        simplified.warnings = self.warnings.copy()
+        simplified.issues = self.issues.copy()
+
+        return simplified
+
     def __repr__(self) -> str:
         query_units = sorted({n.unit_id for n in self.nodes.values() if n.unit_id})
         node_lines = sorted(
