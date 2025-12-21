@@ -303,7 +303,8 @@ class PipelineLineageGraph:
         direct edges between physical table columns.
 
         - Keeps: All physical table columns (raw.*, staging.*, analytics.*, etc.)
-        - Removes: CTE columns (query_id:cte:*), subquery columns (query_id:subq:*)
+        - Removes: CTE columns (query_id:cte:*), subquery columns (query_id:subq:*),
+                   star nodes (table.*)
         - Edges: Traces through CTEs/subqueries to create direct table-to-table edges
 
         Returns:
@@ -311,13 +312,14 @@ class PipelineLineageGraph:
         """
         simplified = PipelineLineageGraph()
 
-        # 1. Identify physical table columns (not CTEs or subqueries)
+        # 1. Identify physical table columns (not CTEs, subqueries, or star nodes)
         # Physical table columns don't have ":" in their full_name (e.g., "staging.orders.amount")
         # CTE/subquery columns have format like "query_id:cte:name.column" or "query_id:subq:id.column"
+        # Star nodes (table.*) are also excluded as they represent unexpanded wildcards
         table_columns = {
             name: col
             for name, col in self.columns.items()
-            if ":" not in name  # Physical table columns don't have query_id prefix
+            if ":" not in name and not col.is_star  # Physical columns, no stars
         }
 
         # Add physical table columns
