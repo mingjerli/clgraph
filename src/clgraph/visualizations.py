@@ -12,6 +12,22 @@ import graphviz
 from clgraph import ColumnLineageGraph, QueryUnitGraph
 
 
+def _sanitize_graphviz_id(node_id: str) -> str:
+    """
+    Sanitize a node ID for use in Graphviz.
+
+    Graphviz interprets colons as node:port syntax, so we need to replace
+    them with safe characters.
+
+    Args:
+        node_id: The original node ID (e.g., "cte:my_cte", "table:users")
+
+    Returns:
+        Sanitized ID safe for Graphviz (e.g., "cte__my_cte", "table__users")
+    """
+    return node_id.replace(":", "__").replace(".", "_")
+
+
 def visualize_query_units(query_graph: QueryUnitGraph) -> graphviz.Digraph:
     """
     Create Graphviz visualization of QueryUnitGraph.
@@ -75,6 +91,17 @@ def visualize_query_units(query_graph: QueryUnitGraph) -> graphviz.Digraph:
         units_by_depth[depth].append(unit)
         max_depth = max(max_depth, depth)
 
+    # Create ID mapping for all units and tables
+    unit_id_map = {}  # original unit_id -> sanitized id
+    table_id_map = {}  # original table_id -> sanitized id
+
+    # Pre-compute all mappings
+    for unit in query_graph.units.values():
+        unit_id_map[unit.unit_id] = _sanitize_graphviz_id(unit.unit_id)
+        for table_name in unit.depends_on_tables:
+            table_id = f"table:{table_name}"
+            table_id_map[table_id] = _sanitize_graphviz_id(table_id)
+
     # Add query unit nodes grouped by depth (reverse order for LR layout)
     for depth in sorted(units_by_depth.keys(), reverse=True):
         with dot.subgraph() as s:
@@ -86,8 +113,10 @@ def visualize_query_units(query_graph: QueryUnitGraph) -> graphviz.Digraph:
                 # Create multi-line label with better formatting
                 label = f"{icon} {unit.name}\\n({unit.unit_type.value})\\nDepth: {unit.depth}"
 
+                # Use sanitized ID for Graphviz node, but keep original in tooltip
+                safe_id = unit_id_map[unit.unit_id]
                 s.node(
-                    unit.unit_id,
+                    safe_id,
                     label=label,
                     fillcolor=color,
                     fontcolor="white",
@@ -98,9 +127,10 @@ def visualize_query_units(query_graph: QueryUnitGraph) -> graphviz.Digraph:
     for unit in query_graph.units.values():
         for table_name in unit.depends_on_tables:
             table_id = f"table:{table_name}"
+            safe_table_id = table_id_map[table_id]
             if table_id not in table_nodes_created:
                 dot.node(
-                    table_id,
+                    safe_table_id,
                     label=f"📊 {table_name}\\n(base table)",
                     shape="cylinder",
                     fillcolor="#607D8B",
@@ -111,12 +141,17 @@ def visualize_query_units(query_graph: QueryUnitGraph) -> graphviz.Digraph:
 
     # Add edges - table dependencies first (to control layout)
     for unit in query_graph.units.values():
+        safe_unit_id = unit_id_map[unit.unit_id]
         for table_name in unit.depends_on_tables:
             table_id = f"table:{table_name}"
-            dot.edge(table_id, unit.unit_id, label="reads from", color="#607D8B", style="dashed")
+            safe_table_id = table_id_map[table_id]
+            dot.edge(
+                safe_table_id, safe_unit_id, label="reads from", color="#607D8B", style="dashed"
+            )
 
     # Add edges - unit dependencies (CTEs, subqueries)
     for unit in query_graph.units.values():
+        safe_unit_id = unit_id_map[unit.unit_id]
         for dep_unit_id in unit.depends_on_units:
             # Get dependency unit for better labeling
             dep_unit = query_graph.units.get(dep_unit_id)
@@ -134,9 +169,11 @@ def visualize_query_units(query_graph: QueryUnitGraph) -> graphviz.Digraph:
                         edge_label = "branch"
                     edge_color = "#00BCD4"  # Cyan for set operations
 
+            # Use sanitized IDs for edges
+            safe_dep_id = unit_id_map.get(dep_unit_id, _sanitize_graphviz_id(dep_unit_id))
             dot.edge(
-                dep_unit_id,
-                unit.unit_id,
+                safe_dep_id,
+                safe_unit_id,
                 label=edge_label,
                 color=edge_color,
                 penwidth="2.0",  # Thicker edges for unit dependencies
@@ -367,6 +404,9 @@ def visualize_column_lineage(
     # Create node IDs set for edge filtering
     node_ids = {n.full_name for n in nodes_to_show}
 
+    # Create mapping from original full_name to sanitized Graphviz ID
+    node_id_map = {n.full_name: _sanitize_graphviz_id(n.full_name) for n in nodes_to_show}
+
     # Group nodes by unit_id (QueryUnit)
     unit_subgraphs = {}
 
@@ -376,8 +416,10 @@ def visualize_column_lineage(
         # Handle external tables (unit_id = None)
         if unit_id is None:
             unit_key = f"external_{node.table_name}"
+            # Sanitize cluster name for Graphviz
+            safe_cluster_name = _sanitize_graphviz_id(unit_key)
             if unit_key not in unit_subgraphs:
-                unit_subgraphs[unit_key] = graphviz.Digraph(name=f"cluster_{unit_key}")
+                unit_subgraphs[unit_key] = graphviz.Digraph(name=f"cluster_{safe_cluster_name}")
                 unit_subgraphs[unit_key].attr(
                     label=f"📊 {node.table_name}",
                     style="filled",
@@ -388,8 +430,10 @@ def visualize_column_lineage(
         else:
             # Get QueryUnit for metadata
             unit = query_graph.units.get(unit_id)
+            # Sanitize cluster name for Graphviz
+            safe_cluster_name = _sanitize_graphviz_id(unit_id)
             if unit_id not in unit_subgraphs:
-                unit_subgraphs[unit_id] = graphviz.Digraph(name=f"cluster_{unit_id}")
+                unit_subgraphs[unit_id] = graphviz.Digraph(name=f"cluster_{safe_cluster_name}")
 
                 # Get unit metadata
                 unit_type = unit.unit_type.value if unit else "unknown"
@@ -434,8 +478,10 @@ def visualize_column_lineage(
         # Label with column info
         label = node.column_name  # Will be "*" for star nodes, no special icon needed
 
+        # Use sanitized node ID for Graphviz
+        safe_node_id = node_id_map[node.full_name]
         unit_subgraphs[subgraph_key].node(
-            node.full_name,
+            safe_node_id,
             label=label,
             shape=shape,
             style="filled",
@@ -462,9 +508,12 @@ def visualize_column_lineage(
             }
             color = edge_colors.get(edge.transformation, "gray")
 
+            # Use sanitized node IDs for edges
+            safe_from = node_id_map[edge.from_node.full_name]
+            safe_to = node_id_map[edge.to_node.full_name]
             dot.edge(
-                edge.from_node.full_name,
-                edge.to_node.full_name,
+                safe_from,
+                safe_to,
                 label=label,
                 color=color,
                 fontsize="8",
@@ -495,6 +544,9 @@ def visualize_column_lineage_simple(
     nodes = list(lineage_graph.nodes.values())[:max_nodes]
     node_ids = {n.full_name for n in nodes}
 
+    # Create mapping from original full_name to sanitized Graphviz ID
+    node_id_map = {n.full_name: _sanitize_graphviz_id(n.full_name) for n in nodes}
+
     # Color by layer
     layer_colors = {
         "input": "#90CAF9",
@@ -508,14 +560,19 @@ def visualize_column_lineage_simple(
         color = layer_colors.get(node.layer, "#BDBDBD")
         label = f"{node.column_name}\\n[{node.layer}]"
 
-        dot.node(node.full_name, label=label, style="filled", fillcolor=color)
+        # Use sanitized node ID for Graphviz
+        safe_node_id = node_id_map[node.full_name]
+        dot.node(safe_node_id, label=label, style="filled", fillcolor=color, tooltip=node.full_name)
 
     # Add edges
     for edge in lineage_graph.edges:
         if edge.from_node.full_name in node_ids and edge.to_node.full_name in node_ids:
+            # Use sanitized node IDs for edges
+            safe_from = node_id_map[edge.from_node.full_name]
+            safe_to = node_id_map[edge.to_node.full_name]
             dot.edge(
-                edge.from_node.full_name,
-                edge.to_node.full_name,
+                safe_from,
+                safe_to,
                 label=edge.transformation,
                 fontsize="8",
             )
@@ -568,6 +625,9 @@ def visualize_column_path(
             if edge.from_node.full_name not in visited:
                 to_visit.append(edge.from_node)
 
+    # Create mapping from original full_name to sanitized Graphviz ID
+    node_id_map = {n.full_name: _sanitize_graphviz_id(n.full_name) for n in relevant_nodes}
+
     # Add nodes
     for node in relevant_nodes:
         # Highlight target node
@@ -583,7 +643,16 @@ def visualize_column_path(
 
         label = f"{node.column_name}\\n[{node.layer}]"
 
-        dot.node(node.full_name, label=label, style=style, fillcolor=color, shape="box")
+        # Use sanitized node ID for Graphviz
+        safe_node_id = node_id_map[node.full_name]
+        dot.node(
+            safe_node_id,
+            label=label,
+            style=style,
+            fillcolor=color,
+            shape="box",
+            tooltip=node.full_name,
+        )
 
     # Add edges (only between relevant nodes)
     relevant_node_ids = {n.full_name for n in relevant_nodes}
@@ -592,9 +661,12 @@ def visualize_column_path(
             edge.from_node.full_name in relevant_node_ids
             and edge.to_node.full_name in relevant_node_ids
         ):
+            # Use sanitized node IDs for edges
+            safe_from = node_id_map[edge.from_node.full_name]
+            safe_to = node_id_map[edge.to_node.full_name]
             dot.edge(
-                edge.from_node.full_name,
-                edge.to_node.full_name,
+                safe_from,
+                safe_to,
                 label=edge.transformation,
                 fontsize="8",
             )
