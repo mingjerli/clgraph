@@ -202,23 +202,29 @@ class RecursiveLineageBuilder:
                 col_info["expression"] = expr.sql()
 
                 # Handle EXCEPT/REPLACE
+                # Note: sqlglot 28.x uses 'except_' and 'replace_' (with underscore)
+                # while sqlglot 27.x uses 'except' and 'replace' (without underscore)
                 star_expr = expr.this if isinstance(expr, exp.Column) else expr
-                if hasattr(star_expr, "args") and "except" in star_expr.args:
-                    except_clause = star_expr.args["except"]
-                    if except_clause:
-                        col_info["except_columns"] = {col.name for col in except_clause}
-                        col_info["type"] = "star_except"
+                except_clause = None
+                if hasattr(star_expr, "args"):
+                    # Try both old and new sqlglot key names
+                    except_clause = star_expr.args.get("except") or star_expr.args.get("except_")
+                if except_clause:
+                    col_info["except_columns"] = {col.name for col in except_clause}
+                    col_info["type"] = "star_except"
                 else:
                     col_info["except_columns"] = set()
 
-                if hasattr(star_expr, "args") and "replace" in star_expr.args:
-                    replace_clause = star_expr.args["replace"]
-                    if replace_clause:
-                        col_info["replace_columns"] = {
-                            replace_expr.alias: replace_expr.sql()
-                            for replace_expr in replace_clause
-                            if hasattr(replace_expr, "alias")
-                        }
+                replace_clause = None
+                if hasattr(star_expr, "args"):
+                    # Try both old and new sqlglot key names
+                    replace_clause = star_expr.args.get("replace") or star_expr.args.get("replace_")
+                if replace_clause:
+                    col_info["replace_columns"] = {
+                        replace_expr.alias: replace_expr.sql()
+                        for replace_expr in replace_clause
+                        if hasattr(replace_expr, "alias")
+                    }
                 else:
                     col_info["replace_columns"] = {}
 
