@@ -514,10 +514,19 @@ class PipelineLineageBuilder:
         """
         Infer which table this column belongs to.
         Maps table references (aliases) to fully qualified names.
+
+        For queries without a destination table (plain SELECT statements),
+        output columns are assigned to a virtual result table named '{query_id}_result'.
+        This ensures they appear in simplified lineage views.
         """
-        # For output columns, use destination table
+        # For output columns, use destination table or virtual result table
         if node.layer == "output":
-            return query.destination_table
+            if query.destination_table:
+                return query.destination_table
+            else:
+                # Plain SELECT without destination - create virtual result table
+                # Use underscore (not colon) so it's treated as physical table in simplified view
+                return f"{query.query_id}_result"
 
         # For input columns, map table_name to fully qualified name
         if node.table_name:
