@@ -32,7 +32,8 @@ def readme_content(readme_path):
 @pytest.fixture(scope="module")
 def all_blocks(readme_content):
     """Extract all Python code blocks from README."""
-    return extract_python_blocks(readme_content)
+    blocks, _use_preamble = extract_python_blocks(readme_content)
+    return blocks
 
 
 @pytest.fixture(scope="module")
@@ -103,7 +104,7 @@ def pytest_generate_tests(metafunc):
         # Get the README content and extract blocks
         readme_path = Path(metafunc.config.rootdir) / "README.md"
         content = readme_path.read_text()
-        blocks = extract_python_blocks(content)
+        blocks, _use_preamble = extract_python_blocks(content)
 
         # Filter to runnable blocks only
         runnable = [b for b in blocks if not b.skip]
