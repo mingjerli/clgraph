@@ -308,6 +308,19 @@ class PipelineLineageBuilder:
 
         # Add columns with table context
         for node in expanded_nodes:
+            # Skip input layer star nodes ONLY when we have explicit columns for that table.
+            # This filters out redundant stars (e.g., staging.raw_data.* when Query 1
+            # already defined explicit columns), but keeps stars for external tables
+            # with unknown schema (e.g., COUNT(*) FROM external.customers).
+            if node.is_star and node.layer == "input":
+                table_name = self._infer_table_name(node, query) or node.table_name
+                has_explicit_cols = any(
+                    col.table_name == table_name and not col.is_star
+                    for col in pipeline.columns.values()
+                )
+                if has_explicit_cols:
+                    continue
+
             full_name = self._make_full_name(node, query)
 
             # Skip if column already exists (shared physical table column)
@@ -386,11 +399,13 @@ class PipelineLineageBuilder:
                 pipeline.add_edge(pipeline_edge)
 
             elif (
-                from_full in pipeline.columns
-                and edge.to_node.is_star
+                edge.to_node.is_star
                 and edge.to_node.layer == "output"
+                and (from_full in pipeline.columns or edge.from_node.is_star)
             ):
                 # Output * was expanded - create edges to all expanded columns
+                # Note: from_full might not be in pipeline.columns if it's an input star
+                # that we filtered out. The star-to-star logic handles this case.
                 dest_table = query.destination_table
                 expanded_outputs = [
                     col

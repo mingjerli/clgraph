@@ -312,14 +312,26 @@ class PipelineLineageGraph:
         """
         simplified = PipelineLineageGraph()
 
-        # 1. Identify physical table columns (not CTEs, subqueries, or star nodes)
+        # 1. Identify physical table columns (not CTEs, subqueries)
         # Physical table columns don't have ":" in their full_name (e.g., "staging.orders.amount")
         # CTE/subquery columns have format like "query_id:cte:name.column" or "query_id:subq:id.column"
-        # Star nodes (table.*) are also excluded as they represent unexpanded wildcards
+        #
+        # For star nodes (table.*): only filter out if we have explicit columns for that table.
+        # Keep stars for external tables with unknown schema (e.g., COUNT(*) FROM external.table)
+        physical_columns = {name: col for name, col in self.columns.items() if ":" not in name}
+
+        # Find tables that have explicit (non-star) columns
+        tables_with_explicit_cols = {
+            col.table_name
+            for col in physical_columns.values()
+            if not col.is_star and col.table_name
+        }
+
+        # Filter out star nodes only if we have explicit columns for that table
         table_columns = {
             name: col
-            for name, col in self.columns.items()
-            if ":" not in name and not col.is_star  # Physical columns, no stars
+            for name, col in physical_columns.items()
+            if not col.is_star or col.table_name not in tables_with_explicit_cols
         }
 
         # Add physical table columns
