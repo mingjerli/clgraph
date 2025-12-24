@@ -52,8 +52,11 @@
 ## Quick Example
 
 ```python
+from clgraph import Pipeline
+from clgraph.export import CSVExporter
+
 # 1. Input SQL
-pipeline = Pipeline.from_sql_files("queries/", dialect="bigquery")
+pipeline = Pipeline.from_sql_files("examples/sql_files/", dialect="duckdb")
 
 # 2. Pipeline object created automatically
 
@@ -63,26 +66,31 @@ col_lineage = pipeline.column_graph  # Column lineage
 
 # 4. Use applications
 
-# Orchestration
-dag = pipeline.to_airflow_dag(executor=execute_sql)
-result = pipeline.run(executor=execute_sql)
+# Data Catalog - trace lineage
+sources = pipeline.trace_column_backward("mart_customer_ltv", "lifetime_revenue")
+impact = pipeline.trace_column_forward("raw_orders", "total_amount")
 
-# Data Catalog
-sources = pipeline.trace_column_backward("final_table", "revenue")
-impact = pipeline.trace_column_forward("raw_table", "user_id")
-
-# Metadata
-pipeline.columns["raw.email"].pii = True
+# Metadata - track PII
+pipeline.columns["raw_customers.email"].pii = True
 pipeline.propagate_all_metadata()
-pii_cols = pipeline.get_pii_columns()
-
-# LLM
-pipeline.llm = ChatOpenAI()
-pipeline.generate_all_descriptions()
+pii_cols = list(pipeline.get_pii_columns())
 
 # Export
 data = pipeline.to_json()
-CSVExporter.export_columns_to_file(pipeline, "columns.csv")
+```
+
+**Additional capabilities (require extra dependencies):**
+
+<!-- skip-test -->
+```python
+# Orchestration (requires executor function)
+result = pipeline.run(executor=my_execute_sql, max_workers=4)
+dag = pipeline.to_airflow_dag(executor=my_execute_sql, dag_id="my_pipeline")
+
+# LLM-powered descriptions (requires langchain)
+from langchain_openai import ChatOpenAI
+pipeline.llm = ChatOpenAI()
+pipeline.generate_all_descriptions()
 ```
 
 ## Key Concepts
