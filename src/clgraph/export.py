@@ -17,7 +17,16 @@ if TYPE_CHECKING:
 
 
 class JSONExporter:
-    """Export lineage graph to JSON format for serialization and round-trip loading."""
+    """
+    Export lineage graph to JSON format for serialization and round-trip loading.
+
+    This is the primary exporter for:
+    - Machine-readable integration (columns, edges, tables with full lineage)
+    - Round-trip serialization (save pipeline to JSON, reload with Pipeline.from_json)
+    - Caching analyzed pipelines for faster subsequent loads
+
+    For human-readable spreadsheet export, see CSVExporter (one-way only).
+    """
 
     @staticmethod
     def export(
@@ -159,7 +168,19 @@ class JSONExporter:
 
 
 class CSVExporter:
-    """Export column and table metadata to CSV format"""
+    """
+    Export column and table metadata to CSV format (one-way export only).
+
+    Use this for:
+    - Opening metadata in Excel/Google Sheets for review
+    - Sharing column inventory with non-technical stakeholders
+    - Auditing PII flags and ownership across tables
+
+    Note: This is a flat data dump - lineage relationships are not included.
+    For machine-readable export with full lineage, use JSONExporter instead.
+    For round-trip serialization (save/reload pipelines), use JSONExporter
+    with include_queries=True and Pipeline.from_json().
+    """
 
     @staticmethod
     def export_columns_to_file(graph: "Pipeline", file_path: str):
