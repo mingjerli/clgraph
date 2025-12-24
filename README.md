@@ -38,6 +38,7 @@ We built clgraph to prove this approach works. By combining lineage-friendly SQL
 
 ### Export Functionality
 - **JSON export** - machine-readable format for system integration
+- **JSON round-trip** - save pipelines to JSON and reload them with `Pipeline.from_json()`
 - **CSV export** - column and table metadata for spreadsheets
 - **GraphViz export** - DOT format for visualization tools
 
@@ -324,6 +325,59 @@ Found 3 PII columns:
 ------------------------------------------------------------
 Exporting to multiple formats...
 ✓ Exported to lineage.json, columns.csv, lineage.dot
+```
+
+### JSON Serialization (Save & Load Pipelines)
+
+Save pipelines to JSON and reload them later - useful for caching, sharing, or storing analyzed results:
+
+```python
+from clgraph import Pipeline
+from clgraph.export import JSONExporter
+import json
+
+# Build pipeline
+queries = [
+    ("staging", "CREATE TABLE staging.orders AS SELECT id, amount FROM raw.orders"),
+    ("analytics", "CREATE TABLE analytics.totals AS SELECT SUM(amount) as total FROM staging.orders"),
+]
+pipeline = Pipeline.from_tuples(queries, dialect="bigquery")
+
+# Add metadata
+col = pipeline.get_column("raw.orders", "amount")
+if col:
+    col.description = "Order amount in USD"
+    col.pii = False
+
+# Export to JSON (includes queries for round-trip)
+data = JSONExporter.export(pipeline, include_queries=True)
+
+# Save to file
+with open("pipeline.json", "w") as f:
+    json.dump(data, f, indent=2)
+
+# Later, reload the pipeline
+with open("pipeline.json") as f:
+    data = json.load(f)
+
+restored = Pipeline.from_json(data)
+
+# Or use the convenience method
+restored = Pipeline.from_json_file("pipeline.json")
+
+# Verify round-trip preserved structure and metadata
+print(f"Columns: {len(restored.columns)}")
+print(f"Edges: {len(restored.edges)}")
+col = restored.get_column("raw.orders", "amount")
+if col:
+    print(f"Metadata preserved: {col.description}")
+```
+
+**Output:**
+```
+Columns: 5
+Edges: 3
+Metadata preserved: Order amount in USD
 ```
 
 ### LLM-Powered Description Generation

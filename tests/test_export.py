@@ -251,11 +251,204 @@ def test_graphviz_max_columns():
     assert node_count == 3
 
 
+def test_json_export_includes_queries():
+    """Test JSON export includes queries for round-trip serialization"""
+    graph = create_test_graph()
+
+    data = JSONExporter.export(graph, include_queries=True)
+
+    # Check queries are included
+    assert "queries" in data
+    assert "dialect" in data
+    assert data["dialect"] == "bigquery"
+
+    # Check query structure
+    assert len(data["queries"]) >= 1
+    query = data["queries"][0]
+    assert "query_id" in query
+    assert "sql" in query
+    assert query["query_id"] == "q1"
+    assert "CREATE TABLE staging.orders" in query["sql"]
+
+
+def test_json_export_without_queries():
+    """Test JSON export without queries"""
+    graph = create_test_graph()
+
+    data = JSONExporter.export(graph, include_queries=False)
+
+    # Queries should not be present
+    assert "queries" not in data
+    assert "dialect" not in data
+
+
+def test_json_round_trip_basic():
+    """Test basic JSON round-trip: export → import → verify"""
+    # Create original pipeline
+    queries = [
+        ("staging", "CREATE TABLE staging.orders AS SELECT id, amount FROM raw.orders"),
+        (
+            "analytics",
+            "CREATE TABLE analytics.totals AS SELECT SUM(amount) as total FROM staging.orders",
+        ),
+    ]
+    original = Pipeline.from_tuples(queries, dialect="bigquery")
+
+    # Export to JSON
+    data = JSONExporter.export(original, include_queries=True)
+
+    # Import from JSON
+    restored = Pipeline.from_json(data)
+
+    # Verify structure matches
+    assert restored.dialect == original.dialect
+    assert len(restored.columns) == len(original.columns)
+    assert len(restored.edges) == len(original.edges)
+    assert len(restored.table_graph.tables) == len(original.table_graph.tables)
+
+    # Verify column names match
+    original_cols = {c.full_name for c in original.columns.values()}
+    restored_cols = {c.full_name for c in restored.columns.values()}
+    assert original_cols == restored_cols
+
+
+def test_json_round_trip_with_metadata():
+    """Test JSON round-trip preserves metadata"""
+    # Create pipeline with metadata
+    queries = [
+        ("q1", "CREATE TABLE staging.users AS SELECT id, email FROM raw.users"),
+    ]
+    original = Pipeline.from_tuples(queries, dialect="bigquery")
+
+    # Set metadata on a column
+    email_col = original.get_column("raw.users", "email")
+    if email_col:
+        email_col.description = "User email address"
+        email_col.owner = "privacy-team"
+        email_col.pii = True
+        email_col.tags = {"contact", "sensitive"}
+        email_col.custom_metadata = {"classification": "restricted"}
+
+    # Export and import
+    data = JSONExporter.export(original, include_queries=True, include_metadata=True)
+    restored = Pipeline.from_json(data, apply_metadata=True)
+
+    # Verify metadata preserved
+    restored_email = restored.get_column("raw.users", "email")
+    assert restored_email is not None
+    assert restored_email.description == "User email address"
+    assert restored_email.owner == "privacy-team"
+    assert restored_email.pii is True
+    assert restored_email.tags == {"contact", "sensitive"}
+    assert restored_email.custom_metadata == {"classification": "restricted"}
+
+
+def test_json_round_trip_skip_metadata():
+    """Test JSON round-trip can skip applying metadata"""
+    # Create pipeline with metadata
+    queries = [
+        ("q1", "CREATE TABLE staging.users AS SELECT id, email FROM raw.users"),
+    ]
+    original = Pipeline.from_tuples(queries, dialect="bigquery")
+
+    # Set metadata
+    email_col = original.get_column("raw.users", "email")
+    if email_col:
+        email_col.description = "Original description"
+        email_col.pii = True
+
+    # Export with metadata, import without
+    data = JSONExporter.export(original, include_queries=True, include_metadata=True)
+    restored = Pipeline.from_json(data, apply_metadata=False)
+
+    # Metadata should not be applied
+    restored_email = restored.get_column("raw.users", "email")
+    assert restored_email is not None
+    assert restored_email.description is None
+    assert restored_email.pii is False
+
+
+def test_json_round_trip_file():
+    """Test JSON round-trip through file"""
+    queries = [
+        ("q1", "CREATE TABLE staging.orders AS SELECT id, amount FROM raw.orders"),
+    ]
+    original = Pipeline.from_tuples(queries, dialect="bigquery")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        file_path = Path(tmpdir) / "pipeline.json"
+
+        # Export to file
+        JSONExporter.export_to_file(original, str(file_path), include_queries=True)
+
+        # Import from file
+        restored = Pipeline.from_json_file(str(file_path))
+
+        # Verify
+        assert restored.dialect == original.dialect
+        assert len(restored.columns) == len(original.columns)
+        assert len(restored.edges) == len(original.edges)
+
+
+def test_json_round_trip_with_template_context():
+    """Test JSON round-trip preserves template context"""
+    queries = [
+        ("q1", "CREATE TABLE {{ env }}.orders AS SELECT id FROM raw.orders"),
+    ]
+    template_context = {"env": "staging"}
+    original = Pipeline.from_tuples(queries, dialect="bigquery", template_context=template_context)
+
+    # Export and import
+    data = JSONExporter.export(original, include_queries=True)
+    restored = Pipeline.from_json(data)
+
+    # Verify template context preserved
+    assert restored.template_context == template_context
+
+
+def test_json_from_json_missing_queries():
+    """Test from_json raises error when queries missing"""
+    import pytest
+
+    data = {"columns": [], "edges": [], "tables": [], "dialect": "bigquery"}
+
+    with pytest.raises(ValueError, match="missing 'queries'"):
+        Pipeline.from_json(data)
+
+
+def test_json_from_json_missing_dialect():
+    """Test from_json raises error when dialect missing"""
+    import pytest
+
+    data = {"columns": [], "edges": [], "tables": [], "queries": []}
+
+    with pytest.raises(ValueError, match="missing 'dialect'"):
+        Pipeline.from_json(data)
+
+
+def test_json_from_json_file_not_found():
+    """Test from_json_file raises error when file not found"""
+    import pytest
+
+    with pytest.raises(FileNotFoundError, match="not found"):
+        Pipeline.from_json_file("/nonexistent/path/pipeline.json")
+
+
 if __name__ == "__main__":
     # Run tests
     test_json_export()
     test_json_export_without_metadata()
     test_json_export_to_file()
+    test_json_export_includes_queries()
+    test_json_export_without_queries()
+    test_json_round_trip_basic()
+    test_json_round_trip_with_metadata()
+    test_json_round_trip_skip_metadata()
+    test_json_round_trip_file()
+    test_json_round_trip_with_template_context()
+    test_json_from_json_missing_queries()
+    test_json_from_json_missing_dialect()
+    test_json_from_json_file_not_found()
     test_csv_columns_export()
     test_csv_tables_export()
     test_graphviz_export()

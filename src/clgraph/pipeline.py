@@ -1108,6 +1108,113 @@ class Pipeline:
         return cls.from_sql_list(queries, dialect=dialect, template_context=template_context)
 
     @classmethod
+    def from_json(
+        cls,
+        data: Dict[str, Any],
+        apply_metadata: bool = True,
+    ) -> "Pipeline":
+        """
+        Create pipeline from JSON data exported by JSONExporter.
+
+        This enables round-trip serialization: export a pipeline to JSON,
+        store/transfer it, and recreate the same pipeline later.
+
+        Args:
+            data: JSON dictionary from JSONExporter.export() or Pipeline.to_json()
+            apply_metadata: Whether to apply metadata (descriptions, PII, etc.)
+                from the JSON to the reconstructed pipeline
+
+        Returns:
+            Pipeline instance
+
+        Example:
+            # Save pipeline to file
+            data = pipeline.to_json()
+            with open("pipeline.json", "w") as f:
+                json.dump(data, f)
+
+            # Later, reload the pipeline
+            with open("pipeline.json") as f:
+                data = json.load(f)
+            pipeline = Pipeline.from_json(data)
+
+            # Verify round-trip
+            assert len(pipeline.columns) > 0
+            assert len(pipeline.edges) > 0
+        """
+        # Validate required fields for round-trip
+        if "queries" not in data:
+            raise ValueError(
+                "JSON data missing 'queries' field. "
+                "Ensure JSONExporter.export() was called with include_queries=True"
+            )
+
+        if "dialect" not in data:
+            raise ValueError("JSON data missing 'dialect' field")
+
+        # Extract pipeline construction data
+        dialect = data["dialect"]
+        template_context = data.get("template_context")
+
+        # Reconstruct queries list
+        queries = [(q["query_id"], q["sql"]) for q in data["queries"]]
+
+        # Create pipeline from queries
+        pipeline = cls.from_tuples(queries, dialect=dialect, template_context=template_context)
+
+        # Apply metadata if requested
+        if apply_metadata and "columns" in data:
+            for col_data in data["columns"]:
+                full_name = col_data.get("full_name")
+                if full_name and full_name in pipeline.columns:
+                    col = pipeline.columns[full_name]
+
+                    # Apply metadata fields
+                    if col_data.get("description"):
+                        col.description = col_data["description"]
+                    if col_data.get("owner"):
+                        col.owner = col_data["owner"]
+                    if col_data.get("pii"):
+                        col.pii = col_data["pii"]
+                    if col_data.get("tags"):
+                        col.tags = set(col_data["tags"])
+                    if col_data.get("custom_metadata"):
+                        col.custom_metadata = col_data["custom_metadata"]
+
+        return pipeline
+
+    @classmethod
+    def from_json_file(cls, file_path: str, apply_metadata: bool = True) -> "Pipeline":
+        """
+        Create pipeline from JSON file exported by JSONExporter.
+
+        Args:
+            file_path: Path to JSON file
+            apply_metadata: Whether to apply metadata from the JSON
+
+        Returns:
+            Pipeline instance
+
+        Example:
+            # Export pipeline
+            JSONExporter.export_to_file(pipeline, "pipeline.json")
+
+            # Later, reload it
+            pipeline = Pipeline.from_json_file("pipeline.json")
+        """
+        import json
+        from pathlib import Path
+
+        path = Path(file_path)
+        if not path.exists():
+            raise FileNotFoundError(f"JSON file not found: {file_path}")
+
+        with open(path) as f:
+            data = json.load(f)
+
+        return cls.from_json(data, apply_metadata=apply_metadata)
+
+    @classmethod
     def _create_empty(cls, table_graph: "TableDependencyGraph") -> "Pipeline":
         """
         Create an empty Pipeline with just a table_graph (for testing).

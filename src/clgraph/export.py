@@ -17,21 +17,57 @@ if TYPE_CHECKING:
 
 
 class JSONExporter:
-    """Export lineage graph to JSON format"""
+    """Export lineage graph to JSON format for serialization and round-trip loading."""
 
     @staticmethod
-    def export(graph: "Pipeline", include_metadata: bool = True) -> Dict[str, Any]:
+    def export(
+        graph: "Pipeline",
+        include_metadata: bool = True,
+        include_queries: bool = True,
+    ) -> Dict[str, Any]:
         """
         Export pipeline lineage graph to JSON-serializable dictionary.
 
         Args:
             graph: The pipeline lineage graph to export
             include_metadata: Whether to include metadata (descriptions, PII, etc.)
+            include_queries: Whether to include original queries for round-trip loading
 
         Returns:
-            Dictionary with columns, edges, and tables
+            Dictionary with columns, edges, tables, and optionally queries/dialect
+
+        Example:
+            # Export and reload
+            data = JSONExporter.export(pipeline)
+            with open("pipeline.json", "w") as f:
+                json.dump(data, f)
+
+            # Later, reload the pipeline
+            with open("pipeline.json") as f:
+                data = json.load(f)
+            pipeline = Pipeline.from_json(data)
         """
-        result = {"columns": [], "edges": [], "tables": []}
+        result: Dict[str, Any] = {"columns": [], "edges": [], "tables": []}
+
+        # Include queries and dialect for round-trip serialization
+        if include_queries:
+            result["dialect"] = graph.dialect
+            result["template_context"] = graph.template_context
+            result["queries"] = []
+
+            # Export queries in order
+            for query_id in graph.table_graph.topological_sort():
+                if query_id in graph.table_graph.queries:
+                    parsed_query = graph.table_graph.queries[query_id]
+                    query_dict = {
+                        "query_id": query_id,
+                        "sql": parsed_query.sql,
+                    }
+                    # Include original SQL if different (templated)
+                    if parsed_query.original_sql and parsed_query.original_sql != parsed_query.sql:
+                        query_dict["original_sql"] = parsed_query.original_sql
+                        query_dict["template_variables"] = parsed_query.template_variables
+                    result["queries"].append(query_dict)
 
         # Export columns
         for col in graph.columns.values():
@@ -96,6 +132,7 @@ class JSONExporter:
         graph: "Pipeline",
         file_path: str,
         include_metadata: bool = True,
+        include_queries: bool = True,
         indent: int = 2,
     ):
         """
@@ -105,9 +142,14 @@ class JSONExporter:
             graph: The pipeline lineage graph to export
             file_path: Path to output JSON file
             include_metadata: Whether to include metadata
+            include_queries: Whether to include queries for round-trip loading
             indent: JSON indentation (default: 2)
         """
-        data = JSONExporter.export(graph, include_metadata=include_metadata)
+        data = JSONExporter.export(
+            graph,
+            include_metadata=include_metadata,
+            include_queries=include_queries,
+        )
 
         path = Path(file_path)
         path.parent.mkdir(parents=True, exist_ok=True)
