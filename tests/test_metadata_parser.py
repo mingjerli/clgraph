@@ -368,8 +368,8 @@ class TestEndToEnd:
         parsed = sqlglot.parse_one(sql, dialect="bigquery")
         extractor = MetadataExtractor()
 
-        # Get CTE
-        cte = parsed.args["with"].expressions[0]
+        # Get CTE (use ctes property for compatibility across sqlglot versions)
+        cte = parsed.ctes[0]
         cte_select = cte.this
 
         # user_id
