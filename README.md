@@ -1,6 +1,16 @@
 # clgraph
 
-A Python library for parsing SQL queries into lineage graphs, enabling column-level dependency tracking, metadata propagation, and impact analysis.
+A Python library for SQL column lineage analysis. No database required. No infrastructure to maintain. Just Python.
+
+![clgraph illustration](./clgraph-illustration.svg)
+
+**What you can do with clgraph:**
+
+- **Debug SQL Queries** — Visualize column dependencies and trace data flow through complex CTEs and subqueries
+- **Impact Analysis** — Understand downstream effects before making schema changes
+- **Auto-propagate Metadata** — PII flags, ownership, and descriptions flow automatically through lineage
+- **Context for AI Agents** — Provide LLMs with structured lineage data for smarter data assistance
+- **CI/CD Change Detection** — Detect lineage changes between pipeline versions for automated testing
 
 ## Why We Built This
 
