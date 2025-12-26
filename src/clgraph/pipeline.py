@@ -1954,6 +1954,31 @@ class Pipeline:
         queries_display = "\n  ".join(query_strs)
         return f"Pipeline(\n  {queries_display}\n)"
 
+    def build_subpipeline(self, target_table: str) -> "Pipeline":
+        """
+        Build a subpipeline containing only queries needed to build a specific table.
+
+        This is a convenience wrapper around split() for building a single target.
+
+        Args:
+            target_table: The table to build (e.g., "analytics.revenue")
+
+        Returns:
+            A new Pipeline containing only the queries needed to build target_table
+
+        Example:
+            # Build only what's needed for analytics.revenue
+            subpipeline = pipeline.build_subpipeline("analytics.revenue")
+
+            print(f"Full pipeline: {len(pipeline.table_graph.queries)} queries")
+            print(f"Subpipeline: {len(subpipeline.table_graph.queries)} queries")
+
+            # Run just the subpipeline
+            result = subpipeline.run(executor=execute_sql)
+        """
+        subpipelines = self.split([target_table])
+        return subpipelines[0]
+
     def split(self, sinks: List) -> List["Pipeline"]:
         """
         Split pipeline into non-overlapping subpipelines based on target tables.
