@@ -1,6 +1,6 @@
 # clgraph
 
-A Python library for SQL column lineage analysis. No database required. No infrastructure to maintain. Just Python.
+A Python library that turns SQL queries into lineage graphs. No database required. No infrastructure to maintain. Just your queries and Python.
 
 ![clgraph illustration](./clgraph-illustration.svg)
 
@@ -11,14 +11,15 @@ A Python library for SQL column lineage analysis. No database required. No infra
 - **Auto-propagate Metadata** — PII flags, ownership, and descriptions flow automatically through lineage
 - **Context for AI Agents** — Provide LLMs with structured lineage data for smarter data assistance
 - **CI/CD Change Detection** — Detect lineage changes between pipeline versions for automated testing
+- **Automatic DAG Construction** — Execute pipelines in Python (async or sequential) with topological ordering, or generate Airflow DAGs
 
 ## Why We Built This
 
-Column lineage is notoriously difficult. Traditional tools reverse-engineer lineage from query logs and execution metadata, requiring expensive platform integration and complex infrastructure. Most open-source alternatives focus only on table-level lineage or single-query column analysis.
+**Your SQL already contains everything.** Tables, columns, transformations, joins—it's all there in your code.
 
-**Our insight**: When SQL is written with explicit column names and clear transformations (what we call "[lineage-friendly SQL](https://clgraph.dev/blog/writing-lineage-friendly-sql/)"), static analysis can provide *perfect* column lineage—without database access, without runtime integration, and without query logs.
+Traditional tools reverse-engineer lineage from query logs and database metadata, requiring expensive infrastructure. But when SQL is written with explicit column names and clear transformations (what we call "[lineage-friendly SQL](https://clgraph.dev/blog/writing-lineage-friendly-sql/)"), static analysis can build a *complete* lineage graph—without database access, without runtime integration, and without query logs.
 
-We built clgraph to prove this approach works. By combining lineage-friendly SQL with perfect static analysis, we solve 90% of column lineage needs with 10% of the complexity of enterprise tools. No database required. No infrastructure to maintain. Just pure Python analyzing your SQL files.
+**We parse it once. You get the complete graph.** It's a Python object you can traverse, query, and integrate however you want — powering tracing, impact analysis, metadata propagation, DAG construction, and more.
 
 **Read more**:
 - [Why We Built This (Full Story)](https://clgraph.dev/concepts/why-we-built-this/)
@@ -26,31 +27,26 @@ We built clgraph to prove this approach works. By combining lineage-friendly SQL
 
 ## Features
 
-### Column Lineage Analysis
-- **Perfect column lineage** for any single SQL query, no matter how complex
-- **Recursive query parsing** - handles arbitrary nesting of CTEs and subqueries
-- **Bottom-up lineage building** - dependency-ordered processing
-- **Star notation preservation** - no forced expansion, with EXCEPT/REPLACE support
-- **Forward and backward lineage tracing** - impact analysis and source tracing
+### Lineage Tracing
+- **Trace column origins** — Find where any column comes from, through complex CTEs and subqueries
+- **Impact analysis** — See what downstream columns are affected by changes
+- **Cross-query lineage** — Track columns through entire pipelines, not just single queries
 
-### Multi-Query Pipeline Analysis
-- **Cross-query lineage** - trace columns through multiple dependent queries
-- **Table dependency graphs** - understand pipeline structure
-- **Template variable support** - handle parameterized SQL with {{variable}} syntax
-- **Pipeline-level impact analysis** - see how changes propagate through your data pipeline
+### Metadata & Governance
+- **Auto-propagate metadata** — PII flags, ownership, and descriptions flow through lineage
+- **Inline comment parsing** — Extract metadata from SQL comments (`-- description [pii: true]`)
+- **LLM descriptions** — Generate natural language column descriptions with OpenAI, Ollama, etc.
+- **Diff tracking** — Detect lineage changes between pipeline versions
 
-### Metadata Management
-- **Column metadata** - track descriptions, ownership, PII flags, and custom tags
-- **Metadata propagation** - automatically inherit metadata through lineage
-- **Inline comment parsing** - extract metadata from SQL comments (`-- description [pii: true]`)
-- **LLM integration** - generate natural language descriptions using Ollama, OpenAI, etc.
-- **Diff tracking** - detect changes between pipeline versions
+### Pipeline Execution
+- **Run pipelines** — Execute queries in dependency order (async or sequential)
+- **Airflow integration** — Generate Airflow DAGs from your pipeline
+- **Template variables** — Handle parameterized SQL with `{{variable}}` syntax
 
-### Export Functionality
-- **JSON export** - machine-readable format for system integration
-- **JSON round-trip** - save pipelines to JSON and reload them with `Pipeline.from_json()`
-- **CSV export** - column and table metadata for spreadsheets
-- **GraphViz export** - DOT format for visualization tools
+### Export
+- **JSON** — Machine-readable format with round-trip support
+- **CSV** — Column and table metadata for spreadsheets
+- **GraphViz** — DOT format for visualization
 
 ## Installation
 
@@ -192,11 +188,11 @@ for impact in impacts:
 **Output:**
 ```
 Pipeline(
-  raw_events: CREATE TABLE raw_events AS         SELECT user_id, eve...
+  raw_events: CREATE TABLE raw_events AS         SELECT user_id, event_...
     main
-  daily_active_users: CREATE TABLE daily_active_users AS         SELECT use...
+  daily_active_users: CREATE TABLE daily_active_users AS         SELECT user_id...
     main
-  user_summary: CREATE TABLE user_summary AS         SELECT u.name, u.em...
+  user_summary: CREATE TABLE user_summary AS         SELECT u.name, u.ema...
     main
 )
 ------------------------------------------------------------
@@ -207,11 +203,15 @@ Execution order (5 tables):
   4. daily_active_users
   5. user_summary
 ------------------------------------------------------------
-Backward lineage for user_summary.event_count (1 sources):
-  ColumnNode('daily_active_users:raw_events.*')
+Backward lineage for user_summary.event_count (4 sources):
+  ColumnNode('source_events.user_id')
+  ColumnNode('source_events.event_type')
+  ColumnNode('source_events.event_timestamp')
+  ColumnNode('source_events.session_id')
 ------------------------------------------------------------
-Forward lineage for source_events.event_timestamp (1 impacts):
-  ColumnNode('user_summary:user_summary.activity_date')
+Forward lineage for source_events.event_timestamp (2 impacts):
+  ColumnNode('user_summary.activity_date')
+  ColumnNode('user_summary.event_count')
 ```
 
 ### Metadata from SQL Comments
@@ -257,10 +257,10 @@ for col in pipeline.columns.values():
 
 **Output:**
 ```
-Total columns: 6
+Total columns: 5
 ------------------------------------------------------------
 PII columns (1):
-  select:select.email
+  select_result.email
     Owner: data-team
 ------------------------------------------------------------
 ```
@@ -320,16 +320,13 @@ print("✓ Exported to lineage.json, columns.csv, lineage.dot")
 
 **Output:**
 ```
-📊 Propagating metadata for 8 columns...
-✅ Done! Propagated metadata for 8 columns
-Found 3 PII columns:
-  ColumnNode('raw.orders:raw.orders.user_email')
+📊 Propagating metadata for 6 columns...
+✅ Done! Propagated metadata for 6 columns
+Found 2 PII columns:
+  ColumnNode('raw.orders.user_email')
     Owner: data-team
     Tags: contact, sensitive
-  ColumnNode('analytics.revenue:analytics.revenue.user_email')
-    Owner: data-team
-    Tags: contact, sensitive
-  ColumnNode('analytics.revenue:raw.orders.user_email')
+  ColumnNode('analytics.revenue.user_email')
     Owner: data-team
     Tags: contact, sensitive
 ------------------------------------------------------------
