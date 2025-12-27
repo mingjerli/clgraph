@@ -39,11 +39,12 @@
 │  🚀 Orchestrator     📖 Data Catalog    🏷️  Metadata          │
 │  • to_airflow_dag() • trace_backward()  • propagate_metadata()│
 │  • run()            • trace_forward()   • get_pii_columns()   │
-│  • async_run()      • get_lineage()     • tags & ownership    │
+│  • async_run()      • get_lineage_path()• tags & ownership    │
+│  • build_subpipeline()                                        │
 │                                                                │
-│  🤖 LLM Apps         💾 Export                                 │
-│  • generate_        • to_json()                               │
-│    descriptions()   • CSVExporter                             │
+│  🤖 LLM Apps         💾 Export           🔄 Serialization      │
+│  • generate_        • to_json()         • from_json()         │
+│    descriptions()   • CSVExporter       • from_json_file()    │
 │                     • GraphVizExporter                        │
 │                                                                │
 └────────────────────────────────────────────────────────────────┘
@@ -119,8 +120,11 @@ Multiple ways to load SQL:
 |----------|----------------|---------|
 | Execute data pipeline | `pipeline.run()` | Execution results |
 | Create Airflow DAG | `to_airflow_dag()` | Airflow DAG |
+| Build subset of pipeline | `build_subpipeline()` | Filtered Pipeline |
 | Find data sources | `trace_column_backward()` | Source columns |
 | Impact analysis | `trace_column_forward()` | Affected columns |
+| Find path between columns | `get_lineage_path()` | Column path |
 | Track PII | `propagate_all_metadata()` | Auto-propagated flags |
 | Generate docs | `generate_all_descriptions()` | AI descriptions |
 | Export lineage | `to_json()` | JSON/CSV/DOT files |
+| Load from JSON | `from_json()` | Pipeline object |
