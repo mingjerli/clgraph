@@ -17,7 +17,12 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from sqlglot import exp
 
-from .column import PipelineLineageGraph, generate_description, propagate_metadata
+from .column import (
+    PipelineLineageGraph,
+    generate_description,
+    propagate_metadata,
+    propagate_metadata_backward,
+)
 from .lineage_builder import RecursiveLineageBuilder
 from .models import (
     ColumnEdge,
@@ -1648,8 +1653,12 @@ class Pipeline:
         """
         Propagate metadata (owner, PII, tags) through lineage.
 
-        Processes columns in topological order (sources first) to ensure
-        metadata flows correctly through transformations.
+        Uses a two-pass approach:
+        1. Backward pass: Propagate metadata from output columns (with SQL comment
+           metadata) to their input layer sources. This ensures that if an output
+           column has PII from a comment, the source column also gets PII.
+        2. Forward pass: Propagate metadata from source columns to downstream
+           columns in topological order.
 
         Args:
             verbose: If True, print progress messages
@@ -1657,16 +1666,36 @@ class Pipeline:
         # Get columns in topological order
         sorted_query_ids = self.table_graph.topological_sort()
 
+        # Pass 1: Backward propagation from output columns to input columns
+        # This handles metadata set via SQL comments on output columns
+        output_columns = [col for col in self.columns.values() if col.layer == "output"]
+
+        if verbose:
+            print(
+                f"📊 Pass 1: Propagating metadata backward from "
+                f"{len(output_columns)} output columns..."
+            )
+
+        for col in output_columns:
+            propagate_metadata_backward(col, self)
+
+        # Pass 2: Forward propagation through lineage
+        # Process all computed columns (output columns from each query)
         columns_to_process = []
         for query_id in sorted_query_ids:
             query = self.table_graph.queries[query_id]
-            if query.destination_table:
-                for col in self.columns.values():
-                    if col.table_name == query.destination_table and col.is_computed():
-                        columns_to_process.append(col)
+            # Get the table name for this query's output
+            # For CREATE TABLE queries, use destination_table
+            # For plain SELECTs, use query_id_result pattern
+            target_table = query.destination_table or f"{query_id}_result"
+            for col in self.columns.values():
+                if col.table_name == target_table and col.is_computed():
+                    columns_to_process.append(col)
 
         if verbose:
-            print(f"📊 Propagating metadata for {len(columns_to_process)} columns...")
+            print(
+                f"📊 Pass 2: Propagating metadata forward for {len(columns_to_process)} columns..."
+            )
 
         # Process columns
         for col in columns_to_process:
@@ -2190,16 +2219,19 @@ class Pipeline:
                 max_active_runs=3,
                 max_active_tasks=10,
                 tags=["analytics", "daily"],
-                default_view="graph",
-                orientation="LR",
+                default_view="graph",  # Airflow 2.x only
+                orientation="LR",  # Airflow 2.x only
             )
+
+        Note:
+            Currently supports Airflow 2.x only. Airflow 3.x support is planned.
         """
         try:
             from airflow.decorators import dag, task  # type: ignore[import-untyped]
         except ImportError as e:
             raise ImportError(
                 "Airflow is required for DAG generation. "
-                "Install it with: pip install apache-airflow"
+                "Install it with: pip install 'apache-airflow>=2.7.0,<3.0.0'"
             ) from e
 
         if start_date is None:

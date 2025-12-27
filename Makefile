@@ -1,4 +1,4 @@
-.PHONY: help setup test test-verbose test-coverage test-docs test-docs-verbose clean lint lint-fix lint-fix-unsafe format format-check type-check check check-examples-verbose pre-commit install install-hooks build publish-test publish docs
+.PHONY: help setup test test-verbose test-coverage test-docs test-docs-verbose clean lint lint-fix lint-fix-unsafe format format-check type-check check check-examples-verbose pre-commit install install-light install-hooks build publish-test publish docs
 
 # Default target
 help:
@@ -18,7 +18,8 @@ help:
 	@echo "  make check          - Run all checks (format, lint, type-check, test, test-docs)"
 	@echo "  make check-examples-verbose - Run all examples with verbose output"
 	@echo "  make pre-commit     - Run pre-commit hook (ruff + ty)"
-	@echo "  make install        - Install package in editable mode"
+	@echo "  make install        - Install package in editable mode (with Airflow)"
+	@echo "  make install-light  - Install package without Airflow (faster)"
 	@echo "  make install-hooks  - Install git pre-commit hooks"
 	@echo "  make build          - Build distribution packages"
 	@echo "  make publish-test   - Publish to TestPyPI"
@@ -30,8 +31,8 @@ help:
 setup:
 	@echo "Setting up Python environment with uv..."
 	uv venv
-	@echo "Installing dependencies..."
-	uv pip install -e ".[dev]"
+	@echo "Installing dependencies (including Airflow for integration tests)..."
+	uv pip install -e ".[dev,airflow]"
 	@echo "Installing git hooks..."
 	@bash scripts/install-hooks.sh
 	@echo ""
@@ -41,6 +42,12 @@ setup:
 # Install package in editable mode
 install:
 	@echo "Installing package in editable mode..."
+	uv pip install -e ".[dev,airflow]"
+	@echo "✓ Installation complete!"
+
+# Install package without Airflow (lighter install)
+install-light:
+	@echo "Installing package in editable mode (without Airflow)..."
 	uv pip install -e ".[dev]"
 	@echo "✓ Installation complete!"
 

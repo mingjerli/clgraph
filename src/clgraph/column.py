@@ -117,9 +117,58 @@ def _generate_fallback_description(column: ColumnNode):
     column.description_source = DescriptionSource.GENERATED
 
 
+def propagate_metadata_backward(column: ColumnNode, pipeline: "Pipeline"):
+    """
+    Propagate metadata backward from output columns to their input layer columns.
+
+    This is the first pass of metadata propagation. When a SQL comment sets
+    metadata (like PII) on an output column, we need to propagate it backward
+    to the input layer columns so that other output columns derived from the
+    same source will also inherit the metadata.
+
+    Example:
+        SELECT email, UPPER(email) as email_upper FROM users
+        -- If email has [pii: true], we propagate PII to users.email
+        -- Then email_upper will inherit PII from users.email in forward pass
+
+    Args:
+        column: The output column with metadata to propagate backward
+        pipeline: The pipeline for source lookup
+    """
+    # Only propagate from output columns that have metadata
+    if column.layer != "output":
+        return
+
+    has_metadata = column.pii or column.owner or column.tags
+
+    if not has_metadata:
+        return
+
+    # Get source columns via incoming edges
+    incoming_edges = [e for e in pipeline.edges if e.to_node == column]
+    if not incoming_edges:
+        return
+
+    # Propagate to input layer sources
+    for edge in incoming_edges:
+        source = edge.from_node
+        if source.layer == "input":
+            # Propagate PII backward
+            if column.pii:
+                source.pii = True
+
+            # Propagate owner backward (only if source doesn't have one)
+            if column.owner and not source.owner:
+                source.owner = column.owner
+
+            # Propagate tags backward
+            if column.tags:
+                source.tags.update(column.tags)
+
+
 def propagate_metadata(column: ColumnNode, pipeline: "Pipeline"):
     """
-    Propagate metadata from source columns to this column.
+    Propagate metadata from source columns to this column (forward propagation).
 
     Propagation rules:
     - Owner: Only propagate if not already set and all sources have the same owner
