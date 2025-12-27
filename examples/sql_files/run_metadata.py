@@ -8,12 +8,10 @@ This script demonstrates how to use clgraph's metadata capabilities:
 4. Generate descriptions (with LLM or fallback)
 5. Query columns by metadata
 6. Trace PII through lineage
-7. Save/load metadata to persist across sessions
-8. Export metadata to JSON
+7. Export metadata to JSON
 """
 
 import json
-import tempfile
 from pathlib import Path
 
 from clgraph import Pipeline
@@ -396,48 +394,9 @@ def main():
     print()
 
     # -------------------------------------------------------------------------
-    # 7. Save and Load Metadata
+    # 7. Export to JSON
     # -------------------------------------------------------------------------
-    print("7. SAVE AND LOAD METADATA")
-    print("-" * 80)
-    print("""
-  Metadata can be persisted and reloaded:
-    pipeline.save("metadata.pkl")          # Save metadata
-    metadata = Pipeline.load_metadata("metadata.pkl")  # Load
-    new_pipeline.apply_metadata(metadata)  # Apply to new pipeline
-""")
-
-    # Save metadata to temp file
-    with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as f:
-        temp_path = f.name
-
-    pipeline.save(temp_path)
-    print(f"  Saved metadata to: {temp_path}")
-
-    # Load metadata
-    loaded_metadata = Pipeline.load_metadata(temp_path)
-    print("  Loaded metadata:")
-    print(f"    - Version: {loaded_metadata.get('version')}")
-    print(f"    - Columns: {len(loaded_metadata.get('columns', {}))}")
-    print(f"    - Tables: {len(loaded_metadata.get('tables', {}))}")
-
-    # Create a fresh pipeline and apply metadata
-    print("\n  Creating new pipeline and applying loaded metadata...")
-    fresh_pipeline = Pipeline(queries, dialect="duckdb")
-    pii_before_apply = len(fresh_pipeline.get_pii_columns())
-    fresh_pipeline.apply_metadata(loaded_metadata)
-    pii_after_apply = len(fresh_pipeline.get_pii_columns())
-    print(f"    PII columns before apply: {pii_before_apply}")
-    print(f"    PII columns after apply:  {pii_after_apply}")
-
-    # Clean up
-    Path(temp_path).unlink()
-    print()
-
-    # -------------------------------------------------------------------------
-    # 8. Export to JSON
-    # -------------------------------------------------------------------------
-    print("8. EXPORT TO JSON")
+    print("7. EXPORT TO JSON")
     print("-" * 80)
     print("""
   Export pipeline with metadata to JSON for external tools:
