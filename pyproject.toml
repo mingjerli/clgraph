@@ -61,7 +61,7 @@ templates = [
     "jinja2>=3.0.0",
 ]
 airflow = [
-    "apache-airflow>=2.7.0",
+    "apache-airflow>=2.7.0,<3.0.0",  # Pin to 2.x for API stability
 ]
 
 [project.urls]
