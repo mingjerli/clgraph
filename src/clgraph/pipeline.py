@@ -2219,16 +2219,19 @@ class Pipeline:
                 max_active_runs=3,
                 max_active_tasks=10,
                 tags=["analytics", "daily"],
-                default_view="graph",
-                orientation="LR",
+                default_view="graph",  # Airflow 2.x only
+                orientation="LR",  # Airflow 2.x only
             )
+
+        Note:
+            Currently supports Airflow 2.x only. Airflow 3.x support is planned.
         """
         try:
             from airflow.decorators import dag, task  # type: ignore[import-untyped]
         except ImportError as e:
             raise ImportError(
                 "Airflow is required for DAG generation. "
-                "Install it with: pip install apache-airflow"
+                "Install it with: pip install 'apache-airflow>=2.7.0,<3.0.0'"
             ) from e
 
         if start_date is None:
