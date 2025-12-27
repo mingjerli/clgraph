@@ -8,8 +8,6 @@ Tests the complete flow:
 4. Metadata propagates through lineage
 """
 
-import pytest
-
 from clgraph.models import DescriptionSource
 from clgraph.pipeline import Pipeline
 
@@ -337,9 +335,6 @@ class TestMetadataIntegration:
 class TestMetadataPropagation:
     """Test metadata propagation through pipeline lineage."""
 
-    @pytest.mark.skip(
-        reason="Propagation tests require proper lineage edge setup - future enhancement"
-    )
     def test_pii_propagation(self):
         """Test that PII flag propagates through transformations."""
         sql = """
@@ -352,28 +347,21 @@ class TestMetadataPropagation:
 
         pipeline = Pipeline([("query", sql)], dialect="bigquery")
 
-        # Email should have PII from comment
+        # Email should have PII from comment (output column)
         email_nodes = [
-            n
-            for n in pipeline.columns.values()
-            if n.column_name == "email" and n.full_name.startswith("query.")
+            n for n in pipeline.columns.values() if n.column_name == "email" and n.layer == "output"
         ]
-        if email_nodes:
-            assert email_nodes[0].pii is True
+        assert len(email_nodes) == 1
+        assert email_nodes[0].pii is True
 
         # After propagation runs, email_upper should also have PII
-        # Note: Propagation happens via propagate_metadata() method
-        for col in pipeline.columns:
-            col.propagate_metadata(pipeline)
+        pipeline.propagate_all_metadata(verbose=False)
 
         email_upper_nodes = [n for n in pipeline.columns.values() if n.column_name == "email_upper"]
-        if email_upper_nodes:
-            # email_upper should inherit PII from email
-            assert email_upper_nodes[0].pii is True
+        assert len(email_upper_nodes) == 1
+        # email_upper should inherit PII from email via backward+forward propagation
+        assert email_upper_nodes[0].pii is True
 
-    @pytest.mark.skip(
-        reason="Propagation tests require proper lineage edge setup - future enhancement"
-    )
     def test_owner_propagation_single_source(self):
         """Test that owner propagates when all sources have same owner."""
         sql = """
@@ -387,18 +375,14 @@ class TestMetadataPropagation:
         pipeline = Pipeline([("query", sql)], dialect="bigquery")
 
         # Run propagation
-        for col in pipeline.columns.values():
-            col.propagate_metadata(pipeline)
+        pipeline.propagate_all_metadata(verbose=False)
 
         # email_upper should inherit owner from email
         email_upper_nodes = [n for n in pipeline.columns.values() if n.column_name == "email_upper"]
-        if email_upper_nodes:
-            # Should inherit owner since there's only one source
-            assert email_upper_nodes[0].owner == "data-team"
+        assert len(email_upper_nodes) == 1
+        # Should inherit owner since there's only one source
+        assert email_upper_nodes[0].owner == "data-team"
 
-    @pytest.mark.skip(
-        reason="Propagation tests require proper lineage edge setup - future enhancement"
-    )
     def test_tags_propagation_union(self):
         """Test that tags are unioned during propagation."""
         sql = """
@@ -412,12 +396,12 @@ class TestMetadataPropagation:
         pipeline = Pipeline([("query", sql)], dialect="bigquery")
 
         # Run propagation
-        for col in pipeline.columns.values():
-            col.propagate_metadata(pipeline)
+        pipeline.propagate_all_metadata(verbose=False)
 
-        # combined should have union of tags
+        # combined should have union of tags from both col1 and col2
         combined_nodes = [n for n in pipeline.columns.values() if n.column_name == "combined"]
-        if combined_nodes:
-            # Should have union of all source tags
-            assert "metric" in combined_nodes[0].tags
-            # May also have finance and critical depending on lineage resolution
+        assert len(combined_nodes) == 1
+        # Should have union of all source tags
+        assert "metric" in combined_nodes[0].tags
+        assert "finance" in combined_nodes[0].tags
+        assert "critical" in combined_nodes[0].tags
