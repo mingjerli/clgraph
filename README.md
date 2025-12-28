@@ -9,7 +9,8 @@ A Python library that turns SQL queries into lineage graphs. No database require
 - **Debug SQL Queries** — Visualize column dependencies and trace data flow through complex CTEs and subqueries
 - **Impact Analysis** — Understand downstream effects before making schema changes
 - **Auto-propagate Metadata** — PII flags, ownership, and descriptions flow automatically through lineage
-- **Context for AI Agents** — Provide LLMs with structured lineage data for smarter data assistance
+- **LLM-Powered Features** — Natural language lineage queries, schema-aware Text-to-SQL, and automatic column descriptions
+- **Context for AI Agents** — MCP server and structured lineage tools for AI assistants and copilots
 - **CI/CD Change Detection** — Detect lineage changes between pipeline versions for automated testing
 - **Automatic DAG Construction** — Execute pipelines in Python (async or sequential) with topological ordering, or generate Airflow DAGs
 
@@ -37,6 +38,11 @@ Traditional tools reverse-engineer lineage from query logs and database metadata
 - **Inline comment parsing** — Extract metadata from SQL comments (`-- description [pii: true]`)
 - **LLM descriptions** — Generate natural language column descriptions with OpenAI, Ollama, etc.
 - **Diff tracking** — Detect lineage changes between pipeline versions
+
+### LLM-Powered Features
+- **Lineage Agent** — Natural language interface to query lineage ("Where does revenue come from?")
+- **Text-to-SQL** — Schema-aware SQL generation with column descriptions as context
+- **Programmatic tools** — 11 built-in tools for lineage, schema, and governance queries
 
 ### Pipeline Execution
 - **Run pipelines** — Execute queries in dependency order (async or sequential)
@@ -456,6 +462,227 @@ Generated descriptions for 8 columns:
     Order total amount in USD per customer from raw orders table.
 ```
 
+### Lineage Agent (Natural Language Interface)
+
+Query your lineage data using natural language. The agent automatically routes questions to appropriate tools. Most queries work without an LLM - only SQL generation requires one:
+
+```python
+from clgraph import Pipeline
+from clgraph.agent import LineageAgent
+
+# Build pipeline
+queries = [
+    ("staging.orders", """
+        CREATE TABLE staging.orders AS
+        SELECT order_id, customer_id, amount, order_date
+        FROM raw.orders WHERE amount > 0
+    """),
+    ("analytics.revenue", """
+        CREATE TABLE analytics.revenue AS
+        SELECT customer_id, SUM(amount) as total_revenue, COUNT(*) as order_count
+        FROM staging.orders
+        GROUP BY customer_id
+    """),
+]
+pipeline = Pipeline(queries, dialect="bigquery")
+
+# Create agent (LLM is optional - most queries work without it)
+agent = LineageAgent(pipeline)
+
+# List tables
+result = agent.query("What tables are available?")
+print(f"Tool: {result.tool_used}")
+print(f"Tables found: {len(result.data)}")
+
+# Trace backward lineage
+result = agent.query("Where does analytics.revenue.total_revenue come from?")
+print(f"Tool: {result.tool_used}")
+print(f"Sources: {len(result.data)} columns")
+
+# Trace forward lineage (impact analysis)
+result = agent.query("What depends on raw.orders.amount?")
+print(f"Tool: {result.tool_used}")
+
+# Search for columns
+result = agent.query("Find columns named customer")
+print(f"Tool: {result.tool_used}")
+print(f"Found: {len(result.data)} matches")
+```
+
+**Output:**
+```
+Tool: list_tables
+Tables found: 3
+Tool: trace_backward
+Sources: 1 columns
+Tool: trace_forward
+Tool: search_columns
+Found: 2 matches
+```
+
+**Supported question types:**
+- **Backward lineage**: "Where does X come from?", "What is the source of X?"
+- **Forward lineage**: "What depends on X?", "What is the impact of changing X?"
+- **Schema exploration**: "What tables exist?", "What columns does X have?"
+- **Column search**: "Find columns named X", "Search for columns like X"
+- **Governance**: "Which columns contain PII?", "Who owns this table?"
+- **SQL generation**: "Write SQL to get monthly revenue" (requires LLM)
+
+### Text-to-SQL with Schema Context
+
+Generate SQL queries with full awareness of your pipeline schema and column descriptions. The `GenerateSQLTool` automatically includes table schemas, column descriptions, and lineage context in the LLM prompt:
+
+```python
+from clgraph import Pipeline
+
+# Build pipeline with column descriptions (from SQL comments)
+queries = [
+    ("customers", """
+        CREATE TABLE analytics.customers AS
+        SELECT
+            customer_id,       -- Unique customer identifier
+            email,             -- Customer email address [pii: true]
+            signup_date,       -- Date customer signed up
+            lifetime_value     -- Total revenue from this customer in USD
+        FROM raw.customers
+    """),
+    ("orders", """
+        CREATE TABLE analytics.orders AS
+        SELECT
+            order_id,          -- Unique order identifier
+            customer_id,       -- Reference to customer
+            amount,            -- Order amount in USD
+            order_date         -- Date of order
+        FROM raw.orders
+    """),
+]
+pipeline = Pipeline(queries, dialect="bigquery")
+
+# View the schema context available for text-to-SQL
+print(f"Pipeline has {len(pipeline.table_graph.tables)} tables")
+print(f"Total columns: {len(pipeline.columns)}")
+
+# Column descriptions are automatically extracted from SQL comments
+cols_with_desc = [c for c in pipeline.columns.values() if c.description]
+print(f"Columns with descriptions: {len(cols_with_desc)}")
+for col in cols_with_desc[:3]:  # Show first 3
+    print(f"  {col.column_name}: {col.description}")
+```
+
+**Output:**
+```
+Pipeline has 4 tables
+Total columns: 12
+Columns with descriptions: 8
+  customer_id: Unique customer identifier
+  email: Customer email address
+  signup_date: Date customer signed up
+```
+
+With an LLM configured, `GenerateSQLTool` generates SQL queries:
+
+<!-- skip-test -->
+```python
+from clgraph.tools import GenerateSQLTool
+from langchain_ollama import ChatOllama
+
+# Configure LLM and create tool
+llm = ChatOllama(model="llama3.1:8b")
+sql_tool = GenerateSQLTool(pipeline, llm=llm)
+
+# Generate SQL with schema awareness
+result = sql_tool.run(question="Find top 10 customers by lifetime value")
+print(result.data["sql"])
+# SELECT customer_id, email, lifetime_value
+# FROM analytics.customers
+# ORDER BY lifetime_value DESC
+# LIMIT 10
+```
+
+### Lineage Tools (Programmatic Access)
+
+Use tools directly without the agent for programmatic access:
+
+```python
+from clgraph import Pipeline
+from clgraph.tools import (
+    TraceBackwardTool,
+    TraceForwardTool,
+    ListTablesTool,
+    GetTableSchemaTool,
+    SearchColumnsTool,
+    FindPIIColumnsTool,
+)
+
+# Build pipeline
+queries = [
+    ("staging.orders", """
+        CREATE TABLE staging.orders AS
+        SELECT order_id, customer_email, amount FROM raw.orders
+    """),
+    ("analytics.revenue", """
+        CREATE TABLE analytics.revenue AS
+        SELECT customer_email, SUM(amount) as total FROM staging.orders GROUP BY 1
+    """),
+]
+pipeline = Pipeline(queries, dialect="bigquery")
+
+# List all tables
+tool = ListTablesTool(pipeline)
+result = tool.run()
+print(f"Tables: {[t['name'] for t in result.data]}")
+
+# Get table schema
+tool = GetTableSchemaTool(pipeline)
+result = tool.run(table="analytics.revenue")
+print(f"Columns: {result.data['columns']}")
+
+# Trace backward lineage
+tool = TraceBackwardTool(pipeline)
+result = tool.run(table="analytics.revenue", column="total")
+print(f"Sources: {result.message}")
+
+# Trace forward lineage (impact analysis)
+tool = TraceForwardTool(pipeline)
+result = tool.run(table="raw.orders", column="amount")
+print(f"Impacts: {result.message}")
+
+# Search columns
+tool = SearchColumnsTool(pipeline)
+result = tool.run(pattern="email")
+print(f"Matches: {result.message}")
+
+# Find PII columns
+tool = FindPIIColumnsTool(pipeline)
+result = tool.run()
+print(f"PII columns: {result.message}")
+```
+
+**Output:**
+```
+Tables: ['raw.orders', 'staging.orders', 'analytics.revenue']
+Columns: ['customer_email', 'total']
+Sources: Column analytics.revenue.total is derived from: raw.orders.amount
+Impacts: Column raw.orders.amount impacts: analytics.revenue.total
+Matches: Found 2 columns matching 'email'
+PII columns: No PII columns found
+```
+
+**Available tools:**
+| Tool | Description |
+|------|-------------|
+| `TraceBackwardTool` | Trace column to its ultimate sources |
+| `TraceForwardTool` | Find all columns impacted by a source column |
+| `GetLineagePathTool` | Find lineage path between two columns |
+| `ListTablesTool` | List all tables in the pipeline |
+| `GetTableSchemaTool` | Get columns and metadata for a table |
+| `SearchColumnsTool` | Search columns by name pattern |
+| `GetExecutionOrderTool` | Get topologically sorted execution order |
+| `FindPIIColumnsTool` | Find columns marked as PII |
+| `GetOwnersTool` | Get ownership information for tables/columns |
+| `GenerateSQLTool` | Generate SQL from natural language (requires LLM) |
+| `ExplainQueryTool` | Explain what a SQL query does (requires LLM) |
+
 ## Architecture
 
 > 📊 **[View the complete architecture diagram](clgraph-simple-diagram.md)** - A visual overview of the 4-stage flow from SQL input to applications.
@@ -488,95 +715,112 @@ This hierarchy allows clgraph to trace column lineage at any level: from pipelin
 
 A `Pipeline` contains two graph structures for lineage analysis:
 
-<!-- skip-test -->
 ```python
 from clgraph import Pipeline
 
+# Sample pipeline for examples
+queries = [
+    ("raw.orders", "CREATE TABLE raw.orders AS SELECT id, amount FROM source.orders"),
+    ("analytics.metrics", "CREATE TABLE analytics.metrics AS SELECT SUM(amount) as total FROM raw.orders"),
+]
 pipeline = Pipeline(queries, dialect="bigquery")
 
 # Two graph objects available:
-# 1. Table-level graph (TableDependencyGraph)
-# 2. Column-level graph (PipelineLineageGraph)
+print(f"Table graph: {type(pipeline.table_graph).__name__}")
+print(f"Column graph: {type(pipeline.column_graph).__name__}")
 ```
 
 ### Table Graph (`pipeline.table_graph`)
 
 The `TableDependencyGraph` tracks table-level dependencies:
 
-<!-- skip-test -->
 ```python
+from clgraph import Pipeline
+
+queries = [
+    ("raw.orders", "CREATE TABLE raw.orders AS SELECT id, amount FROM source.orders"),
+    ("staging.orders", "CREATE TABLE staging.orders AS SELECT id, amount FROM raw.orders WHERE amount > 0"),
+    ("analytics.metrics", "CREATE TABLE analytics.metrics AS SELECT SUM(amount) as total FROM staging.orders"),
+]
+pipeline = Pipeline(queries, dialect="bigquery")
+
 # Access tables and queries
-pipeline.table_graph.tables      # Dict[str, TableNode]
-pipeline.table_graph.queries     # Dict[str, ParsedQuery]
+print(f"Tables: {list(pipeline.table_graph.tables.keys())}")
+print(f"Queries: {list(pipeline.table_graph.queries.keys())}")
 
 # Get source tables (external inputs, not created by any query)
 source_tables = pipeline.table_graph.get_source_tables()
+print(f"Source tables: {source_tables}")
 
 # Get final tables (not read by any downstream query)
 final_tables = pipeline.table_graph.get_final_tables()
-
-# Get upstream dependencies for a table
-deps = pipeline.table_graph.get_dependencies("analytics.user_metrics")
-
-# Get downstream tables (impact analysis)
-downstream = pipeline.table_graph.get_downstream("raw.orders")
+print(f"Final tables: {final_tables}")
 
 # Get query execution order (topologically sorted)
 query_order = pipeline.table_graph.topological_sort()
-
-# Get table execution order
-table_order = pipeline.table_graph.get_execution_order()
+print(f"Execution order: {list(query_order)}")
 ```
 
 ### Column Graph (`pipeline.column_graph`)
 
 The `PipelineLineageGraph` tracks column-level lineage:
 
-<!-- skip-test -->
 ```python
+from clgraph import Pipeline
+
+queries = [
+    ("raw.orders", "CREATE TABLE raw.orders AS SELECT id, amount FROM source.orders"),
+    ("analytics.metrics", "CREATE TABLE analytics.metrics AS SELECT SUM(amount) as total FROM raw.orders"),
+]
+pipeline = Pipeline(queries, dialect="bigquery")
+
 # Access columns and edges
-pipeline.column_graph.columns    # Dict[str, ColumnNode]
-pipeline.column_graph.edges      # List[ColumnEdge]
+print(f"Columns: {len(pipeline.column_graph.columns)}")
+print(f"Edges: {len(pipeline.column_graph.edges)}")
 
 # Backward compatible access (property aliases)
-pipeline.columns  # Same as pipeline.column_graph.columns
-pipeline.edges    # Same as pipeline.column_graph.edges
+print(f"pipeline.columns == pipeline.column_graph.columns: {pipeline.columns == pipeline.column_graph.columns}")
 
 # Get source columns (no incoming edges)
 source_cols = pipeline.column_graph.get_source_columns()
+print(f"Source columns: {len(source_cols)}")
 
 # Get final columns (no outgoing edges)
 final_cols = pipeline.column_graph.get_final_columns()
-
-# Get direct upstream columns (one hop back)
-# Note: get_upstream() takes the column's full_name (includes query_id prefix)
-col = pipeline.get_column("analytics.metrics", "total_revenue")
-if col:
-    upstream = pipeline.column_graph.get_upstream(col.full_name)
-
-# Get direct downstream columns (one hop forward)
-col = pipeline.get_column("raw.orders", "amount")
-if col:
-    downstream = pipeline.column_graph.get_downstream(col.full_name)
+print(f"Final columns: {len(final_cols)}")
 ```
 
 ### Full Lineage Tracing
 
 For complete lineage (not just direct dependencies), use Pipeline methods:
 
-<!-- skip-test -->
 ```python
+from clgraph import Pipeline
+
+queries = [
+    ("raw.orders", "CREATE TABLE raw.orders AS SELECT id, amount FROM source.orders"),
+    ("staging.orders", "CREATE TABLE staging.orders AS SELECT id, amount FROM raw.orders"),
+    ("analytics.metrics", "CREATE TABLE analytics.metrics AS SELECT SUM(amount) as total FROM staging.orders"),
+]
+pipeline = Pipeline(queries, dialect="bigquery")
+
 # Trace backward to ultimate sources (recursive)
-sources = pipeline.trace_column_backward("final_table", "metric")
+sources = pipeline.trace_column_backward("analytics.metrics", "total")
+print(f"Sources of analytics.metrics.total: {[s.full_name for s in sources]}")
 
 # Trace forward to all impacts (recursive)
 impacts = pipeline.trace_column_forward("raw.orders", "amount")
+print(f"Impacts of raw.orders.amount: {[i.full_name for i in impacts]}")
 
-# Find specific lineage path between two columns
+# Find specific lineage path between two columns (returns edges)
 path = pipeline.get_lineage_path(
     "raw.orders", "amount",
-    "analytics.metrics", "total_revenue"
+    "analytics.metrics", "total"
 )
+if path:
+    print(f"Path has {len(path)} edges")
+    for edge in path:
+        print(f"  {edge.from_node.full_name} -> {edge.to_node.full_name}")
 ```
 
 ## Supported SQL Dialects
@@ -588,14 +832,23 @@ Built on [sqlglot](https://github.com/tobymao/sqlglot), supporting:
 - Snowflake
 - Redshift
 - DuckDB
+- ClickHouse
 - And many more
 
-Specify dialect when creating the tracer:
+Specify dialect when creating a pipeline:
 
-<!-- skip-test -->
 ```python
+from clgraph import Pipeline, SQLColumnTracer
+
+# Single query with dialect
+sql = "SELECT id, amount FROM orders"
 tracer = SQLColumnTracer(sql, dialect="postgres")
+print(f"Dialect: postgres, Columns: {tracer.get_column_names()}")
+
+# Pipeline with dialect
+queries = [("staging", "CREATE TABLE staging AS SELECT * FROM raw")]
 pipeline = Pipeline(queries, dialect="snowflake")
+print(f"Dialect: snowflake, Tables: {list(pipeline.table_graph.tables.keys())}")
 ```
 
 ## Use Cases

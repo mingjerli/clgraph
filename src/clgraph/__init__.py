@@ -14,6 +14,8 @@ except Exception:
 
 # Import main public API from parser
 # Import diff functionality
+# Import lineage intelligence components
+from .agent import AgentResult, LineageAgent, QuestionType
 from .diff import ColumnDiff, PipelineDiff
 
 # Import export functionality
@@ -45,6 +47,36 @@ from .parser import (
     TableDependencyGraph,
     TableNode,
     TemplateTokenizer,
+)
+from .tools import (
+    ALL_TOOLS,
+    BASIC_TOOLS,
+    LLM_TOOLS,
+    BaseTool,
+    CheckDataQualityTool,
+    ContextBuilder,
+    ContextConfig,
+    ExplainQueryTool,
+    FindPIIColumnsTool,
+    GenerateSQLTool,
+    GetColumnsByTagTool,
+    GetExecutionOrderTool,
+    GetLineagePathTool,
+    GetOwnersTool,
+    GetRelationshipsTool,
+    GetTableLineageTool,
+    GetTableSchemaTool,
+    ListTablesTool,
+    ListTagsTool,
+    LLMTool,
+    ParameterSpec,
+    ParameterType,
+    SearchColumnsTool,
+    ToolRegistry,
+    ToolResult,
+    TraceBackwardTool,
+    TraceForwardTool,
+    create_tool_registry,
 )
 
 # Import visualization functions
@@ -100,4 +132,42 @@ __all__ = [
     "visualize_column_lineage",
     "visualize_column_lineage_simple",
     "visualize_column_path",
+    # Lineage Intelligence - Agent
+    "LineageAgent",
+    "AgentResult",
+    "QuestionType",
+    # Lineage Intelligence - Tools
+    "BaseTool",
+    "LLMTool",
+    "ToolResult",
+    "ToolRegistry",
+    "ParameterSpec",
+    "ParameterType",
+    "ContextBuilder",
+    "ContextConfig",
+    "create_tool_registry",
+    # Lineage tools
+    "TraceBackwardTool",
+    "TraceForwardTool",
+    "GetLineagePathTool",
+    "GetTableLineageTool",
+    # Schema tools
+    "ListTablesTool",
+    "GetTableSchemaTool",
+    "GetRelationshipsTool",
+    "SearchColumnsTool",
+    "GetExecutionOrderTool",
+    # Governance tools
+    "FindPIIColumnsTool",
+    "GetOwnersTool",
+    "GetColumnsByTagTool",
+    "ListTagsTool",
+    "CheckDataQualityTool",
+    # SQL tools
+    "GenerateSQLTool",
+    "ExplainQueryTool",
+    # Tool lists
+    "BASIC_TOOLS",
+    "LLM_TOOLS",
+    "ALL_TOOLS",
 ]

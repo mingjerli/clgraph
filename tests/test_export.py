@@ -324,6 +324,7 @@ def test_json_round_trip_with_metadata():
     email_col = original.get_column("raw.users", "email")
     if email_col:
         email_col.description = "User email address"
+        email_col.description_source = DescriptionSource.GENERATED
         email_col.owner = "privacy-team"
         email_col.pii = True
         email_col.tags = {"contact", "sensitive"}
@@ -337,6 +338,7 @@ def test_json_round_trip_with_metadata():
     restored_email = restored.get_column("raw.users", "email")
     assert restored_email is not None
     assert restored_email.description == "User email address"
+    assert restored_email.description_source == DescriptionSource.GENERATED
     assert restored_email.owner == "privacy-team"
     assert restored_email.pii is True
     assert restored_email.tags == {"contact", "sensitive"}

@@ -1,4 +1,4 @@
-.PHONY: help setup test test-verbose test-coverage test-docs test-docs-verbose clean lint lint-fix lint-fix-unsafe format format-check type-check check check-examples-verbose pre-commit install install-light install-hooks build publish-test publish docs
+.PHONY: help setup test test-verbose test-coverage test-docs test-docs-verbose test-llm clean lint lint-fix lint-fix-unsafe format format-check type-check check check-examples-verbose pre-commit install install-all install-light install-hooks build publish-test publish docs
 
 # Default target
 help:
@@ -9,6 +9,7 @@ help:
 	@echo "  make test-coverage  - Run tests with coverage report"
 	@echo "  make test-docs      - Test README documentation examples"
 	@echo "  make test-docs-verbose - Test README examples with detailed output"
+	@echo "  make test-llm       - Test LLM examples with Ollama (requires Ollama running)"
 	@echo "  make lint           - Run linting checks (ruff)"
 	@echo "  make lint-fix       - Auto-fix linting issues"
 	@echo "  make lint-fix-unsafe- Auto-fix linting issues (including unsafe fixes)"
@@ -16,10 +17,13 @@ help:
 	@echo "  make format-check   - Check formatting without modifying files"
 	@echo "  make type-check     - Run type checking with mypy"
 	@echo "  make check          - Run all checks (format, lint, type-check, test, test-docs)"
-	@echo "  make check-examples-verbose - Run all examples with verbose output"
+	@echo "  make check-examples - Run all examples (skips LLM examples)"
+	@echo "  make check-examples-verbose - Run examples with verbose output (skips LLM)"
+	@echo "  make check-examples-llm - Run ALL examples including LLM (requires Ollama)"
 	@echo "  make pre-commit     - Run pre-commit hook (ruff + ty)"
-	@echo "  make install        - Install package in editable mode (with Airflow)"
-	@echo "  make install-light  - Install package without Airflow (faster)"
+	@echo "  make install        - Install package in editable mode (dev deps)"
+	@echo "  make install-all    - Install package with ALL optional deps (llm, mcp, airflow)"
+	@echo "  make install-light  - Install package without dev deps (minimal)"
 	@echo "  make install-hooks  - Install git pre-commit hooks"
 	@echo "  make build          - Build distribution packages"
 	@echo "  make publish-test   - Publish to TestPyPI"
@@ -31,24 +35,30 @@ help:
 setup:
 	@echo "Setting up Python environment with uv..."
 	uv venv
-	@echo "Installing dependencies (including Airflow for integration tests)..."
-	uv pip install -e ".[dev,airflow]"
+	@echo "Installing all dependencies..."
+	uv sync --extra dev --extra llm --extra mcp --extra airflow
 	@echo "Installing git hooks..."
 	@bash scripts/install-hooks.sh
 	@echo ""
 	@echo "✓ Setup complete!"
 	@echo "Activate the environment with: source .venv/bin/activate"
 
-# Install package in editable mode
+# Install package in editable mode (dev dependencies)
 install:
-	@echo "Installing package in editable mode..."
-	uv pip install -e ".[dev,airflow]"
+	@echo "Installing package in editable mode (dev deps)..."
+	uv sync --extra dev
 	@echo "✓ Installation complete!"
 
-# Install package without Airflow (lighter install)
+# Install package with ALL optional dependencies
+install-all:
+	@echo "Installing package with ALL optional dependencies..."
+	uv sync --extra dev --extra llm --extra mcp --extra airflow
+	@echo "✓ Installation complete! Includes: dev, llm, mcp, airflow"
+
+# Install package without dev deps (minimal)
 install-light:
-	@echo "Installing package in editable mode (without Airflow)..."
-	uv pip install -e ".[dev]"
+	@echo "Installing package in editable mode (minimal)..."
+	uv sync
 	@echo "✓ Installation complete!"
 
 # Install git hooks
@@ -85,6 +95,13 @@ test-docs-verbose:
 	@echo "Testing README examples with detailed output..."
 	uv run python tests/markdown_examples.py README.md -v
 	@echo "✓ Documentation tests complete!"
+
+# Test LLM-dependent examples (requires Ollama running locally)
+test-llm:
+	@echo "Testing LLM-dependent examples (requires Ollama)..."
+	@echo "Prerequisites: ollama serve && ollama pull llama3.1:8b"
+	uv run pytest tests/test_readme_llm_examples.py -v -s --run-llm
+	@echo "✓ LLM tests complete!"
 
 # Run linting checks
 lint:
@@ -127,9 +144,19 @@ check: format lint type-check test test-docs
 	@echo ""
 	@echo "✓ All checks passed!"
 
+# Run all examples (skips LLM examples by default)
+check-examples:
+	@echo "Running all examples (skipping LLM examples)..."
+	@uv run python run_all_examples.py --skip-llm
+
 # Run all examples with verbose output
 check-examples-verbose:
-	@echo "Running all examples (verbose)..."
+	@echo "Running all examples (verbose, skipping LLM examples)..."
+	@uv run python run_all_examples.py --verbose --skip-llm
+
+# Run ALL examples including LLM (requires Ollama)
+check-examples-llm:
+	@echo "Running ALL examples including LLM (requires Ollama)..."
 	@uv run python run_all_examples.py --verbose
 
 # Pre-commit: format code, fix lint issues, and run the git pre-commit hook

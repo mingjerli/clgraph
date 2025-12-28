@@ -21,6 +21,7 @@ from typing import List, Optional, Set, Tuple
 
 # Default preamble that sets up common imports and a sample pipeline
 DEFAULT_PREAMBLE = '''
+from pathlib import Path
 from clgraph import Pipeline
 
 # Sample pipeline for documentation examples
@@ -52,6 +53,54 @@ _sample_queries = [
 
 pipeline = Pipeline.from_tuples(_sample_queries, dialect="bigquery")
 table_graph = pipeline.table_graph
+'''
+
+# Extended preamble with pre-loaded pipeline and mock LLM for agent/tool examples
+EXTENDED_PREAMBLE = '''
+import sys
+from pathlib import Path
+
+# Add fixtures to path for mock imports
+_fixtures_path = Path(__file__).parent / "fixtures" if "__file__" in dir() else Path("tests/fixtures")
+if not _fixtures_path.exists():
+    _fixtures_path = Path("tests/fixtures")
+sys.path.insert(0, str(_fixtures_path))
+
+from clgraph import Pipeline
+from clgraph.agent import LineageAgent
+from clgraph.tools import (
+    TraceBackwardTool,
+    TraceForwardTool,
+    ListTablesTool,
+    GetTableSchemaTool,
+    SearchColumnsTool,
+    FindPIIColumnsTool,
+    GenerateSQLTool,
+)
+
+# Load pre-built pipeline from fixture (realistic multi-layer pipeline)
+_pipeline_json_path = _fixtures_path / "sql_files_pipeline.json"
+if _pipeline_json_path.exists():
+    pipeline = Pipeline.from_json_file(str(_pipeline_json_path))
+else:
+    # Fallback to simple pipeline if fixture not found
+    _sample_queries = [
+        ("staging.orders", """
+            CREATE TABLE staging.orders AS
+            SELECT order_id, customer_email, amount FROM raw.orders
+        """),
+        ("analytics.revenue", """
+            CREATE TABLE analytics.revenue AS
+            SELECT customer_email, SUM(amount) as total FROM staging.orders GROUP BY 1
+        """),
+    ]
+    pipeline = Pipeline.from_tuples(_sample_queries, dialect="bigquery")
+
+table_graph = pipeline.table_graph
+
+# Mock LLM for testing (provides predictable responses)
+from mock_llm import MockLLM
+llm = MockLLM(model="mock-model", temperature=0.3)
 '''
 
 

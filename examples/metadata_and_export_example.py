@@ -21,8 +21,7 @@ from clgraph import (
     CSVExporter,
     GraphVizExporter,
     JSONExporter,
-    MultiQueryParser,
-    PipelineLineageBuilder,
+    Pipeline,
 )
 
 
@@ -40,48 +39,54 @@ def main():
 
     sql_queries = [
         # Stage 1: Raw data ingestion
-        """
-        CREATE OR REPLACE TABLE raw.user_events AS
-        SELECT
-            user_id,
-            event_type,
-            event_timestamp,
-            user_email,
-            ip_address,
-            session_id
-        FROM source_system.events
-        WHERE event_timestamp >= '2024-01-01'
-        """,
+        (
+            "raw_events",
+            """
+            CREATE OR REPLACE TABLE raw.user_events AS
+            SELECT
+                user_id,
+                event_type,
+                event_timestamp,
+                user_email,
+                ip_address,
+                session_id
+            FROM source_system.events
+            WHERE event_timestamp >= '2024-01-01'
+            """,
+        ),
         # Stage 2: Daily aggregation
-        """
-        CREATE OR REPLACE TABLE staging.daily_metrics AS
-        SELECT
-            user_id,
-            DATE(event_timestamp) as activity_date,
-            COUNT(*) as event_count,
-            COUNT(DISTINCT session_id) as session_count
-        FROM raw.user_events
-        GROUP BY user_id, DATE(event_timestamp)
-        """,
+        (
+            "daily_metrics",
+            """
+            CREATE OR REPLACE TABLE staging.daily_metrics AS
+            SELECT
+                user_id,
+                DATE(event_timestamp) as activity_date,
+                COUNT(*) as event_count,
+                COUNT(DISTINCT session_id) as session_count
+            FROM raw.user_events
+            GROUP BY user_id, DATE(event_timestamp)
+            """,
+        ),
         # Stage 3: User summary
-        """
-        CREATE OR REPLACE TABLE analytics.user_summary AS
-        SELECT
-            dm.user_id,
-            dm.activity_date,
-            dm.event_count,
-            dm.session_count,
-            ue.user_email
-        FROM staging.daily_metrics dm
-        JOIN raw.user_events ue ON dm.user_id = ue.user_id
-        """,
+        (
+            "user_summary",
+            """
+            CREATE OR REPLACE TABLE analytics.user_summary AS
+            SELECT
+                dm.user_id,
+                dm.activity_date,
+                dm.event_count,
+                dm.session_count,
+                ue.user_email
+            FROM staging.daily_metrics dm
+            JOIN raw.user_events ue ON dm.user_id = ue.user_id
+            """,
+        ),
     ]
 
-    parser = MultiQueryParser()
-    table_graph = parser.parse_queries(sql_queries)
-
-    builder = PipelineLineageBuilder()
-    lineage_graph = builder.build(table_graph)
+    pipeline = Pipeline(sql_queries)
+    lineage_graph = pipeline.column_graph
 
     print(
         f"✅ Pipeline built: {len(lineage_graph.columns)} columns, {len(lineage_graph.edges)} edges"
@@ -148,13 +153,13 @@ def main():
     print("Step 3: Propagating metadata through lineage...")
     print("-" * 80)
 
-    lineage_graph.propagate_all_metadata()
+    pipeline.propagate_all_metadata()
 
     print("✅ Metadata propagated")
     print()
 
     # Show PII columns
-    pii_columns = lineage_graph.get_pii_columns()
+    pii_columns = pipeline.get_pii_columns()
     print(f"⚠️  PII Columns detected: {len(pii_columns)}")
     for col in sorted(pii_columns, key=lambda c: c.full_name):
         print(f"   • {col.full_name}")
@@ -170,24 +175,24 @@ def main():
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir)
 
-        # Export to JSON
+        # Export to JSON (use pipeline for full round-trip support)
         json_file = tmp_path / "lineage.json"
-        JSONExporter.export_to_file(lineage_graph, str(json_file), include_metadata=True)
+        JSONExporter.export_to_file(pipeline, str(json_file), include_metadata=True)
         print(f"✅ JSON exported: {json_file} ({json_file.stat().st_size} bytes)")
 
         # Export columns to CSV
         columns_csv = tmp_path / "columns.csv"
-        CSVExporter.export_columns_to_file(lineage_graph, str(columns_csv))
+        CSVExporter.export_columns_to_file(pipeline, str(columns_csv))
         print(f"✅ Columns CSV exported: {columns_csv} ({columns_csv.stat().st_size} bytes)")
 
         # Export tables to CSV
         tables_csv = tmp_path / "tables.csv"
-        CSVExporter.export_tables_to_file(lineage_graph, str(tables_csv))
+        CSVExporter.export_tables_to_file(pipeline, str(tables_csv))
         print(f"✅ Tables CSV exported: {tables_csv} ({tables_csv.stat().st_size} bytes)")
 
         # Export to GraphViz DOT
         dot_file = tmp_path / "lineage.dot"
-        GraphVizExporter.export_to_file(lineage_graph, str(dot_file), layout="LR", max_columns=20)
+        GraphVizExporter.export_to_file(pipeline, str(dot_file), layout="LR", max_columns=20)
         print(f"✅ GraphViz DOT exported: {dot_file} ({dot_file.stat().st_size} bytes)")
         print()
 
@@ -217,7 +222,9 @@ def main():
     # Create a modified version of the pipeline
     modified_queries = sql_queries.copy()
     # Add a new column to the analytics table
-    modified_queries[2] = """
+    modified_queries[2] = (
+        "user_summary",
+        """
         CREATE OR REPLACE TABLE analytics.user_summary AS
         SELECT
             dm.user_id,
@@ -228,14 +235,14 @@ def main():
             CURRENT_TIMESTAMP() as last_updated  -- NEW COLUMN
         FROM staging.daily_metrics dm
         JOIN raw.user_events ue ON dm.user_id = ue.user_id
-    """
+        """,
+    )
 
-    # Build new graph
-    new_table_graph = parser.parse_queries(modified_queries)
-    new_lineage_graph = builder.build(new_table_graph)
+    # Build new pipeline
+    new_pipeline = Pipeline(modified_queries)
 
-    # Compare
-    diff = new_lineage_graph.diff(lineage_graph)
+    # Compare pipelines
+    diff = new_pipeline.diff(pipeline)
 
     print(diff.summary())
     print()
@@ -251,7 +258,7 @@ def main():
     print(f"   • Total columns: {len(lineage_graph.columns)}")
     print(f"   • Total edges: {len(lineage_graph.edges)}")
     print(f"   • PII columns: {len(pii_columns)}")
-    print(f"   • Tables: {len(lineage_graph.table_graph.tables)}")
+    print(f"   • Tables: {len(pipeline.table_graph.tables)}")
     print()
     print("✅ Exports created:")
     print("   • JSON (machine-readable)")
