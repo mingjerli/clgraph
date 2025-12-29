@@ -1,7 +1,7 @@
 """
 Tests for export functionality.
 
-Tests JSON, CSV, and GraphViz exporters.
+Tests JSON and CSV exporters.
 """
 
 import json
@@ -12,8 +12,8 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from clgraph.export import CSVExporter, GraphVizExporter, JSONExporter
-from clgraph.models import ColumnNode, DescriptionSource
+from clgraph.export import CSVExporter, JSONExporter
+from clgraph.models import DescriptionSource
 from clgraph.pipeline import Pipeline
 
 
@@ -179,76 +179,6 @@ def test_csv_tables_export():
         # Check header
         assert "table_name" in lines[0]
         assert "is_source" in lines[0]
-
-
-def test_graphviz_export():
-    """Test GraphViz DOT export"""
-    graph = create_test_graph()
-
-    dot_content = GraphVizExporter.export(graph, layout="LR")
-
-    # Check basic structure
-    assert "digraph lineage {" in dot_content
-    assert "rankdir=LR" in dot_content
-
-    # Check nodes
-    assert "raw_orders_order_id" in dot_content
-    assert "staging_orders_order_id" in dot_content
-
-    # Check edge
-    assert "->" in dot_content
-
-
-def test_graphviz_export_with_descriptions():
-    """Test GraphViz export includes descriptions in labels"""
-    graph = create_test_graph()
-
-    dot_content = GraphVizExporter.export(graph)
-
-    # Check descriptions in labels
-    assert "Order ID" in dot_content
-    assert "Customer email address" in dot_content
-
-
-def test_graphviz_export_to_file():
-    """Test GraphViz export to file"""
-    graph = create_test_graph()
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        file_path = Path(tmpdir) / "lineage.dot"
-        GraphVizExporter.export_to_file(graph, str(file_path), layout="TB")
-
-        assert file_path.exists()
-
-        # Read and verify
-        with open(file_path) as f:
-            content = f.read()
-
-        assert "digraph lineage" in content
-        assert "rankdir=TB" in content
-
-
-def test_graphviz_max_columns():
-    """Test GraphViz export with max_columns limit"""
-    graph = create_test_graph()
-
-    # Add more columns
-    for i in range(10):
-        col = ColumnNode(
-            column_name=f"col_{i}",
-            table_name="raw.orders",
-            query_id=None,
-            node_type="source",
-            full_name=f"raw.orders.col_{i}",
-        )
-        graph.add_column(col)
-
-    # Export with max_columns=3
-    dot_content = GraphVizExporter.export(graph, max_columns=3)
-
-    # Should only include 3 columns
-    node_count = dot_content.count('[label="')
-    assert node_count == 3
 
 
 def test_json_export_includes_queries():
@@ -453,9 +383,5 @@ if __name__ == "__main__":
     test_json_from_json_file_not_found()
     test_csv_columns_export()
     test_csv_tables_export()
-    test_graphviz_export()
-    test_graphviz_export_with_descriptions()
-    test_graphviz_export_to_file()
-    test_graphviz_max_columns()
 
     print("✅ All export tests passed!")

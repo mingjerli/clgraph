@@ -10,7 +10,7 @@ Supports exporting to various formats:
 import csv
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict
 
 if TYPE_CHECKING:
     from .pipeline import Pipeline
@@ -269,120 +269,7 @@ class CSVExporter:
                 )
 
 
-class GraphVizExporter:
-    """Export lineage graph to GraphViz DOT format for visualization"""
-
-    @staticmethod
-    def export(
-        graph: "Pipeline",
-        layout: str = "TB",  # Top to bottom
-        show_source_only: bool = False,
-        max_columns: Optional[int] = None,
-    ) -> str:
-        """
-        Export pipeline lineage graph to GraphViz DOT format.
-
-        Args:
-            graph: The pipeline lineage graph to export
-            layout: Graph layout direction ("TB", "LR", "BT", "RL")
-            show_source_only: Only show source->output paths (hide intermediate)
-            max_columns: Maximum number of columns to include (for large graphs)
-
-        Returns:
-            DOT format string
-        """
-        lines = [
-            "digraph lineage {",
-            f"  rankdir={layout};",
-            "  node [shape=box, style=rounded];",
-            "",
-        ]
-
-        # Filter columns if needed
-        columns = list(graph.columns.values())
-        if max_columns and len(columns) > max_columns:
-            # Take first N columns by name
-            columns = sorted(columns, key=lambda c: c.full_name)[:max_columns]
-
-        column_set = {c.full_name for c in columns}
-
-        # Add nodes (columns)
-        for col in columns:
-            # Style based on node type
-            if col.node_type == "source":
-                style = 'fillcolor=lightblue, style="filled,rounded"'
-            elif col.node_type == "output":
-                style = 'fillcolor=lightgreen, style="filled,rounded"'
-            else:
-                style = 'fillcolor=lightyellow, style="filled,rounded"'
-
-            # Label with description if available
-            label = col.full_name
-            if col.description:
-                # Truncate long descriptions
-                desc = (
-                    col.description[:50] + "..." if len(col.description) > 50 else col.description
-                )
-                label = f"{col.full_name}\\n{desc}"
-
-            node_id = col.full_name.replace(".", "_").replace("-", "_")
-            lines.append(f'  "{node_id}" [label="{label}", {style}];')
-
-        lines.append("")
-
-        # Add edges
-        for edge in graph.edges:
-            # Skip if columns not in filtered set
-            if (
-                edge.from_node.full_name not in column_set
-                or edge.to_node.full_name not in column_set
-            ):
-                continue
-
-            # Skip intermediate edges if requested
-            if show_source_only:
-                if edge.from_node.node_type not in ["source"] and edge.to_node.node_type not in [
-                    "output"
-                ]:
-                    continue
-
-            from_id = edge.from_node.full_name.replace(".", "_").replace("-", "_")
-            to_id = edge.to_node.full_name.replace(".", "_").replace("-", "_")
-
-            # Style based on edge type
-            if edge.edge_type == "cross_query":
-                style = "color=red, style=dashed"
-            elif edge.edge_type == "transform":
-                style = "color=blue"
-            else:
-                style = "color=gray"
-
-            lines.append(f'  "{from_id}" -> "{to_id}" [{style}];')
-
-        lines.append("}")
-        return "\n".join(lines)
-
-    @staticmethod
-    def export_to_file(graph: "Pipeline", file_path: str, **kwargs):
-        """
-        Export pipeline lineage graph to DOT file.
-
-        Args:
-            graph: The pipeline lineage graph to export
-            file_path: Path to output DOT file
-            **kwargs: Additional arguments passed to export()
-        """
-        dot_content = GraphVizExporter.export(graph, **kwargs)
-
-        path = Path(file_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-
-        with open(path, "w") as f:
-            f.write(dot_content)
-
-
 __all__ = [
     "JSONExporter",
     "CSVExporter",
-    "GraphVizExporter",
 ]
