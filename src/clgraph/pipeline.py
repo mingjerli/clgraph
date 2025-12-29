@@ -1177,6 +1177,8 @@ class Pipeline:
                     # Apply metadata fields
                     if col_data.get("description"):
                         col.description = col_data["description"]
+                    if col_data.get("description_source"):
+                        col.description_source = DescriptionSource(col_data["description_source"])
                     if col_data.get("owner"):
                         col.owner = col_data["owner"]
                     if col_data.get("pii"):

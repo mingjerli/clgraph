@@ -32,14 +32,21 @@ dependencies = [
     "sqlglot>=28.0.0",
     "graphviz>=0.20.0",
     "jinja2>=3.0.0",
-    # Phase 3: LLM integration
-    "langchain>=1.0.5",
-    "langchain-core>=1.0.4",
-    "langchain-ollama>=1.0.0",
     "cloudpickle>=3.1.2",
 ]
 
 [project.optional-dependencies]
+# LLM integration for description generation and SQL tools
+llm = [
+    "langchain>=1.0.0",
+    "langchain-core>=1.0.0",
+    "langchain-ollama>=1.0.0",  # For local Ollama models
+    "langchain-openai>=0.3.0",  # For OpenAI models
+]
+# MCP server for Claude Desktop integration
+mcp = [
+    "mcp>=1.0.0",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
@@ -47,6 +54,10 @@ dev = [
     "ty>=0.0.1a0",
     "jinja2>=3.0.0",
     "duckdb>=0.9.0",
+    # Include LLM deps for testing
+    "langchain>=1.0.0",
+    "langchain-core>=1.0.0",
+    "langchain-ollama>=1.0.0",
 ]
 build = [
     "build>=1.0.0",
@@ -62,6 +73,10 @@ templates = [
 ]
 airflow = [
     "apache-airflow>=2.7.0,<3.0.0",  # Pin to 2.x (3.x has breaking changes)
+]
+# All optional dependencies
+all = [
+    "clgraph[llm,mcp,airflow]",
 ]
 
 [project.urls]

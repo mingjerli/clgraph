@@ -44,13 +44,19 @@ class ExampleRunner:
         self.examples_dir = Path(__file__).parent / "examples"
         self.results: List[Tuple[str, bool, str]] = []
 
+    # Examples that require LLM (Ollama or API keys)
+    LLM_EXAMPLES = {
+        "llm_description_generation.py",
+        "enterprise_demo_with_ollama.py",
+    }
+
     def get_examples(self) -> List[Path]:
         """Get all example Python files to run."""
         examples = sorted(self.examples_dir.glob("*.py"))
 
-        # Filter out examples that require LLM API keys if requested
+        # Filter out examples that require LLM if requested
         if self.skip_llm:
-            examples = [ex for ex in examples if "llm_description_generation" not in ex.name]
+            examples = [ex for ex in examples if ex.name not in self.LLM_EXAMPLES]
 
         return examples
 
@@ -61,12 +67,16 @@ class ExampleRunner:
         Returns:
             Tuple of (success, output)
         """
+        # LLM examples need longer timeout (5 minutes) due to model inference
+        is_llm_example = example_path.name in self.LLM_EXAMPLES
+        timeout = 300 if is_llm_example else 30
+
         try:
             result = subprocess.run(
                 ["python", str(example_path)],
                 capture_output=True,
                 text=True,
-                timeout=30,  # 30 second timeout per example
+                timeout=timeout,
                 cwd=self.examples_dir.parent,  # Run from clgraph/ directory
             )
 
@@ -76,7 +86,7 @@ class ExampleRunner:
             return success, output
 
         except subprocess.TimeoutExpired:
-            return False, "ERROR: Timeout after 30 seconds"
+            return False, f"ERROR: Timeout after {timeout} seconds"
         except Exception as e:
             return False, f"ERROR: {str(e)}"
 

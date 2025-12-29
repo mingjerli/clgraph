@@ -1,21 +1,31 @@
 #!/bin/bash
-# Install git hooks for the clpipe repository
+# Install git hooks for the clgraph repository
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-echo "📦 Installing git hooks for clpipe repository..."
+echo "📦 Installing git hooks for clgraph repository..."
 
 # Check if we're in the right directory
-if [ ! -f "$REPO_ROOT/pyproject.toml" ] || [ ! -d "$REPO_ROOT/src/clpipe" ]; then
-    echo "❌ Error: Not in clpipe repository root"
+if [ ! -f "$REPO_ROOT/pyproject.toml" ] || [ ! -d "$REPO_ROOT/src/clgraph" ]; then
+    echo "❌ Error: Not in clgraph repository root"
     exit 1
 fi
 
-# Create pre-commit hook
-HOOK_PATH="$REPO_ROOT/.git/hooks/pre-commit"
+# Find the git hooks directory (handle submodule case)
+if [ -d "$REPO_ROOT/.git/hooks" ]; then
+    HOOK_PATH="$REPO_ROOT/.git/hooks/pre-commit"
+elif [ -f "$REPO_ROOT/.git" ]; then
+    # Submodule case: .git is a file pointing to parent's git dir
+    PARENT_GIT_DIR="$(cd "$REPO_ROOT" && git rev-parse --git-dir)"
+    HOOK_PATH="$PARENT_GIT_DIR/hooks/pre-commit"
+else
+    echo "⚠️  No .git directory found - skipping hook installation"
+    echo "   (This is expected when running in a submodule context)"
+    exit 0
+fi
 
 cat > "$HOOK_PATH" << 'EOF'
 #!/bin/bash
