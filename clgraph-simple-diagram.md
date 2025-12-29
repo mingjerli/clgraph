@@ -45,7 +45,7 @@
 │  🤖 LLM Apps         💾 Export           🔄 Serialization      │
 │  • generate_        • to_json()         • from_json()         │
 │    descriptions()   • CSVExporter       • from_json_file()    │
-│                     • GraphVizExporter                        │
+│                     • visualize_*()                           │
 │                                                                │
 └────────────────────────────────────────────────────────────────┘
 ```
@@ -112,7 +112,7 @@ Multiple ways to load SQL:
 - **Trace lineage**: Backward and forward analysis
 - **Manage metadata**: PII, ownership, tags with auto-propagation
 - **AI-powered docs**: Auto-generate column descriptions
-- **Export**: JSON, CSV, GraphViz
+- **Export**: JSON, CSV, GraphViz (via visualize_*() functions)
 
 ## Use Cases
 

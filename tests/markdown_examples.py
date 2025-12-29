@@ -171,7 +171,7 @@ def generate_clgraph_api() -> dict:
     try:
         from clgraph import Pipeline
         from clgraph.column import PipelineLineageGraph
-        from clgraph.export import CSVExporter, GraphVizExporter, JSONExporter
+        from clgraph.export import CSVExporter, JSONExporter
         from clgraph.models import ColumnLineageGraph
         from clgraph.table import TableDependencyGraph
 
@@ -182,7 +182,6 @@ def generate_clgraph_api() -> dict:
             "ColumnLineageGraph": _get_public_members(ColumnLineageGraph),
             "CSVExporter": _get_public_members(CSVExporter),
             "JSONExporter": _get_public_members(JSONExporter),
-            "GraphVizExporter": _get_public_members(GraphVizExporter),
         }
     except ImportError:
         # Fallback to static definition if imports fail
@@ -255,10 +254,6 @@ _STATIC_CLGRAPH_API = {
     },
     "JSONExporter": {
         "export_to_file",
-    },
-    "GraphVizExporter": {
-        "export_to_file",
-        "to_dot",
     },
 }
 
