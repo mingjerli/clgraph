@@ -274,7 +274,7 @@ PII columns (1):
 ### Metadata Management and Export
 
 ```python
-from clgraph import Pipeline, JSONExporter, CSVExporter, GraphVizExporter
+from clgraph import Pipeline, JSONExporter, CSVExporter, visualize_pipeline_lineage
 
 # Build pipeline
 queries = [
@@ -320,7 +320,11 @@ print("-" * 60)
 print("Exporting to multiple formats...")
 JSONExporter.export_to_file(pipeline, "lineage.json")
 CSVExporter.export_columns_to_file(pipeline, "columns.csv")
-GraphVizExporter.export_to_file(pipeline, "lineage.dot")
+# Visualize lineage graph (returns graphviz.Digraph)
+dot = visualize_pipeline_lineage(pipeline.column_graph)
+# Save DOT source to file (can be rendered with `dot -Tpng lineage.dot -o lineage.png`)
+with open("lineage.dot", "w") as f:
+    f.write(dot.source)
 print("✓ Exported to lineage.json, columns.csv, lineage.dot")
 ```
 

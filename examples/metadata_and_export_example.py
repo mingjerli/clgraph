@@ -6,7 +6,7 @@ This example demonstrates:
 2. Setting source metadata (descriptions, PII flags, ownership)
 3. Propagating metadata through lineage
 4. Generating descriptions with LLM (optional)
-5. Exporting to multiple formats (JSON, CSV, GraphViz)
+5. Exporting to multiple formats (JSON, CSV, DOT visualization)
 6. Using diff to track changes
 """
 
@@ -19,9 +19,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from clgraph import (
     CSVExporter,
-    GraphVizExporter,
     JSONExporter,
     Pipeline,
+    visualize_pipeline_lineage,
 )
 
 
@@ -190,9 +190,11 @@ def main():
         CSVExporter.export_tables_to_file(pipeline, str(tables_csv))
         print(f"✅ Tables CSV exported: {tables_csv} ({tables_csv.stat().st_size} bytes)")
 
-        # Export to GraphViz DOT
+        # Export to GraphViz DOT using visualization function
         dot_file = tmp_path / "lineage.dot"
-        GraphVizExporter.export_to_file(pipeline, str(dot_file), layout="LR", max_columns=20)
+        dot = visualize_pipeline_lineage(pipeline.column_graph)
+        with open(dot_file, "w") as f:
+            f.write(dot.source)
         print(f"✅ GraphViz DOT exported: {dot_file} ({dot_file.stat().st_size} bytes)")
         print()
 

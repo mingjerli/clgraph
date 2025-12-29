@@ -19,7 +19,7 @@ from .agent import AgentResult, LineageAgent, QuestionType
 from .diff import ColumnDiff, PipelineDiff
 
 # Import export functionality
-from .export import CSVExporter, GraphVizExporter, JSONExporter
+from .export import CSVExporter, JSONExporter
 
 # Import validation models
 from .models import IssueCategory, IssueSeverity, ValidationIssue
@@ -84,8 +84,12 @@ from .visualizations import (
     visualize_column_lineage,
     visualize_column_lineage_simple,
     visualize_column_path,
+    visualize_lineage_path,
+    visualize_pipeline_lineage,
     visualize_query_structure_from_lineage,
     visualize_query_units,
+    visualize_table_dependencies,
+    visualize_table_dependencies_with_levels,
 )
 
 __all__ = [
@@ -125,13 +129,16 @@ __all__ = [
     # Export
     "JSONExporter",
     "CSVExporter",
-    "GraphVizExporter",
     # Visualization functions
     "visualize_query_units",
     "visualize_query_structure_from_lineage",
     "visualize_column_lineage",
     "visualize_column_lineage_simple",
     "visualize_column_path",
+    "visualize_lineage_path",
+    "visualize_pipeline_lineage",
+    "visualize_table_dependencies",
+    "visualize_table_dependencies_with_levels",
     # Lineage Intelligence - Agent
     "LineageAgent",
     "AgentResult",
