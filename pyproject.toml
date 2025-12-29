@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "clgraph"
-version = "0.0.2"
+version = "0.0.3"
 description = "Column lineage and pipeline dependency analysis for SQL"
 readme = "README.md"
 requires-python = ">=3.10"
