@@ -400,6 +400,9 @@ class PipelineLineageBuilder:
                     transformation=edge.transformation,
                     context=edge.context,
                     query_id=query.query_id,
+                    # Preserve JSON extraction metadata
+                    json_path=getattr(edge, "json_path", None),
+                    json_function=getattr(edge, "json_function", None),
                 )
                 pipeline.add_edge(pipeline_edge)
 

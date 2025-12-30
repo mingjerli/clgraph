@@ -108,15 +108,21 @@ class JSONExporter:
 
         # Export edges
         for edge in graph.edges:
-            result["edges"].append(
-                {
-                    "from_column": edge.from_node.full_name,
-                    "to_column": edge.to_node.full_name,
-                    "edge_type": edge.edge_type,
-                    "transformation": edge.transformation,
-                    "query_id": edge.query_id,
-                }
-            )
+            edge_dict = {
+                "from_column": edge.from_node.full_name,
+                "to_column": edge.to_node.full_name,
+                "edge_type": edge.edge_type,
+                "transformation": edge.transformation,
+                "query_id": edge.query_id,
+            }
+
+            # Include JSON extraction metadata if present
+            if getattr(edge, "json_path", None):
+                edge_dict["json_path"] = edge.json_path
+            if getattr(edge, "json_function", None):
+                edge_dict["json_function"] = edge.json_function
+
+            result["edges"].append(edge_dict)
 
         # Export tables
         for table in graph.table_graph.tables.values():

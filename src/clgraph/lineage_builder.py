@@ -29,12 +29,225 @@ from .query_parser import RecursiveQueryParser
 # ============================================================================
 
 
+class SourceColumnRef(TypedDict, total=False):
+    """Type for source column reference with optional JSON metadata."""
+
+    table_ref: Optional[str]
+    column_name: str
+    json_path: Optional[str]
+    json_function: Optional[str]
+
+
 class BackwardLineageResult(TypedDict):
     """Type for backward lineage result."""
 
     required_inputs: Dict[str, List[str]]
     required_ctes: List[str]
     paths: List[Dict[str, Any]]
+
+
+# ============================================================================
+# JSON Function Detection Constants
+# ============================================================================
+
+# JSON extraction function names by dialect (case-insensitive matching)
+JSON_FUNCTION_NAMES: Set[str] = {
+    # BigQuery
+    "JSON_EXTRACT",
+    "JSON_EXTRACT_SCALAR",
+    "JSON_VALUE",
+    "JSON_QUERY",
+    "JSON_EXTRACT_STRING_ARRAY",
+    "JSON_EXTRACT_ARRAY",
+    # Snowflake
+    "GET_PATH",
+    "GET",
+    "JSON_EXTRACT_PATH_TEXT",
+    "TRY_PARSE_JSON",
+    "PARSE_JSON",
+    # PostgreSQL
+    "JSONB_EXTRACT_PATH",
+    "JSONB_EXTRACT_PATH_TEXT",
+    "JSON_EXTRACT_PATH",
+    # MySQL
+    "JSON_UNQUOTE",
+    # Spark/Databricks
+    "GET_JSON_OBJECT",
+    "JSON_TUPLE",
+    # DuckDB
+    "JSON_EXTRACT_STRING",
+}
+
+# Map of sqlglot expression types to normalized function names
+JSON_EXPRESSION_TYPES: Dict[type, str] = {
+    exp.JSONExtract: "JSON_EXTRACT",  # -> operator
+    exp.JSONExtractScalar: "JSON_EXTRACT_SCALAR",  # ->> operator
+    exp.JSONBExtract: "JSONB_EXTRACT",  # PostgreSQL jsonb ->
+    exp.JSONBExtractScalar: "JSONB_EXTRACT_SCALAR",  # PostgreSQL jsonb ->>
+}
+
+
+def _is_json_extract_function(node: exp.Expression) -> bool:
+    """Check if an expression is a JSON extraction function."""
+    # Check for known JSON expression types (operators like -> and ->>)
+    if type(node) in JSON_EXPRESSION_TYPES:
+        return True
+
+    # Check for anonymous function calls with JSON function names
+    if isinstance(node, exp.Anonymous):
+        func_name = node.name.upper() if node.name else ""
+        return func_name in JSON_FUNCTION_NAMES
+
+    # Check for named function calls
+    if isinstance(node, exp.Func):
+        func_name = node.sql_name().upper() if hasattr(node, "sql_name") else ""
+        return func_name in JSON_FUNCTION_NAMES
+
+    return False
+
+
+def _get_json_function_name(node: exp.Expression) -> str:
+    """Get the normalized JSON function name from an expression."""
+    # Check for known expression types
+    if type(node) in JSON_EXPRESSION_TYPES:
+        return JSON_EXPRESSION_TYPES[type(node)]
+
+    # Check for anonymous function calls
+    if isinstance(node, exp.Anonymous):
+        return node.name.upper() if node.name else "JSON_EXTRACT"
+
+    # Check for named function calls
+    if isinstance(node, exp.Func):
+        return node.sql_name().upper() if hasattr(node, "sql_name") else "JSON_EXTRACT"
+
+    return "JSON_EXTRACT"
+
+
+def _extract_json_path(func_node: exp.Expression) -> Optional[str]:
+    """
+    Extract and normalize JSON path from a JSON function call.
+
+    Handles various syntaxes:
+    - JSON_EXTRACT(col, '$.path') -> '$.path'
+    - col->'path' -> '$.path'
+    - col->>'path' -> '$.path'
+    - GET_PATH(col, 'path.nested') -> '$.path.nested'
+
+    Returns normalized JSONPath format ($.field.nested) or None if not extractable.
+    """
+    path_value: Optional[str] = None
+
+    # Handle JSON operators (-> and ->>)
+    if isinstance(
+        func_node,
+        (exp.JSONExtract, exp.JSONExtractScalar, exp.JSONBExtract, exp.JSONBExtractScalar),
+    ):
+        # The path is the second argument
+        if hasattr(func_node, "expression") and func_node.expression:
+            path_expr = func_node.expression
+            if isinstance(path_expr, exp.Literal):
+                path_value = path_expr.this
+            else:
+                path_value = path_expr.sql()
+
+    # Handle function calls like JSON_EXTRACT(col, '$.path')
+    elif isinstance(func_node, (exp.Anonymous, exp.Func)):
+        # Get the second argument (path)
+        expressions = getattr(func_node, "expressions", [])
+        if len(expressions) >= 2:
+            path_arg = expressions[1]
+            if isinstance(path_arg, exp.Literal):
+                path_value = path_arg.this
+            else:
+                path_value = path_arg.sql()
+
+    if path_value:
+        return _normalize_json_path(path_value)
+
+    return None
+
+
+def _normalize_json_path(path: str) -> str:
+    """
+    Normalize JSON path to consistent format.
+
+    Conversions:
+    - '$.address.city' -> '$.address.city' (unchanged)
+    - '$["address"]["city"]' -> '$.address.city'
+    - 'address.city' (Snowflake) -> '$.address.city'
+    - '{address,city}' (PostgreSQL) -> '$.address.city'
+
+    Args:
+        path: Raw JSON path string
+
+    Returns:
+        Normalized path in $.field.nested format
+    """
+    import re
+
+    # Remove surrounding quotes if present
+    path = path.strip("'\"")
+
+    # PostgreSQL array format: {address,city} -> $.address.city
+    if path.startswith("{") and path.endswith("}"):
+        parts = path[1:-1].split(",")
+        return "$." + ".".join(part.strip() for part in parts)
+
+    # Handle paths starting with $ (including bracket notation like $["field"])
+    if path.startswith("$"):
+        # Convert bracket notation to dot notation
+        # $["address"]["city"] -> $.address.city
+        # $['address']['city'] -> $.address.city
+        path = re.sub(r'\["([^"]+)"\]', r".\1", path)
+        path = re.sub(r"\['([^']+)'\]", r".\1", path)
+        path = re.sub(r"\[(\d+)\]", r".\1", path)  # Array indices
+        # Ensure path starts with $. not $..
+        if path.startswith("$") and not path.startswith("$."):
+            path = "$." + path[1:].lstrip(".")
+        return path
+
+    # Snowflake format without $: address.city -> $.address.city
+    # Handle bracket notation without $
+    path = re.sub(r'\["([^"]+)"\]', r".\1", path)
+    path = re.sub(r"\['([^']+)'\]", r".\1", path)
+    path = re.sub(r"\[(\d+)\]", r".\1", path)  # Array indices
+    return "$." + path.lstrip(".")
+
+
+def _find_json_function_ancestor(
+    column: exp.Column, root: exp.Expression
+) -> Optional[exp.Expression]:
+    """
+    Find if a column is an argument to a JSON extraction function.
+
+    Walks up the AST from the column to find the nearest JSON function.
+
+    Args:
+        column: The column expression to check
+        root: The root expression to search within
+
+    Returns:
+        The JSON function expression if found, None otherwise
+    """
+    # Build parent map for efficient ancestor lookup
+    parent_map: Dict[int, exp.Expression] = {}
+
+    def build_parent_map(node: exp.Expression, parent: Optional[exp.Expression] = None):
+        if parent is not None:
+            parent_map[id(node)] = parent
+        for child in node.iter_expressions():
+            build_parent_map(child, node)
+
+    build_parent_map(root)
+
+    # Walk up from column to find JSON function
+    current: Optional[exp.Expression] = column
+    while current is not None:
+        if _is_json_extract_function(current):
+            return current
+        current = parent_map.get(id(current))
+
+    return None
 
 
 # ============================================================================
@@ -649,7 +862,15 @@ class RecursiveLineageBuilder:
                 # Don't process normal source_refs for this column
                 return
 
-            for table_ref, col_name in source_refs:
+            for source_ref in source_refs:
+                # Unpack source reference (now includes JSON metadata)
+                # Handle both old 2-tuple and new 4-tuple formats for backward compatibility
+                if len(source_ref) == 4:
+                    table_ref, col_name, json_path, json_function = source_ref
+                else:
+                    table_ref, col_name = source_ref[:2]
+                    json_path, json_function = None, None
+
                 # Resolve table_ref to either a query unit or base table
                 # If table_ref is None, try to infer the default source
                 effective_table_ref = table_ref
@@ -677,6 +898,8 @@ class RecursiveLineageBuilder:
                             transformation=col_info["type"],
                             context=unit.unit_type.value,
                             expression=col_info["expression"],
+                            json_path=json_path,
+                            json_function=json_function,
                         )
                         self.lineage_graph.add_edge(edge)
 
@@ -697,6 +920,8 @@ class RecursiveLineageBuilder:
                             transformation=col_info["type"],
                             context=unit.unit_type.value,
                             expression=col_info["expression"],
+                            json_path=json_path,
+                            json_function=json_function,
                         )
                         self.lineage_graph.add_edge(edge)
 
@@ -988,15 +1213,43 @@ class RecursiveLineageBuilder:
         else:
             return f"{table_name}.{col_name}"
 
-    def _extract_source_column_refs(self, expr: exp.Expression) -> List[Tuple[Optional[str], str]]:
-        """Extract (table_ref, column_name) pairs from expression"""
-        refs = []
+    def _extract_source_column_refs(
+        self, expr: exp.Expression
+    ) -> List[Tuple[Optional[str], str, Optional[str], Optional[str]]]:
+        """
+        Extract source column references from expression with JSON metadata.
+
+        Args:
+            expr: The SQL expression to analyze
+
+        Returns:
+            List of tuples: (table_ref, column_name, json_path, json_function)
+            - table_ref: Table/alias name or None for unqualified columns
+            - column_name: Column name
+            - json_path: Normalized JSON path (e.g., "$.address.city") or None
+            - json_function: JSON function name (e.g., "JSON_EXTRACT") or None
+        """
+        refs: List[Tuple[Optional[str], str, Optional[str], Optional[str]]] = []
+
         for node in expr.walk():
             if isinstance(node, exp.Column):
-                table_ref = None
+                table_ref: Optional[str] = None
                 if hasattr(node, "table") and node.table:
-                    table_ref = node.table.name if hasattr(node.table, "name") else str(node.table)
-                refs.append((table_ref, node.name))
+                    table_ref = (
+                        str(node.table.name) if hasattr(node.table, "name") else str(node.table)
+                    )
+
+                # Check if this column is inside a JSON function
+                json_path: Optional[str] = None
+                json_function: Optional[str] = None
+
+                json_ancestor = _find_json_function_ancestor(node, expr)
+                if json_ancestor:
+                    json_path = _extract_json_path(json_ancestor)
+                    json_function = _get_json_function_name(json_ancestor)
+
+                refs.append((table_ref, node.name, json_path, json_function))
+
         return refs
 
     def _determine_expression_type(self, expr: exp.Expression) -> str:

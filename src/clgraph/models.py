@@ -365,6 +365,10 @@ class ColumnEdge:
     transformation: Optional[str] = None  # Description of transformation
     expression: Optional[str] = None  # SQL expression
 
+    # ─── JSON Extraction Metadata ───
+    json_path: Optional[str] = None  # Normalized JSON path (e.g., "$.address.city")
+    json_function: Optional[str] = None  # Original function name (e.g., "JSON_EXTRACT")
+
     def __hash__(self):
         return hash((self.from_node.full_name, self.to_node.full_name))
 
