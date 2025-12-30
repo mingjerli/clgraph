@@ -140,6 +140,12 @@ class JSONExporter:
                 edge_dict["is_lateral_correlation"] = True
                 edge_dict["lateral_alias"] = getattr(edge, "lateral_alias", None)
 
+            # Include MERGE operation metadata if present
+            if getattr(edge, "is_merge_operation", False):
+                edge_dict["is_merge_operation"] = True
+                edge_dict["merge_action"] = getattr(edge, "merge_action", None)
+                edge_dict["merge_condition"] = getattr(edge, "merge_condition", None)
+
             result["edges"].append(edge_dict)
 
         # Export tables

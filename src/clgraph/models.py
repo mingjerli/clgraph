@@ -123,6 +123,10 @@ class QueryUnitType(Enum):
     UNPIVOT = "unpivot"  # UNPIVOT operation
     SUBQUERY_PIVOT_SOURCE = "subquery_pivot_source"  # Source query for PIVOT/UNPIVOT
 
+    # MERGE/UPSERT operations
+    MERGE = "merge"  # MERGE INTO statement
+    MERGE_SOURCE = "merge_source"  # Source subquery in MERGE
+
 
 @dataclass
 class QueryUnit:
@@ -399,13 +403,22 @@ class ColumnEdge:
         None  # Alias of the LATERAL subquery (e.g., "t" in "LATERAL (...) t")
     )
 
+    # ─── MERGE Statement Metadata ───
+    is_merge_operation: bool = False  # True if this edge is from a MERGE statement
+    merge_action: Optional[str] = None  # "match", "update", "insert", "delete"
+    merge_condition: Optional[str] = None  # Condition for conditional WHEN clauses
+
     def __hash__(self):
-        return hash((self.from_node.full_name, self.to_node.full_name))
+        return hash((self.from_node.full_name, self.to_node.full_name, self.edge_type))
 
     def __eq__(self, other):
         if not isinstance(other, ColumnEdge):
             return False
-        return self.from_node == other.from_node and self.to_node == other.to_node
+        return (
+            self.from_node == other.from_node
+            and self.to_node == other.to_node
+            and self.edge_type == other.edge_type
+        )
 
     def __repr__(self):
         return f"ColumnEdge({self.from_node.full_name!r} -> {self.to_node.full_name!r})"

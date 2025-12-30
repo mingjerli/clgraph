@@ -413,6 +413,10 @@ class PipelineLineageBuilder:
                     # Preserve LATERAL correlation metadata
                     is_lateral_correlation=getattr(edge, "is_lateral_correlation", False),
                     lateral_alias=getattr(edge, "lateral_alias", None),
+                    # Preserve MERGE operation metadata
+                    is_merge_operation=getattr(edge, "is_merge_operation", False),
+                    merge_action=getattr(edge, "merge_action", None),
+                    merge_condition=getattr(edge, "merge_condition", None),
                 )
                 pipeline.add_edge(pipeline_edge)
 
@@ -699,10 +703,9 @@ class PipelineLineageBuilder:
             if ast.expression and isinstance(ast.expression, exp.Select):
                 return ast.expression.sql()
 
-        # MERGE uses a USING clause which is a SELECT or table
+        # MERGE INTO statement - pass full SQL to lineage builder
         elif isinstance(ast, exp.Merge):
-            # Merge is complex - for now skip lineage
-            return None
+            return query.sql
 
         # Plain SELECT
         elif isinstance(ast, exp.Select):

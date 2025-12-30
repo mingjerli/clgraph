@@ -532,6 +532,8 @@ class RecursiveLineageBuilder:
             return self._extract_pivot_columns(unit)
         elif unit.unit_type == QueryUnitType.UNPIVOT:
             return self._extract_unpivot_columns(unit)
+        elif unit.unit_type == QueryUnitType.MERGE:
+            return self._extract_merge_columns(unit)
 
         select_node = unit.select_node
         output_cols = []
@@ -890,6 +892,127 @@ class RecursiveLineageBuilder:
 
         return output_cols
 
+    def _extract_merge_columns(self, unit: QueryUnit) -> List[Dict]:
+        """
+        Extract output columns from a MERGE operation.
+
+        MERGE operations modify the target table. The output represents:
+        - Match condition columns (join columns)
+        - Updated columns (from WHEN MATCHED THEN UPDATE)
+        - Inserted columns (from WHEN NOT MATCHED THEN INSERT)
+
+        We create separate column infos for each action type to track lineage paths.
+        """
+        output_cols = []
+
+        if not unit.unpivot_config or unit.unpivot_config.get("merge_type") != "merge":
+            return output_cols
+
+        config = unit.unpivot_config
+        target_table = config.get("target_table", "target")
+        target_alias = config.get("target_alias") or target_table
+        source_table = config.get("source_table", "source")
+        source_alias = config.get("source_alias") or source_table
+        match_columns = config.get("match_columns", [])
+        matched_actions = config.get("matched_actions", [])
+        not_matched_actions = config.get("not_matched_actions", [])
+
+        idx = 0
+
+        # 1. Match condition columns (edges for ON clause)
+        for target_col, source_col in match_columns:
+            col_info = {
+                "index": idx,
+                "name": target_col,
+                "is_star": False,
+                "type": "merge_match",
+                "expression": f"{target_alias}.{target_col} = {source_alias}.{source_col}",
+                "ast_node": None,
+                "source_columns": [(source_alias, source_col)],
+                "merge_action": "match",
+            }
+            output_cols.append(col_info)
+            idx += 1
+
+        # 2. WHEN MATCHED -> UPDATE columns
+        for action in matched_actions:
+            if action.get("action_type") == "update":
+                condition = action.get("condition")
+                for target_col, source_expr in action.get("column_mappings", {}).items():
+                    col_info = {
+                        "index": idx,
+                        "name": target_col,
+                        "is_star": False,
+                        "type": "merge_update",
+                        "expression": source_expr,
+                        "ast_node": None,
+                        "source_columns": self._extract_columns_from_expr(
+                            source_expr, source_alias
+                        ),
+                        "merge_action": "update",
+                        "merge_condition": condition,
+                    }
+                    output_cols.append(col_info)
+                    idx += 1
+
+        # 3. WHEN NOT MATCHED -> INSERT columns
+        for action in not_matched_actions:
+            if action.get("action_type") == "insert":
+                condition = action.get("condition")
+                for target_col, source_expr in action.get("column_mappings", {}).items():
+                    col_info = {
+                        "index": idx,
+                        "name": target_col,
+                        "is_star": False,
+                        "type": "merge_insert",
+                        "expression": source_expr,
+                        "ast_node": None,
+                        "source_columns": self._extract_columns_from_expr(
+                            source_expr, source_alias
+                        ),
+                        "merge_action": "insert",
+                        "merge_condition": condition,
+                    }
+                    output_cols.append(col_info)
+                    idx += 1
+
+        return output_cols
+
+    def _extract_columns_from_expr(
+        self, expr_str: str, default_table: str
+    ) -> List[Tuple[str, str]]:
+        """
+        Extract column references from a SQL expression string.
+
+        Args:
+            expr_str: SQL expression like "s.new_value" or "COALESCE(s.a, s.b)"
+            default_table: Default table to use for unqualified columns
+
+        Returns:
+            List of (table, column) tuples
+        """
+        import sqlglot
+        from sqlglot import exp
+
+        result = []
+        try:
+            parsed = sqlglot.parse_one(expr_str, into=exp.Expression)
+            for col in parsed.find_all(exp.Column):
+                table_ref = default_table
+                if hasattr(col, "table") and col.table:
+                    table_ref = (
+                        str(col.table.name) if hasattr(col.table, "name") else str(col.table)
+                    )
+                col_name = col.name
+                result.append((table_ref, col_name))
+        except Exception:
+            # If parsing fails, try simple extraction for "table.column" format
+            if "." in expr_str:
+                parts = expr_str.split(".")
+                if len(parts) == 2 and parts[0].isidentifier() and parts[1].isidentifier():
+                    result.append((parts[0], parts[1]))
+        return result
+
     def _trace_column_dependencies(self, unit: QueryUnit, output_node: ColumnNode, col_info: Dict):
         """
         Recursively trace where an output column's data comes from.
@@ -1045,6 +1168,52 @@ class RecursiveLineageBuilder:
                                 expression=col_info["expression"],
                             )
                             self.lineage_graph.add_edge(edge)
+
+                # Don't process normal source_refs for this column
+                return
+
+            # Special case: MERGE columns
+            # These need edges with merge_action metadata
+            if col_info.get("type") in ("merge_match", "merge_update", "merge_insert"):
+                merge_action = col_info.get("merge_action", col_info.get("type"))
+                merge_condition = col_info.get("merge_condition")
+
+                for source_ref in source_refs:
+                    table_ref, col_name = source_ref[:2]
+
+                    # Try to resolve as a source unit or base table
+                    source_node = None
+                    source_unit = self._resolve_source_unit(unit, table_ref) if table_ref else None
+                    if source_unit:
+                        source_node = self._find_column_in_unit(source_unit, col_name)
+                    if not source_node:
+                        # Try as base table
+                        base_table = (
+                            self._resolve_base_table_name(unit, table_ref) if table_ref else None
+                        )
+                        if base_table:
+                            source_node = self._find_or_create_table_column_node(
+                                base_table, col_name
+                            )
+                        elif table_ref:
+                            # Fallback: use table_ref directly
+                            source_node = self._find_or_create_table_column_node(
+                                table_ref, col_name
+                            )
+
+                    if source_node:
+                        edge = ColumnEdge(
+                            from_node=source_node,
+                            to_node=output_node,
+                            edge_type=col_info["type"],
+                            transformation=col_info["type"],
+                            context=unit.unit_type.value,
+                            expression=col_info["expression"],
+                            is_merge_operation=True,
+                            merge_action=merge_action,
+                            merge_condition=merge_condition,
+                        )
+                        self.lineage_graph.add_edge(edge)
 
                 # Don't process normal source_refs for this column
                 return
