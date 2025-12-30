@@ -26,6 +26,7 @@ from .models import (
     TVFInfo,
     TVFType,
     ValidationIssue,
+    ValuesInfo,
 )
 from .query_parser import RecursiveQueryParser
 
@@ -1683,6 +1684,28 @@ class RecursiveLineageBuilder:
                     )
                     continue
 
+                # Check if this is a VALUES alias (literal table)
+                values_info = None
+                if table_ref and table_ref in unit.values_sources:
+                    values_info = unit.values_sources[table_ref]
+                elif not table_ref:
+                    # Check if unqualified column is a VALUES output column
+                    for _alias, vals in unit.values_sources.items():
+                        if col_name in vals.column_names:
+                            values_info = vals
+                            break
+
+                if values_info:
+                    # This is a reference to a VALUES output - create literal edge
+                    self._create_values_edge(
+                        unit=unit,
+                        output_node=output_node,
+                        col_info=col_info,
+                        values_info=values_info,
+                        col_name=col_name,
+                    )
+                    continue
+
                 source_unit = (
                     self._resolve_source_unit(unit, effective_table_ref)
                     if effective_table_ref
@@ -2102,6 +2125,83 @@ class RecursiveLineageBuilder:
             is_synthetic=True,
             synthetic_source=tvf_info.function_name,
             tvf_parameters=tvf_info.parameters,
+        )
+        self.lineage_graph.add_node(node)
+
+        return node
+
+    # ============================================================================
+    # VALUES (Literal Table) Lineage
+    # ============================================================================
+
+    def _create_values_edge(
+        self,
+        unit: QueryUnit,
+        output_node: ColumnNode,
+        col_info: Dict,
+        values_info: "ValuesInfo",
+        col_name: str,
+    ):
+        """
+        Create an edge from VALUES literal column to output column.
+
+        Args:
+            unit: The current query unit
+            output_node: The output column node
+            col_info: Column info dictionary
+            values_info: ValuesInfo metadata from query parser
+            col_name: The column name being referenced
+        """
+        # Create or find the literal source node for this VALUES column
+        source_node = self._find_or_create_values_column_node(values_info, col_name)
+
+        # Create edge from literal VALUES column to output
+        edge = ColumnEdge(
+            from_node=source_node,
+            to_node=output_node,
+            edge_type="literal_source",
+            transformation="literal_source",
+            context=unit.unit_type.value,
+            expression=col_info["expression"],
+        )
+        self.lineage_graph.add_edge(edge)
+
+    def _find_or_create_values_column_node(
+        self, values_info: "ValuesInfo", col_name: str
+    ) -> ColumnNode:
+        """Find or create a literal column node for VALUES output."""
+        node_key = f"{values_info.alias}.{col_name}"
+
+        if node_key in self.lineage_graph.nodes:
+            return self.lineage_graph.nodes[node_key]
+
+        # Get column index to extract sample values and type
+        col_idx = (
+            values_info.column_names.index(col_name) if col_name in values_info.column_names else -1
+        )
+
+        sample_values = None
+        literal_type = None
+        if col_idx >= 0:
+            sample_values = [
+                row[col_idx] for row in values_info.sample_values if col_idx < len(row)
+            ]
+            if col_idx < len(values_info.column_types):
+                literal_type = values_info.column_types[col_idx]
+
+        # Create literal column node
+        node = ColumnNode(
+            layer="input",
+            table_name=values_info.alias,
+            column_name=col_name,
+            full_name=node_key,
+            expression="VALUES(...)",
+            node_type="literal",
+            source_expression=None,
+            unit_id=None,
+            is_literal=True,
+            literal_values=sample_values,
+            literal_type=literal_type,
         )
         self.lineage_graph.add_node(node)
 

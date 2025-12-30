@@ -158,6 +158,25 @@ class RecursiveCTEInfo:
 
 
 @dataclass
+class ValuesInfo:
+    """Information about a VALUES clause (inline table literal)."""
+
+    alias: str  # Table alias (e.g., "t" in "VALUES (...) AS t(id, name)")
+    column_names: List[str] = field(default_factory=list)  # Column aliases
+    row_count: int = 0  # Number of rows
+
+    # Inferred column types
+    column_types: List[str] = field(default_factory=list)  # e.g., ["integer", "string"]
+
+    # Sample data for debugging/display (first few rows)
+    sample_values: List[List[Any]] = field(default_factory=list)
+
+    def __repr__(self) -> str:
+        cols = ", ".join(self.column_names) if self.column_names else "..."
+        return f"ValuesInfo({self.alias}({cols}), {self.row_count} rows)"
+
+
+@dataclass
 class QueryUnit:
     """
     Represents a single query unit in any context.
@@ -245,6 +264,11 @@ class QueryUnit:
     # Recursive CTE metadata
     recursive_cte_info: Optional["RecursiveCTEInfo"] = None  # Info for recursive CTEs
     is_recursive_reference: bool = False  # True if this unit references a recursive CTE
+
+    # VALUES clause in FROM clause
+    # Maps alias -> ValuesInfo
+    # Example: {'t': ValuesInfo(alias='t', column_names=['id', 'name'], row_count=2)}
+    values_sources: Dict[str, "ValuesInfo"] = field(default_factory=dict)
 
     # Metadata
     depth: int = 0  # Nesting depth (0 = main query)
@@ -472,6 +496,11 @@ class ColumnNode:
     is_synthetic: bool = False  # True for TVF-generated columns
     synthetic_source: Optional[str] = None  # TVF name that created this column
     tvf_parameters: Dict[str, Any] = field(default_factory=dict)  # TVF parameters
+
+    # ─── VALUES/Literal Column ───
+    is_literal: bool = False  # True for VALUES-generated columns
+    literal_values: Optional[List[Any]] = None  # Sample values from VALUES clause
+    literal_type: Optional[str] = None  # Inferred type (e.g., "integer", "string")
 
     # ─── Validation ───
     warnings: List[str] = field(default_factory=list)
@@ -879,6 +908,7 @@ __all__ = [
     "QueryUnit",
     "QueryUnitGraph",
     "RecursiveCTEInfo",
+    "ValuesInfo",
     # Column lineage
     "ColumnNode",
     "ColumnEdge",

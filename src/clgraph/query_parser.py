@@ -10,7 +10,15 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import sqlglot
 from sqlglot import exp
 
-from .models import QueryUnit, QueryUnitGraph, QueryUnitType, RecursiveCTEInfo, TVFInfo, TVFType
+from .models import (
+    QueryUnit,
+    QueryUnitGraph,
+    QueryUnitType,
+    RecursiveCTEInfo,
+    TVFInfo,
+    TVFType,
+    ValuesInfo,
+)
 
 # ============================================================================
 # Table-Valued Functions (TVF) Registry
@@ -1074,8 +1082,135 @@ class RecursiveQueryParser:
             # TVFs are like virtual tables, so we map alias to itself with is_unit=False
             parent_unit.alias_mapping[alias] = (alias, False)
 
+        # Helper to process VALUES clause
+        def process_values_source(
+            values_node: exp.Values, alias: str, column_aliases: List[str]
+        ) -> ValuesInfo:
+            """Process a VALUES clause and extract its information."""
+            rows: List[List[Any]] = []
+
+            # Parse each row (tuple)
+            for row_expr in values_node.expressions:
+                if isinstance(row_expr, exp.Tuple):
+                    row = [extract_literal(v) for v in row_expr.expressions]
+                    rows.append(row)
+
+            # If no column aliases provided, generate defaults
+            num_cols = len(rows[0]) if rows else 0
+            if not column_aliases and num_cols > 0:
+                column_aliases = [f"column{i + 1}" for i in range(num_cols)]
+
+            # Infer column types
+            column_types = infer_value_types(rows)
+
+            return ValuesInfo(
+                alias=alias,
+                column_names=column_aliases,
+                row_count=len(rows),
+                column_types=column_types,
+                sample_values=rows[:3],  # Keep first 3 rows as sample
+            )
+
+        def extract_literal(expr: exp.Expression) -> Any:
+            """Extract literal value from expression."""
+            if isinstance(expr, exp.Literal):
+                if expr.is_int:
+                    return int(expr.this)
+                elif expr.is_number:
+                    return float(expr.this)
+                elif expr.is_string:
+                    return expr.this
+                return expr.this
+            elif isinstance(expr, exp.Boolean):
+                return expr.this
+            elif isinstance(expr, exp.Null):
+                return None
+            # Complex expression - store as string
+            return expr.sql()
+
+        def infer_value_types(rows: List[List[Any]]) -> List[str]:
+            """Infer column types from sample values."""
+            if not rows:
+                return []
+
+            num_cols = len(rows[0])
+            types: List[str] = []
+
+            for col_idx in range(num_cols):
+                col_values = [
+                    row[col_idx] for row in rows if col_idx < len(row) and row[col_idx] is not None
+                ]
+
+                if not col_values:
+                    types.append("unknown")
+                elif all(isinstance(v, bool) for v in col_values):
+                    types.append("boolean")
+                elif all(isinstance(v, int) for v in col_values):
+                    types.append("integer")
+                elif all(isinstance(v, (int, float)) for v in col_values):
+                    types.append("numeric")
+                else:
+                    types.append("string")
+
+            return types
+
+        def handle_values_in_subquery(source_node: exp.Subquery, parent_unit: QueryUnit):
+            """Handle VALUES clause wrapped in a Subquery."""
+            inner = source_node.this
+            if not isinstance(inner, exp.Values):
+                return False
+
+            # Get alias
+            alias = source_node.alias_or_name if hasattr(source_node, "alias") else None
+            if not alias:
+                alias = f"_values_{self.subquery_counter}"
+                self.subquery_counter += 1
+
+            # Extract column aliases from TableAlias (e.g., AS t(col1, col2))
+            column_aliases: List[str] = []
+            alias_node = source_node.args.get("alias")
+            if alias_node and hasattr(alias_node, "columns") and alias_node.columns:
+                column_aliases = [col.name for col in alias_node.columns if hasattr(col, "name")]
+
+            # Process VALUES
+            values_info = process_values_source(inner, alias, column_aliases)
+
+            # Store in parent unit
+            parent_unit.values_sources[alias] = values_info
+
+            # Add alias mapping so columns can be resolved
+            parent_unit.alias_mapping[alias] = (alias, False)
+
+            return True
+
         # Helper to process a single table source
         def process_table_source(source_node):
+            # Check for VALUES clause directly in FROM (not wrapped in Subquery)
+            if isinstance(source_node, exp.Values):
+                # Get alias
+                alias = str(source_node.alias) if source_node.alias else None
+                if not alias:
+                    alias = f"_values_{self.subquery_counter}"
+                    self.subquery_counter += 1
+
+                # Extract column aliases from alias node
+                column_aliases: List[str] = []
+                alias_node = source_node.args.get("alias")
+                if alias_node and hasattr(alias_node, "columns") and alias_node.columns:
+                    column_aliases = [
+                        col.name for col in alias_node.columns if hasattr(col, "name")
+                    ]
+
+                # Process VALUES
+                values_info = process_values_source(source_node, alias, column_aliases)
+
+                # Store in parent unit
+                parent_unit.values_sources[alias] = values_info
+
+                # Add alias mapping so columns can be resolved
+                parent_unit.alias_mapping[alias] = (alias, False)
+                return  # VALUES processed
+
             if isinstance(source_node, exp.Table):
                 # Check if this is a Table-Valued Function (TVF)
                 if hasattr(source_node, "this") and is_tvf_expression(source_node.this):
@@ -1165,6 +1300,10 @@ class RecursiveQueryParser:
                     parent_unit.alias_mapping[table_name] = (table_name, False)
 
             elif isinstance(source_node, exp.Subquery):
+                # Check if this is a VALUES clause wrapped in Subquery
+                if handle_values_in_subquery(source_node, parent_unit):
+                    return  # VALUES processed, skip normal subquery processing
+
                 # Check if this subquery has PIVOT/UNPIVOT operations
                 has_pivot = (
                     hasattr(source_node, "args")

@@ -98,6 +98,14 @@ class JSONExporter:
                 if tvf_params:
                     col_dict["tvf_parameters"] = tvf_params
 
+            # Include literal column metadata if present (VALUES clause)
+            if getattr(col, "is_literal", False):
+                col_dict["is_literal"] = True
+                col_dict["literal_type"] = getattr(col, "literal_type", None)
+                literal_values = getattr(col, "literal_values", None)
+                if literal_values:
+                    col_dict["literal_values"] = literal_values
+
             if include_metadata:
                 col_dict.update(
                     {

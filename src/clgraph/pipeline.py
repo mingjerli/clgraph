@@ -376,6 +376,10 @@ class PipelineLineageBuilder:
                 is_synthetic=getattr(node, "is_synthetic", False),
                 synthetic_source=getattr(node, "synthetic_source", None),
                 tvf_parameters=getattr(node, "tvf_parameters", {}),
+                # VALUES/Literal column fields
+                is_literal=getattr(node, "is_literal", False),
+                literal_values=getattr(node, "literal_values", None),
+                literal_type=getattr(node, "literal_type", None),
             )
             pipeline.add_column(column)
 
