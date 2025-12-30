@@ -23,6 +23,8 @@ from .models import (
     QueryUnit,
     QueryUnitGraph,
     QueryUnitType,
+    TVFInfo,
+    TVFType,
     ValidationIssue,
 )
 from .query_parser import RecursiveQueryParser
@@ -1656,6 +1658,31 @@ class RecursiveLineageBuilder:
                     )
                     continue
 
+                # Check if this is a TVF alias (Table-Valued Function)
+                tvf_info = None
+                if table_ref and table_ref in unit.tvf_sources:
+                    tvf_info = unit.tvf_sources[table_ref]
+                elif not table_ref and col_name in unit.tvf_sources:
+                    # Unqualified reference where column name matches TVF alias
+                    tvf_info = unit.tvf_sources[col_name]
+                elif not table_ref:
+                    # Check if unqualified column is a TVF output column
+                    for _alias, tvf in unit.tvf_sources.items():
+                        if col_name in tvf.output_columns:
+                            tvf_info = tvf
+                            break
+
+                if tvf_info:
+                    # This is a reference to a TVF output - create synthetic edge
+                    self._create_tvf_edge(
+                        unit=unit,
+                        output_node=output_node,
+                        col_info=col_info,
+                        tvf_info=tvf_info,
+                        col_name=col_name,
+                    )
+                    continue
+
                 source_unit = (
                     self._resolve_source_unit(unit, effective_table_ref)
                     if effective_table_ref
@@ -1996,6 +2023,89 @@ class RecursiveLineageBuilder:
             offset_column=offset_alias if unnest_info.get("is_offset") else None,
         )
         self.lineage_graph.add_edge(edge)
+
+    def _create_tvf_edge(
+        self,
+        unit: QueryUnit,
+        output_node: ColumnNode,
+        col_info: Dict,
+        tvf_info: "TVFInfo",
+        col_name: str,
+    ):
+        """
+        Create an edge from TVF synthetic column to output column.
+
+        Args:
+            unit: The current query unit
+            output_node: The output column node
+            col_info: Column info dictionary
+            tvf_info: TVFInfo metadata from query parser
+            col_name: The column name being referenced
+        """
+        # Create or find the synthetic source node for this TVF column
+        source_node = self._find_or_create_tvf_column_node(tvf_info, col_name)
+
+        # For COLUMN_INPUT TVFs, we might have input column lineage
+        if tvf_info.tvf_type == TVFType.COLUMN_INPUT and tvf_info.input_columns:
+            # Create edges from input columns to the TVF output
+            for input_col in tvf_info.input_columns:
+                parts = input_col.split(".", 1)
+                if len(parts) == 2:
+                    input_table, input_col_name = parts
+                    input_node = self._find_or_create_table_column_node(input_table, input_col_name)
+                else:
+                    input_node = self._find_or_create_table_column_node("_input", input_col)
+
+                # Create edge from input to synthetic TVF column
+                input_edge = ColumnEdge(
+                    from_node=input_node,
+                    to_node=source_node,
+                    edge_type="tvf_input",
+                    transformation="tvf_input",
+                    context=unit.unit_type.value,
+                    expression=f"{tvf_info.function_name}({input_col})",
+                    tvf_info=tvf_info,
+                    is_tvf_output=True,
+                )
+                self.lineage_graph.add_edge(input_edge)
+
+        # Create edge from synthetic TVF column to output
+        edge = ColumnEdge(
+            from_node=source_node,
+            to_node=output_node,
+            edge_type="tvf_output",
+            transformation="tvf_output",
+            context=unit.unit_type.value,
+            expression=col_info["expression"],
+            tvf_info=tvf_info,
+            is_tvf_output=True,
+        )
+        self.lineage_graph.add_edge(edge)
+
+    def _find_or_create_tvf_column_node(self, tvf_info: "TVFInfo", col_name: str) -> ColumnNode:
+        """Find or create a synthetic column node for TVF output."""
+        node_key = f"{tvf_info.alias}.{col_name}"
+
+        if node_key in self.lineage_graph.nodes:
+            return self.lineage_graph.nodes[node_key]
+
+        # Create synthetic column node
+        node = ColumnNode(
+            layer="input",
+            table_name=tvf_info.alias,
+            column_name=col_name,
+            full_name=node_key,
+            expression=f"{tvf_info.function_name}(...)",
+            node_type="tvf_synthetic",
+            source_expression=None,
+            unit_id=None,
+            is_synthetic=True,
+            synthetic_source=tvf_info.function_name,
+            tvf_parameters=tvf_info.parameters,
+        )
+        self.lineage_graph.add_node(node)
+
+        return node
 
     def _create_column_node(
         self, unit: QueryUnit, col_info: Dict, is_output: bool = False

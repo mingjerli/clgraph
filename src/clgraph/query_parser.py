@@ -10,7 +10,58 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import sqlglot
 from sqlglot import exp
 
-from .models import QueryUnit, QueryUnitGraph, QueryUnitType
+from .models import QueryUnit, QueryUnitGraph, QueryUnitType, TVFInfo, TVFType
+
+# ============================================================================
+# Table-Valued Functions (TVF) Registry
+# ============================================================================
+
+# Known TVF expressions mapped to their types
+KNOWN_TVF_EXPRESSIONS: Dict[type, TVFType] = {
+    # Generator TVFs
+    exp.ExplodingGenerateSeries: TVFType.GENERATOR,
+    exp.GenerateSeries: TVFType.GENERATOR,
+    exp.GenerateDateArray: TVFType.GENERATOR,
+    # External data TVFs
+    exp.ReadCSV: TVFType.EXTERNAL,
+}
+
+# Known TVF function names (for Anonymous function calls)
+KNOWN_TVF_NAMES: Dict[str, TVFType] = {
+    # Generator TVFs
+    "generate_series": TVFType.GENERATOR,
+    "generate_date_array": TVFType.GENERATOR,
+    "generate_timestamp_array": TVFType.GENERATOR,
+    "sequence": TVFType.GENERATOR,
+    "generator": TVFType.GENERATOR,
+    "range": TVFType.GENERATOR,
+    # Column-input TVFs (UNNEST/EXPLODE handled separately)
+    "flatten": TVFType.COLUMN_INPUT,
+    "explode": TVFType.COLUMN_INPUT,
+    "posexplode": TVFType.COLUMN_INPUT,
+    # External data TVFs
+    "read_csv": TVFType.EXTERNAL,
+    "read_parquet": TVFType.EXTERNAL,
+    "read_json": TVFType.EXTERNAL,
+    "read_ndjson": TVFType.EXTERNAL,
+    "external_query": TVFType.EXTERNAL,
+    # System TVFs
+    "table": TVFType.SYSTEM,
+    "result_scan": TVFType.SYSTEM,
+}
+
+# Default output column names for known TVFs
+TVF_DEFAULT_COLUMNS: Dict[str, List[str]] = {
+    "generate_series": ["generate_series"],
+    "generate_date_array": ["date"],
+    "generate_timestamp_array": ["timestamp"],
+    "sequence": ["value"],
+    "generator": ["seq4"],
+    "range": ["range"],
+    "flatten": ["value", "index", "key", "path", "this"],
+    "explode": ["col"],
+    "posexplode": ["pos", "col"],
+}
 
 
 class RecursiveQueryParser:
@@ -869,9 +920,143 @@ class RecursiveQueryParser:
                 parent_unit.depends_on_units.append(subquery_unit.unit_id)
             parent_unit.alias_mapping[lateral_alias] = (subquery_name, True)
 
+        # Helper to detect if an expression is a TVF
+        def is_tvf_expression(expr: exp.Expression) -> bool:
+            """Check if expression is a Table-Valued Function."""
+            # Check for known TVF expression types
+            if type(expr) in KNOWN_TVF_EXPRESSIONS:
+                return True
+
+            # Check for Anonymous function calls with known TVF names
+            if isinstance(expr, exp.Anonymous):
+                func_name = expr.name.lower() if expr.name else ""
+                return func_name in KNOWN_TVF_NAMES
+
+            return False
+
+        # Helper to extract TVF info from expression
+        def extract_tvf_info(
+            tvf_expr: exp.Expression, alias: str, column_aliases: List[str]
+        ) -> TVFInfo:
+            """Extract TVF information from a TVF expression."""
+            # Determine function name and type
+            tvf_type: TVFType = TVFType.GENERATOR  # default
+            func_name: str = ""
+            parameters: Dict[str, Any] = {}
+            input_columns: List[str] = []
+            external_source: Optional[str] = None
+
+            # Get type from expression class
+            if type(tvf_expr) in KNOWN_TVF_EXPRESSIONS:
+                tvf_type = KNOWN_TVF_EXPRESSIONS[type(tvf_expr)]
+                # Get function name from class name
+                func_name = type(tvf_expr).__name__.lower()
+                # Map to standard name
+                if func_name in ("explodinggenerateseries", "generateseries"):
+                    func_name = "generate_series"
+                elif func_name == "generatedatearray":
+                    func_name = "generate_date_array"
+                elif func_name == "readcsv":
+                    func_name = "read_csv"
+
+            # Handle Anonymous function calls
+            elif isinstance(tvf_expr, exp.Anonymous):
+                func_name = tvf_expr.name.lower() if tvf_expr.name else "unknown"
+                tvf_type = KNOWN_TVF_NAMES.get(func_name, TVFType.GENERATOR)
+
+            # Extract parameters from expressions attribute
+            if hasattr(tvf_expr, "expressions") and tvf_expr.expressions:
+                for i, arg in enumerate(tvf_expr.expressions):
+                    if isinstance(arg, exp.Literal):
+                        # Literal value
+                        value = arg.this
+                        # Detect file paths for external TVFs
+                        if i == 0 and tvf_type == TVFType.EXTERNAL:
+                            external_source = str(value)
+                        parameters[f"arg_{i}"] = value
+                    elif isinstance(arg, exp.Column):
+                        # Column reference - indicates COLUMN_INPUT type
+                        col_ref = f"{arg.table}.{arg.name}" if arg.table else arg.name
+                        input_columns.append(col_ref)
+                        parameters[f"arg_{i}"] = col_ref
+                    elif isinstance(arg, exp.Kwarg):
+                        # Named parameter (e.g., ROWCOUNT => 100)
+                        key = str(arg.this) if arg.this else f"arg_{i}"
+                        value = str(arg.expression) if arg.expression else None
+                        parameters[key.lower()] = value
+                    else:
+                        parameters[f"arg_{i}"] = str(arg)
+
+            # Also extract parameters from args dict (for typed TVFs like ExplodingGenerateSeries)
+            if hasattr(tvf_expr, "args"):
+                args_dict = tvf_expr.args
+                for key, value in args_dict.items():
+                    if key == "expressions":
+                        continue  # Already handled above
+                    if isinstance(value, exp.Literal):
+                        param_value = value.this
+                        parameters[key] = param_value
+                        # For external TVFs, extract the source path
+                        if tvf_type == TVFType.EXTERNAL and key == "this":
+                            external_source = str(param_value)
+                    elif isinstance(value, exp.Column):
+                        col_ref = f"{value.table}.{value.name}" if value.table else value.name
+                        input_columns.append(col_ref)
+                        parameters[key] = col_ref
+                    elif value is not None and key != "this":
+                        # Skip 'this' for non-external TVFs (it's often None or internal)
+                        parameters[key] = str(value)
+
+            # Get default output columns if not provided via alias
+            output_columns = column_aliases if column_aliases else []
+            if not output_columns:
+                output_columns = TVF_DEFAULT_COLUMNS.get(func_name, ["value"])
+
+            return TVFInfo(
+                function_name=func_name,
+                tvf_type=tvf_type,
+                alias=alias,
+                output_columns=output_columns,
+                parameters=parameters,
+                input_columns=input_columns,
+                external_source=external_source,
+            )
+
+        # Helper to process TVF source
+        def process_tvf_source(source_node: exp.Table, parent_unit: QueryUnit):
+            """Process a Table-Valued Function in FROM clause."""
+            inner_expr = source_node.this
+
+            # Get alias
+            alias = str(source_node.alias) if source_node.alias else None
+            if not alias:
+                alias = f"_tvf_{self.subquery_counter}"
+                self.subquery_counter += 1
+
+            # Extract column aliases from TableAlias (e.g., AS t(col1, col2))
+            column_aliases: List[str] = []
+            alias_node = source_node.args.get("alias")
+            if alias_node and hasattr(alias_node, "columns") and alias_node.columns:
+                column_aliases = [col.name for col in alias_node.columns if hasattr(col, "name")]
+
+            # Extract TVF info
+            tvf_info = extract_tvf_info(inner_expr, alias, column_aliases)
+
+            # Store in parent unit
+            parent_unit.tvf_sources[alias] = tvf_info
+
+            # Also register alias mapping so columns can be resolved
+            # TVFs are like virtual tables, so we map alias to itself with is_unit=False
+            parent_unit.alias_mapping[alias] = (alias, False)
+
         # Helper to process a single table source
         def process_table_source(source_node):
             if isinstance(source_node, exp.Table):
+                # Check if this is a Table-Valued Function (TVF)
+                if hasattr(source_node, "this") and is_tvf_expression(source_node.this):
+                    process_tvf_source(source_node, parent_unit)
+                    return  # TVF processed, skip normal table processing
+
                 # Check if this table has PIVOT/UNPIVOT operations (stored in args)
                 has_pivot = (
                     hasattr(source_node, "args")

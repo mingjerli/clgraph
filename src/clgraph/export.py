@@ -90,6 +90,14 @@ class JSONExporter:
                 "operation": col.operation,
             }
 
+            # Include synthetic column metadata if present
+            if getattr(col, "is_synthetic", False):
+                col_dict["is_synthetic"] = True
+                col_dict["synthetic_source"] = getattr(col, "synthetic_source", None)
+                tvf_params = getattr(col, "tvf_parameters", None)
+                if tvf_params:
+                    col_dict["tvf_parameters"] = tvf_params
+
             if include_metadata:
                 col_dict.update(
                     {
@@ -190,6 +198,20 @@ class JSONExporter:
                     ],
                     "separator": agg_spec.separator,
                 }
+
+            # Include TVF edge metadata if present
+            if getattr(edge, "is_tvf_output", False):
+                edge_dict["is_tvf_output"] = True
+                tvf_info = getattr(edge, "tvf_info", None)
+                if tvf_info:
+                    edge_dict["tvf_info"] = {
+                        "function_name": tvf_info.function_name,
+                        "tvf_type": tvf_info.tvf_type.value,
+                        "alias": tvf_info.alias,
+                        "output_columns": tvf_info.output_columns,
+                        "parameters": tvf_info.parameters,
+                        "external_source": tvf_info.external_source,
+                    }
 
             result["edges"].append(edge_dict)
 

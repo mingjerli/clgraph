@@ -182,6 +182,11 @@ class QueryUnit:
     # Example: {'t': {'correlated_columns': ['orders.order_id'], 'preceding_tables': ['orders']}}
     lateral_sources: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
+    # Table-Valued Functions in FROM clause
+    # Maps alias -> TVFInfo
+    # Example: {'t': TVFInfo(function_name='generate_series', tvf_type=TVFType.GENERATOR, alias='t', ...)}
+    tvf_sources: Dict[str, "TVFInfo"] = field(default_factory=dict)
+
     # QUALIFY clause metadata
     # Stores info about QUALIFY clause used for row filtering based on window functions
     # Example: {'condition': 'ROW_NUMBER() OVER (...) = 1',
@@ -337,6 +342,45 @@ class AggregateSpec:
 
 
 # ============================================================================
+# Table-Valued Function Models
+# ============================================================================
+
+
+class TVFType(Enum):
+    """Type of Table-Valued Function."""
+
+    GENERATOR = "generator"  # No column input, generates data (GENERATE_SERIES)
+    COLUMN_INPUT = "column_input"  # Takes column(s) as input (UNNEST, EXPLODE)
+    EXTERNAL = "external"  # External data source (READ_CSV, EXTERNAL_QUERY)
+    SYSTEM = "system"  # System/metadata tables (INFORMATION_SCHEMA)
+
+
+@dataclass
+class TVFInfo:
+    """Information about a Table-Valued Function."""
+
+    function_name: str
+    tvf_type: TVFType
+    alias: str
+    output_columns: List[str] = field(default_factory=list)
+
+    # For GENERATOR type - function parameters
+    parameters: Dict[str, Any] = field(default_factory=dict)
+    # e.g., {"start": 1, "end": 10}
+
+    # For COLUMN_INPUT type - input column references
+    input_columns: List[str] = field(default_factory=list)
+    # e.g., ["orders.items"]
+
+    # For EXTERNAL type - external source location
+    external_source: Optional[str] = None
+    # e.g., "s3://bucket/file.csv"
+
+    def __repr__(self) -> str:
+        return f"TVFInfo({self.function_name} AS {self.alias})"
+
+
+# ============================================================================
 # Column Lineage Models
 # ============================================================================
 
@@ -390,6 +434,11 @@ class ColumnNode:
     pii: bool = False
     tags: Set[str] = field(default_factory=set)
     custom_metadata: Dict[str, Any] = field(default_factory=dict)
+
+    # ─── TVF/Synthetic Column ───
+    is_synthetic: bool = False  # True for TVF-generated columns
+    synthetic_source: Optional[str] = None  # TVF name that created this column
+    tvf_parameters: Dict[str, Any] = field(default_factory=dict)  # TVF parameters
 
     # ─── Validation ───
     warnings: List[str] = field(default_factory=list)
@@ -509,6 +558,10 @@ class ColumnEdge:
 
     # ─── Complex Aggregate Metadata ───
     aggregate_spec: Optional["AggregateSpec"] = None  # Full aggregate specification
+
+    # ─── Table-Valued Function Metadata ───
+    tvf_info: Optional["TVFInfo"] = None  # Full TVF specification
+    is_tvf_output: bool = False  # True if this edge is from a TVF output
 
     def __hash__(self):
         return hash((self.from_node.full_name, self.to_node.full_name, self.edge_type))
@@ -800,6 +853,9 @@ __all__ = [
     "AggregateType",
     "AggregateSpec",
     "OrderByColumn",
+    # Table-valued functions
+    "TVFType",
+    "TVFInfo",
     # Multi-query pipeline
     "SQLOperation",
     "ParsedQuery",

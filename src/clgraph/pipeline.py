@@ -372,6 +372,10 @@ class PipelineLineageBuilder:
                 is_star=node.is_star,
                 except_columns=node.except_columns,
                 replace_columns=node.replace_columns,
+                # TVF/Synthetic column fields
+                is_synthetic=getattr(node, "is_synthetic", False),
+                synthetic_source=getattr(node, "synthetic_source", None),
+                tvf_parameters=getattr(node, "tvf_parameters", {}),
             )
             pipeline.add_column(column)
 
