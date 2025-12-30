@@ -106,6 +106,8 @@ class QueryUnitType(Enum):
 
     MAIN_QUERY = "main_query"
     CTE = "cte"
+    CTE_BASE = "cte_base"  # Base/anchor case of a recursive CTE
+    CTE_RECURSIVE = "cte_recursive"  # Recursive case of a recursive CTE
     SUBQUERY_FROM = "subquery_from"  # Subquery in FROM clause
     SUBQUERY_SELECT = "subquery_select"  # Scalar subquery in SELECT
     SUBQUERY_WHERE = "subquery_where"  # Subquery in WHERE
@@ -126,6 +128,33 @@ class QueryUnitType(Enum):
     # MERGE/UPSERT operations
     MERGE = "merge"  # MERGE INTO statement
     MERGE_SOURCE = "merge_source"  # Source subquery in MERGE
+
+
+@dataclass
+class RecursiveCTEInfo:
+    """Information about a recursive CTE."""
+
+    cte_name: str
+    is_recursive: bool = True
+
+    # Column info
+    base_columns: List[str] = field(default_factory=list)  # Columns from base case
+    recursive_columns: List[str] = field(default_factory=list)  # Columns from recursive case
+
+    # Union type between base and recursive
+    union_type: str = "union_all"  # "union" or "union_all"
+
+    # Self-reference info
+    self_reference_alias: Optional[str] = (
+        None  # Alias used for self-ref (e.g., "h" in "JOIN cte h")
+    )
+    join_condition: Optional[str] = None  # How recursive joins to self
+
+    # Recursion control
+    max_recursion: Optional[int] = None  # MAXRECURSION hint if present
+
+    def __repr__(self):
+        return f"RecursiveCTEInfo({self.cte_name}, alias={self.self_reference_alias})"
 
 
 @dataclass
@@ -212,6 +241,10 @@ class QueryUnit:
     # Named window definitions from WINDOW clause
     # Example: {'w': {'partition_by': ['c'], 'order_by': [{'column': 'd', 'direction': 'asc'}]}}
     window_definitions: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+
+    # Recursive CTE metadata
+    recursive_cte_info: Optional["RecursiveCTEInfo"] = None  # Info for recursive CTEs
+    is_recursive_reference: bool = False  # True if this unit references a recursive CTE
 
     # Metadata
     depth: int = 0  # Nesting depth (0 = main query)
@@ -845,6 +878,7 @@ __all__ = [
     "QueryUnitType",
     "QueryUnit",
     "QueryUnitGraph",
+    "RecursiveCTEInfo",
     # Column lineage
     "ColumnNode",
     "ColumnEdge",
