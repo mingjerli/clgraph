@@ -1,18 +1,21 @@
 # clgraph
 
-A Python library that turns SQL queries into lineage graphs. No database required. No infrastructure to maintain. Just your queries and Python.
+**clgraph** (Column-Lineage Graph) parses your SQL queries and automatically builds the column lineage graph, capturing all relationships across your pipeline to support SQL-related workflows—from impact analysis to AI context engineering.
+
+No database required. No infrastructure to maintain. Just your queries and Python.
 
 ![clgraph illustration](./clgraph-illustration.svg)
 
-**What you can do with clgraph:**
+The column lineage graph captures how data flows through your SQL: every column is a node, every transformation is an edge. Once you have this graph, a lot of SQL-related tasks become simple traversals:
 
-- **Debug SQL Queries** — Visualize column dependencies and trace data flow through complex CTEs and subqueries
-- **Impact Analysis** — Understand downstream effects before making schema changes
-- **Auto-propagate Metadata** — PII flags, ownership, and descriptions flow automatically through lineage
-- **LLM-Powered Features** — Natural language lineage queries, schema-aware Text-to-SQL, and automatic column descriptions
-- **Context for AI Agents** — MCP server and structured lineage tools for AI assistants and copilots
-- **CI/CD Change Detection** — Detect lineage changes between pipeline versions for automated testing
-- **Automatic DAG Construction** — Execute pipelines in Python (async or sequential) with topological ordering, or generate Airflow DAGs
+- **Impact analysis?** Forward trace through the graph.
+- **Root cause debugging?** Backward trace through the graph.
+- **PII compliance?** Mark nodes, propagate through edges.
+- **DAG construction?** Project to table-level dependencies.
+- **Documentation?** Describe nodes and their relationships.
+- **AI applications?** Context engineering is graph traversal.
+
+**One graph. Many applications.**
 
 ## Why We Built This
 
