@@ -1,4 +1,4 @@
-# Contributing to SQL Lineage
+# Contributing to clgraph
 
 Thank you for your interest in contributing! This document provides guidelines for contributing to the project.
 
@@ -6,7 +6,7 @@ Thank you for your interest in contributing! This document provides guidelines f
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/clgraph.git
+git clone https://github.com/mingjerli/clgraph.git
 cd clgraph
 ```
 
@@ -41,23 +41,16 @@ pytest tests/test_lineage.py
 ## Code Style
 
 We use:
-- **black** for code formatting
-- **ruff** for linting
-- **mypy** for type checking
+- **ruff** for code formatting and linting
 
 Format code:
 ```bash
-black src/ tests/
+ruff format src/ tests/
 ```
 
 Lint:
 ```bash
 ruff check src/ tests/
-```
-
-Type check:
-```bash
-mypy src/
 ```
 
 ## Pull Request Process
