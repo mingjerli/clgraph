@@ -182,6 +182,14 @@ class QueryUnit:
     # Example: {'t': {'correlated_columns': ['orders.order_id'], 'preceding_tables': ['orders']}}
     lateral_sources: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
+    # QUALIFY clause metadata
+    # Stores info about QUALIFY clause used for row filtering based on window functions
+    # Example: {'condition': 'ROW_NUMBER() OVER (...) = 1',
+    #           'partition_columns': ['customer_id'],
+    #           'order_columns': ['order_date'],
+    #           'window_functions': ['ROW_NUMBER']}
+    qualify_info: Optional[Dict[str, Any]] = None
+
     # Metadata
     depth: int = 0  # Nesting depth (0 = main query)
     order: int = 0  # Topological order for CTEs
@@ -407,6 +415,11 @@ class ColumnEdge:
     is_merge_operation: bool = False  # True if this edge is from a MERGE statement
     merge_action: Optional[str] = None  # "match", "update", "insert", "delete"
     merge_condition: Optional[str] = None  # Condition for conditional WHEN clauses
+
+    # ─── QUALIFY Clause Metadata ───
+    is_qualify_column: bool = False  # True if this column is used in QUALIFY clause
+    qualify_context: Optional[str] = None  # "partition", "order", or "filter"
+    qualify_function: Optional[str] = None  # Window function name (e.g., "ROW_NUMBER")
 
     def __hash__(self):
         return hash((self.from_node.full_name, self.to_node.full_name, self.edge_type))

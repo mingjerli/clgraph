@@ -146,6 +146,12 @@ class JSONExporter:
                 edge_dict["merge_action"] = getattr(edge, "merge_action", None)
                 edge_dict["merge_condition"] = getattr(edge, "merge_condition", None)
 
+            # Include QUALIFY clause metadata if present
+            if getattr(edge, "is_qualify_column", False):
+                edge_dict["is_qualify_column"] = True
+                edge_dict["qualify_context"] = getattr(edge, "qualify_context", None)
+                edge_dict["qualify_function"] = getattr(edge, "qualify_function", None)
+
             result["edges"].append(edge_dict)
 
         # Export tables

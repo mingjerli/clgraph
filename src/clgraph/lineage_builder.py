@@ -475,6 +475,120 @@ class RecursiveLineageBuilder:
         if unit.is_lateral and unit.correlated_columns:
             self._create_lateral_correlation_edges(unit)
 
+        # 6. Create QUALIFY clause edges for window function columns
+        if unit.qualify_info:
+            self._create_qualify_edges(unit, output_cols)
+
+    def _create_qualify_edges(self, unit: QueryUnit, output_cols: List[Dict]):
+        """
+        Create edges for columns used in QUALIFY clause.
+
+        QUALIFY filters rows based on window function results. The columns used in
+        PARTITION BY and ORDER BY affect which rows are returned, so we create
+        edges from these columns to the output columns.
+
+        Args:
+            unit: The query unit with QUALIFY info
+            output_cols: The output columns of this unit
+        """
+        qualify_info = unit.qualify_info
+        if not qualify_info:
+            return
+
+        partition_columns = qualify_info.get("partition_columns", [])
+        order_columns = qualify_info.get("order_columns", [])
+        window_functions = qualify_info.get("window_functions", [])
+        func_name = window_functions[0] if window_functions else "WINDOW"
+
+        # Get the first non-star output column as the target for qualify edges
+        # (QUALIFY affects all output columns by filtering rows)
+        output_node = None
+        for col_info in output_cols:
+            if not col_info.get("is_star"):
+                node_key = self._get_node_key(unit, col_info)
+                if node_key in self.lineage_graph.nodes:
+                    output_node = self.lineage_graph.nodes[node_key]
+                    break
+
+        if not output_node:
+            return
+
+        # Create edges for PARTITION BY columns
+        for col_ref in partition_columns:
+            source_node = self._resolve_qualify_column(unit, col_ref)
+            if source_node:
+                edge = ColumnEdge(
+                    from_node=source_node,
+                    to_node=output_node,
+                    edge_type="qualify_partition",
+                    transformation="qualify_partition",
+                    context="QUALIFY",
+                    expression=qualify_info.get("condition"),
+                    is_qualify_column=True,
+                    qualify_context="partition",
+                    qualify_function=func_name,
+                )
+                self.lineage_graph.add_edge(edge)
+
+        # Create edges for ORDER BY columns
+        for col_ref in order_columns:
+            source_node = self._resolve_qualify_column(unit, col_ref)
+            if source_node:
+                edge = ColumnEdge(
+                    from_node=source_node,
+                    to_node=output_node,
+                    edge_type="qualify_order",
+                    transformation="qualify_order",
+                    context="QUALIFY",
+                    expression=qualify_info.get("condition"),
+                    is_qualify_column=True,
+                    qualify_context="order",
+                    qualify_function=func_name,
+                )
+                self.lineage_graph.add_edge(edge)
+
+    def _resolve_qualify_column(self, unit: QueryUnit, col_ref: str) -> Optional[ColumnNode]:
+        """
+        Resolve a column reference from QUALIFY to a ColumnNode.
+
+        Args:
+            unit: The query unit
+            col_ref: Column reference like "customer_id" or "orders.customer_id"
+
+        Returns:
+            ColumnNode or None if not found
+        """
+        # Parse table.column format
+        if "." in col_ref:
+            parts = col_ref.split(".", 1)
+            table_ref, col_name = parts
+        else:
+            table_ref = None
+            col_name = col_ref
+
+        # Try to resolve as a source unit
+        source_unit = self._resolve_source_unit(unit, table_ref) if table_ref else None
+        if source_unit:
+            return self._find_column_in_unit(source_unit, col_name)
+
+        # Try as base table
+        base_table = self._resolve_base_table_name(unit, table_ref) if table_ref else None
+        if base_table:
+            return self._find_or_create_table_column_node(base_table, col_name)
+
+        # Try without table qualifier - infer from dependencies
+        if not table_ref and unit.depends_on_tables:
+            for table in unit.depends_on_tables:
+                node = self._find_or_create_table_column_node(table, col_name)
+                if node:
+                    return node
+
+        # Fallback: use table_ref directly if provided
+        if table_ref:
+            return self._find_or_create_table_column_node(table_ref, col_name)
+
+        return None
+
     def _create_lateral_correlation_edges(self, unit: QueryUnit):
         """
         Create correlation edges for a LATERAL subquery.

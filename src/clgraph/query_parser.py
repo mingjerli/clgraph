@@ -144,7 +144,12 @@ class RecursiveQueryParser:
         if having_clause:
             self._parse_having_subqueries(having_clause, unit, depth)
 
-        # 6. Parse SELECT expressions (may contain scalar subqueries)
+        # 6. Parse QUALIFY clause (extracts window function columns)
+        qualify_clause = select_node.args.get("qualify")
+        if qualify_clause:
+            self._parse_qualify_clause(qualify_clause, unit)
+
+        # 7. Parse SELECT expressions (may contain scalar subqueries)
         for expr in select_node.expressions:
             self._parse_select_subqueries(expr, unit, depth)
 
@@ -1176,6 +1181,72 @@ class RecursiveQueryParser:
                     )
 
                     parent_unit.depends_on_units.append(subquery_unit.unit_id)
+
+    def _parse_qualify_clause(self, qualify_node: exp.Qualify, unit: QueryUnit):
+        """
+        Parse QUALIFY clause to extract window function column dependencies.
+
+        QUALIFY filters rows based on window function results.
+        Example:
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY order_date DESC) = 1
+
+        This extracts:
+        - condition: The full QUALIFY condition as SQL
+        - partition_columns: Columns used in PARTITION BY
+        - order_columns: Columns used in ORDER BY
+        - window_functions: Names of window functions used
+        """
+        condition = qualify_node.this
+        partition_columns: List[str] = []
+        order_columns: List[str] = []
+        window_functions: List[str] = []
+
+        # Walk the condition to find window functions
+        for node in condition.walk():
+            if isinstance(node, exp.Window):
+                # Get function name
+                func = node.this
+                # Try sql_name() first (works for ROW_NUMBER, RANK, etc.), fall back to type name
+                if hasattr(func, "sql_name"):
+                    func_name = func.sql_name()
+                elif hasattr(func, "name") and func.name:
+                    func_name = func.name
+                else:
+                    func_name = type(func).__name__
+                window_functions.append(func_name.upper())
+
+                # Get PARTITION BY columns
+                partition_by = node.args.get("partition_by")
+                if partition_by:
+                    for partition_expr in partition_by:
+                        for col in partition_expr.find_all(exp.Column):
+                            table_ref = str(col.table) if col.table else None
+                            col_name = col.name
+                            full_name = f"{table_ref}.{col_name}" if table_ref else col_name
+                            if full_name not in partition_columns:
+                                partition_columns.append(full_name)
+
+                # Get ORDER BY columns
+                order_by = node.args.get("order")
+                if order_by and hasattr(order_by, "expressions"):
+                    for order_expr in order_by.expressions:
+                        expr_node = (
+                            order_expr.this if isinstance(order_expr, exp.Ordered) else order_expr
+                        )
+                        for col in expr_node.find_all(exp.Column):
+                            table_ref = str(col.table) if col.table else None
+                            col_name = col.name
+                            full_name = f"{table_ref}.{col_name}" if table_ref else col_name
+                            if full_name not in order_columns:
+                                order_columns.append(full_name)
+
+        # Store QUALIFY info on the unit
+        unit.qualify_info = {
+            "condition": condition.sql(),
+            "partition_columns": partition_columns,
+            "order_columns": order_columns,
+            "window_functions": window_functions,
+        }
 
     def _parse_select_subqueries(self, expr: exp.Expression, parent_unit: QueryUnit, depth: int):
         """Parse scalar subqueries in SELECT clause"""
