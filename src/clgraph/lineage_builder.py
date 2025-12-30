@@ -483,6 +483,141 @@ class RecursiveLineageBuilder:
         if unit.grouping_config:
             self._create_grouping_edges(unit, output_cols)
 
+        # 8. Create window function edges for PARTITION BY, ORDER BY columns
+        if unit.window_info:
+            self._create_window_function_edges(unit, output_cols)
+
+    def _create_window_function_edges(self, unit: QueryUnit, output_cols: List[Dict]):
+        """
+        Create edges for columns used in window functions.
+
+        Window functions have dependencies on:
+        - Function arguments (the columns being aggregated/calculated)
+        - PARTITION BY columns (determine row grouping)
+        - ORDER BY columns (determine row ordering within partitions)
+
+        Args:
+            unit: The query unit with window_info
+            output_cols: The output columns of this unit
+        """
+        window_info = unit.window_info
+        if not window_info:
+            return
+
+        windows = window_info.get("windows", [])
+
+        for window_def in windows:
+            output_column = window_def.get("output_column")
+            func_name = window_def.get("function", "")
+            arguments = window_def.get("arguments", [])
+            partition_by = window_def.get("partition_by", [])
+            order_by = window_def.get("order_by", [])
+            frame_type = window_def.get("frame_type")
+            frame_start = window_def.get("frame_start")
+            frame_end = window_def.get("frame_end")
+
+            # Find the output node for this window function
+            output_node = None
+            for col_info in output_cols:
+                col_name = col_info.get("name") or col_info.get("alias")
+                if col_name == output_column:
+                    node_key = self._get_node_key(unit, col_info)
+                    if node_key in self.lineage_graph.nodes:
+                        output_node = self.lineage_graph.nodes[node_key]
+                        break
+
+            if not output_node:
+                continue
+
+            # 1. Create edges for function arguments (window_aggregate)
+            for arg_col in arguments:
+                source_node = self._resolve_window_column(unit, arg_col)
+                if source_node:
+                    edge = ColumnEdge(
+                        from_node=source_node,
+                        to_node=output_node,
+                        edge_type="window_aggregate",
+                        transformation=f"{func_name}({arg_col})",
+                        context="WINDOW",
+                        is_window_function=True,
+                        window_role="aggregate",
+                        window_function=func_name,
+                        window_frame_type=frame_type,
+                        window_frame_start=frame_start,
+                        window_frame_end=frame_end,
+                    )
+                    self.lineage_graph.add_edge(edge)
+
+            # 2. Create edges for PARTITION BY columns
+            for part_col in partition_by:
+                source_node = self._resolve_window_column(unit, part_col)
+                if source_node:
+                    edge = ColumnEdge(
+                        from_node=source_node,
+                        to_node=output_node,
+                        edge_type="window_partition",
+                        transformation=f"PARTITION BY {part_col}",
+                        context="WINDOW",
+                        is_window_function=True,
+                        window_role="partition",
+                        window_function=func_name,
+                        window_frame_type=frame_type,
+                        window_frame_start=frame_start,
+                        window_frame_end=frame_end,
+                    )
+                    self.lineage_graph.add_edge(edge)
+
+            # 3. Create edges for ORDER BY columns
+            for order_col_info in order_by:
+                order_col = (
+                    order_col_info.get("column")
+                    if isinstance(order_col_info, dict)
+                    else order_col_info
+                )
+                direction = (
+                    order_col_info.get("direction", "asc")
+                    if isinstance(order_col_info, dict)
+                    else "asc"
+                )
+                nulls = (
+                    order_col_info.get("nulls", "last")
+                    if isinstance(order_col_info, dict)
+                    else "last"
+                )
+
+                source_node = self._resolve_window_column(unit, order_col)
+                if source_node:
+                    edge = ColumnEdge(
+                        from_node=source_node,
+                        to_node=output_node,
+                        edge_type="window_order",
+                        transformation=f"ORDER BY {order_col} {direction.upper()}",
+                        context="WINDOW",
+                        is_window_function=True,
+                        window_role="order",
+                        window_function=func_name,
+                        window_frame_type=frame_type,
+                        window_frame_start=frame_start,
+                        window_frame_end=frame_end,
+                        window_order_direction=direction,
+                        window_order_nulls=nulls,
+                    )
+                    self.lineage_graph.add_edge(edge)
+
+    def _resolve_window_column(self, unit: QueryUnit, col_ref: str) -> Optional[ColumnNode]:
+        """
+        Resolve a column reference from a window function to a ColumnNode.
+
+        Args:
+            unit: The query unit
+            col_ref: Column reference like "amount" or "orders.amount"
+
+        Returns:
+            ColumnNode or None if not found
+        """
+        # Reuse the QUALIFY column resolution logic
+        return self._resolve_qualify_column(unit, col_ref)
+
     def _create_grouping_edges(self, unit: QueryUnit, output_cols: List[Dict]):
         """
         Create edges for columns used in GROUPING SETS/CUBE/ROLLUP.

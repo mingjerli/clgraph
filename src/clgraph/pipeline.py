@@ -424,6 +424,15 @@ class PipelineLineageBuilder:
                     # Preserve GROUPING SETS/CUBE/ROLLUP metadata
                     is_grouping_column=getattr(edge, "is_grouping_column", False),
                     grouping_type=getattr(edge, "grouping_type", None),
+                    # Preserve window function metadata
+                    is_window_function=getattr(edge, "is_window_function", False),
+                    window_role=getattr(edge, "window_role", None),
+                    window_function=getattr(edge, "window_function", None),
+                    window_frame_type=getattr(edge, "window_frame_type", None),
+                    window_frame_start=getattr(edge, "window_frame_start", None),
+                    window_frame_end=getattr(edge, "window_frame_end", None),
+                    window_order_direction=getattr(edge, "window_order_direction", None),
+                    window_order_nulls=getattr(edge, "window_order_nulls", None),
                 )
                 pipeline.add_edge(pipeline_edge)
 

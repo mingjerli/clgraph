@@ -197,6 +197,17 @@ class QueryUnit:
     #           'grouping_sets': [['region', 'product'], ['region'], ['product'], []]}
     grouping_config: Optional[Dict[str, Any]] = None
 
+    # Window function metadata
+    # Stores info about window functions used in this query unit
+    # Example: {'windows': [{'output_column': 'rolling_sum', 'function': 'SUM', 'arguments': ['amount'],
+    #                        'partition_by': ['customer_id'], 'order_by': [{'column': 'date', 'direction': 'asc'}],
+    #                        'frame_type': 'rows', 'frame_start': '6 preceding', 'frame_end': 'current row'}]}
+    window_info: Optional[Dict[str, Any]] = None
+
+    # Named window definitions from WINDOW clause
+    # Example: {'w': {'partition_by': ['c'], 'order_by': [{'column': 'd', 'direction': 'asc'}]}}
+    window_definitions: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+
     # Metadata
     depth: int = 0  # Nesting depth (0 = main query)
     order: int = 0  # Topological order for CTEs
@@ -431,6 +442,16 @@ class ColumnEdge:
     # ─── GROUPING SETS/CUBE/ROLLUP Metadata ───
     is_grouping_column: bool = False  # True if column is used in GROUPING SETS/CUBE/ROLLUP
     grouping_type: Optional[str] = None  # "cube", "rollup", "grouping_sets"
+
+    # ─── Window Function Metadata ───
+    is_window_function: bool = False  # True if this edge involves a window function
+    window_role: Optional[str] = None  # "aggregate", "partition", "order"
+    window_function: Optional[str] = None  # Function name (e.g., "SUM", "ROW_NUMBER", "LAG")
+    window_frame_type: Optional[str] = None  # "rows", "range", "groups"
+    window_frame_start: Optional[str] = None  # "unbounded preceding", "3 preceding", etc.
+    window_frame_end: Optional[str] = None  # "current row", "1 following", etc.
+    window_order_direction: Optional[str] = None  # "asc" or "desc" (for order edges)
+    window_order_nulls: Optional[str] = None  # "first" or "last" (for order edges)
 
     def __hash__(self):
         return hash((self.from_node.full_name, self.to_node.full_name, self.edge_type))

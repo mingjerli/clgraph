@@ -157,6 +157,19 @@ class JSONExporter:
                 edge_dict["is_grouping_column"] = True
                 edge_dict["grouping_type"] = getattr(edge, "grouping_type", None)
 
+            # Include window function metadata if present
+            if getattr(edge, "is_window_function", False):
+                edge_dict["is_window_function"] = True
+                edge_dict["window_role"] = getattr(edge, "window_role", None)
+                edge_dict["window_function"] = getattr(edge, "window_function", None)
+                edge_dict["window_frame_type"] = getattr(edge, "window_frame_type", None)
+                edge_dict["window_frame_start"] = getattr(edge, "window_frame_start", None)
+                edge_dict["window_frame_end"] = getattr(edge, "window_frame_end", None)
+                if getattr(edge, "window_order_direction", None):
+                    edge_dict["window_order_direction"] = edge.window_order_direction
+                if getattr(edge, "window_order_nulls", None):
+                    edge_dict["window_order_nulls"] = edge.window_order_nulls
+
             result["edges"].append(edge_dict)
 
         # Export tables
