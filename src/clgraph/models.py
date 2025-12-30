@@ -379,6 +379,10 @@ class ColumnEdge:
     expansion_type: Optional[str] = None  # "unnest", "flatten", "explode"
     offset_column: Optional[str] = None  # Position column name if WITH OFFSET
 
+    # ─── Nested Access Metadata ───
+    nested_path: Optional[str] = None  # Normalized path like "[0].field" or "['key']"
+    access_type: Optional[str] = None  # "array", "map", "struct", or "mixed"
+
     def __hash__(self):
         return hash((self.from_node.full_name, self.to_node.full_name))
 

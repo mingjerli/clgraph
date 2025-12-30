@@ -251,6 +251,146 @@ def _find_json_function_ancestor(
 
 
 # ============================================================================
+# Nested Access (Struct/Array/Map) Detection and Extraction
+# ============================================================================
+
+
+def _is_nested_access_expression(expr: exp.Expression) -> bool:
+    """
+    Check if expression involves nested field/subscript access.
+
+    Detects:
+    - exp.Dot: struct.field (after array access like items[0].name)
+    - exp.Bracket: array[index] or map['key']
+    """
+    return isinstance(expr, (exp.Dot, exp.Bracket))
+
+
+def _extract_nested_path_from_expression(
+    expr: exp.Expression,
+) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
+    """
+    Extract nested path from Dot or Bracket expressions.
+
+    Args:
+        expr: The expression to analyze (Dot or Bracket)
+
+    Returns:
+        Tuple of (table_ref, column_name, nested_path, access_type):
+        - table_ref: Table/alias name or None
+        - column_name: Base column name
+        - nested_path: Normalized path like "[0].field" or "['key']"
+        - access_type: "array", "map", "struct", or "mixed"
+    """
+    components: List[str] = []
+    access_types: Set[str] = set()
+    current = expr
+
+    # Walk down the expression tree to build the path
+    while True:
+        if isinstance(current, exp.Dot):
+            # Struct field access: items[0].product_id
+            # exp.Dot has 'this' (the object) and 'expression' (the field name)
+            if hasattr(current, "expression") and current.expression:
+                field_name = (
+                    current.expression.name
+                    if hasattr(current.expression, "name")
+                    else str(current.expression)
+                )
+                components.insert(0, f".{field_name}")
+                access_types.add("struct")
+            current = current.this
+
+        elif isinstance(current, exp.Bracket):
+            # Array index or map key access
+            if current.expressions:
+                key_expr = current.expressions[0]
+
+                if isinstance(key_expr, exp.Literal):
+                    if key_expr.is_int:
+                        # Array index
+                        idx = int(key_expr.this)
+                        components.insert(0, f"[{idx}]")
+                        access_types.add("array")
+                    elif key_expr.is_string:
+                        # Map key
+                        key = str(key_expr.this)
+                        components.insert(0, f"['{key}']")
+                        access_types.add("map")
+                else:
+                    # Dynamic index/key (variable)
+                    components.insert(0, "[*]")
+                    access_types.add("array")
+            current = current.this
+
+        elif isinstance(current, exp.Column):
+            # Reached the base column
+            table_ref = None
+            if hasattr(current, "table") and current.table:
+                table_ref = (
+                    str(current.table.name)
+                    if hasattr(current.table, "name")
+                    else str(current.table)
+                )
+
+            nested_path = "".join(components) if components else None
+
+            # Determine access type
+            if len(access_types) == 0:
+                access_type = None
+            elif len(access_types) == 1:
+                access_type = access_types.pop()
+            else:
+                access_type = "mixed"
+
+            return (table_ref, current.name, nested_path, access_type)
+
+        else:
+            # Unknown node type, stop
+            break
+
+    return (None, None, None, None)
+
+
+def _find_nested_access_ancestor(
+    column: exp.Column, root: exp.Expression
+) -> Optional[exp.Expression]:
+    """
+    Find if a column is the base of a nested access expression.
+
+    Walks up the AST from the column to find if it's inside a Dot or Bracket.
+
+    Args:
+        column: The column expression to check
+        root: The root expression to search within
+
+    Returns:
+        The outermost nested access expression (Dot or Bracket) if found
+    """
+    # Build parent map for efficient ancestor lookup
+    parent_map: Dict[int, exp.Expression] = {}
+
+    def build_parent_map(node: exp.Expression, parent: Optional[exp.Expression] = None):
+        if parent is not None:
+            parent_map[id(node)] = parent
+        for child in node.iter_expressions():
+            build_parent_map(child, node)
+
+    build_parent_map(root)
+
+    # Walk up from column to find nested access expressions
+    current: Optional[exp.Expression] = column
+    outermost_nested: Optional[exp.Expression] = None
+
+    while current is not None:
+        if isinstance(current, (exp.Dot, exp.Bracket)):
+            outermost_nested = current
+        current = parent_map.get(id(current))
+
+    return outermost_nested
+
+
+# ============================================================================
 # Part 1: Recursive Lineage Builder
 # ============================================================================
 
@@ -863,13 +1003,19 @@ class RecursiveLineageBuilder:
                 return
 
             for source_ref in source_refs:
-                # Unpack source reference (now includes JSON metadata)
-                # Handle both old 2-tuple and new 4-tuple formats for backward compatibility
-                if len(source_ref) == 4:
+                # Unpack source reference (now includes JSON and nested access metadata)
+                # Handle different tuple formats for backward compatibility
+                if len(source_ref) >= 6:
+                    table_ref, col_name, json_path, json_function, nested_path, access_type = (
+                        source_ref
+                    )
+                elif len(source_ref) == 4:
                     table_ref, col_name, json_path, json_function = source_ref
+                    nested_path, access_type = None, None
                 else:
                     table_ref, col_name = source_ref[:2]
                     json_path, json_function = None, None
+                    nested_path, access_type = None, None
 
                 # Resolve table_ref to either a query unit or base table
                 # If table_ref is None, try to infer the default source
@@ -922,6 +1068,8 @@ class RecursiveLineageBuilder:
                             expression=col_info["expression"],
                             json_path=json_path,
                             json_function=json_function,
+                            nested_path=nested_path,
+                            access_type=access_type,
                         )
                         self.lineage_graph.add_edge(edge)
 
@@ -944,6 +1092,8 @@ class RecursiveLineageBuilder:
                             expression=col_info["expression"],
                             json_path=json_path,
                             json_function=json_function,
+                            nested_path=nested_path,
+                            access_type=access_type,
                         )
                         self.lineage_graph.add_edge(edge)
 
@@ -1303,24 +1453,72 @@ class RecursiveLineageBuilder:
 
     def _extract_source_column_refs(
         self, expr: exp.Expression
-    ) -> List[Tuple[Optional[str], str, Optional[str], Optional[str]]]:
+    ) -> List[
+        Tuple[Optional[str], str, Optional[str], Optional[str], Optional[str], Optional[str]]
+    ]:
         """
-        Extract source column references from expression with JSON metadata.
+        Extract source column references from expression with JSON and nested access metadata.
 
         Args:
             expr: The SQL expression to analyze
 
         Returns:
-            List of tuples: (table_ref, column_name, json_path, json_function)
+            List of tuples: (table_ref, column_name, json_path, json_function, nested_path, access_type)
             - table_ref: Table/alias name or None for unqualified columns
             - column_name: Column name
             - json_path: Normalized JSON path (e.g., "$.address.city") or None
             - json_function: JSON function name (e.g., "JSON_EXTRACT") or None
+            - nested_path: Normalized nested path (e.g., "[0].field") or None
+            - access_type: "array", "map", "struct", "mixed" or None
         """
-        refs: List[Tuple[Optional[str], str, Optional[str], Optional[str]]] = []
+        refs: List[
+            Tuple[Optional[str], str, Optional[str], Optional[str], Optional[str], Optional[str]]
+        ] = []
+        processed_columns: Set[int] = set()  # Track processed columns to avoid duplicates
 
+        # First pass: process Dot and Bracket expressions to extract nested paths
+        for node in expr.walk():
+            if isinstance(node, (exp.Dot, exp.Bracket)):
+                # Extract nested path info
+                (
+                    table_ref,
+                    column_name,
+                    nested_path,
+                    access_type,
+                ) = _extract_nested_path_from_expression(node)
+
+                if column_name:
+                    # Check for JSON function ancestor
+                    json_path: Optional[str] = None
+                    json_function: Optional[str] = None
+
+                    # Find the base column to check for JSON ancestor
+                    current = node
+                    while current and not isinstance(current, exp.Column):
+                        current = getattr(current, "this", None)
+
+                    if current and isinstance(current, exp.Column):
+                        processed_columns.add(id(current))
+                        json_ancestor = _find_json_function_ancestor(current, expr)
+                        if json_ancestor:
+                            json_path = _extract_json_path(json_ancestor)
+                            json_function = _get_json_function_name(json_ancestor)
+
+                    refs.append(
+                        (table_ref, column_name, json_path, json_function, nested_path, access_type)
+                    )
+
+        # Second pass: process remaining Column nodes (not part of nested access)
         for node in expr.walk():
             if isinstance(node, exp.Column):
+                if id(node) in processed_columns:
+                    continue  # Already processed as part of nested access
+
+                # Check if this column is inside a Dot or Bracket we already processed
+                nested_ancestor = _find_nested_access_ancestor(node, expr)
+                if nested_ancestor:
+                    continue  # Skip, will be handled by the nested access processing
+
                 table_ref: Optional[str] = None
                 if hasattr(node, "table") and node.table:
                     table_ref = (
@@ -1336,7 +1534,7 @@ class RecursiveLineageBuilder:
                     json_path = _extract_json_path(json_ancestor)
                     json_function = _get_json_function_name(json_ancestor)
 
-                refs.append((table_ref, node.name, json_path, json_function))
+                refs.append((table_ref, node.name, json_path, json_function, None, None))
 
         return refs
 

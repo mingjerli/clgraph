@@ -129,6 +129,12 @@ class JSONExporter:
                 if getattr(edge, "offset_column", None):
                     edge_dict["offset_column"] = edge.offset_column
 
+            # Include nested access metadata if present
+            if getattr(edge, "nested_path", None):
+                edge_dict["nested_path"] = edge.nested_path
+            if getattr(edge, "access_type", None):
+                edge_dict["access_type"] = edge.access_type
+
             result["edges"].append(edge_dict)
 
         # Export tables

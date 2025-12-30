@@ -407,6 +407,9 @@ class PipelineLineageBuilder:
                     is_array_expansion=getattr(edge, "is_array_expansion", False),
                     expansion_type=getattr(edge, "expansion_type", None),
                     offset_column=getattr(edge, "offset_column", None),
+                    # Preserve nested access metadata
+                    nested_path=getattr(edge, "nested_path", None),
+                    access_type=getattr(edge, "access_type", None),
                 )
                 pipeline.add_edge(pipeline_edge)
 
