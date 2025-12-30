@@ -163,6 +163,11 @@ class QueryUnit:
     unpivot_config: Optional[Dict[str, Any]] = None  # Configuration for UNPIVOT
     # Example: {'value_column': 'revenue', 'unpivot_columns': ['q1', 'q2', 'q3', 'q4'], 'name_column': 'quarter'}
 
+    # UNNEST/Array expansion sources in FROM clause
+    # Maps alias -> UnnestInfo dict
+    # Example: {'item': {'source_table': 'orders', 'source_column': 'items', 'offset_alias': None, 'expansion_type': 'unnest'}}
+    unnest_sources: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+
     # Metadata
     depth: int = 0  # Nesting depth (0 = main query)
     order: int = 0  # Topological order for CTEs
@@ -368,6 +373,11 @@ class ColumnEdge:
     # ─── JSON Extraction Metadata ───
     json_path: Optional[str] = None  # Normalized JSON path (e.g., "$.address.city")
     json_function: Optional[str] = None  # Original function name (e.g., "JSON_EXTRACT")
+
+    # ─── Array Expansion Metadata ───
+    is_array_expansion: bool = False  # True if this edge is from UNNEST/FLATTEN/EXPLODE
+    expansion_type: Optional[str] = None  # "unnest", "flatten", "explode"
+    offset_column: Optional[str] = None  # Position column name if WITH OFFSET
 
     def __hash__(self):
         return hash((self.from_node.full_name, self.to_node.full_name))

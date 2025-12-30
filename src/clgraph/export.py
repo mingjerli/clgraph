@@ -122,6 +122,13 @@ class JSONExporter:
             if getattr(edge, "json_function", None):
                 edge_dict["json_function"] = edge.json_function
 
+            # Include array expansion metadata if present
+            if getattr(edge, "is_array_expansion", False):
+                edge_dict["is_array_expansion"] = True
+                edge_dict["expansion_type"] = getattr(edge, "expansion_type", None)
+                if getattr(edge, "offset_column", None):
+                    edge_dict["offset_column"] = edge.offset_column
+
             result["edges"].append(edge_dict)
 
         # Export tables

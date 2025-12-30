@@ -476,12 +476,140 @@ class RecursiveQueryParser:
         - Base tables
         - CTEs
         - Subqueries (derived tables)
+        - UNNEST/FLATTEN/EXPLODE expressions (array expansion)
 
         Note: We need to extract table sources from FROM and JOIN clauses only,
         not from the entire subtree (which would include column references).
 
         Also captures alias mappings for proper column reference resolution.
         """
+
+        # Helper to process UNNEST expression
+        def process_unnest_source(unnest_node: exp.Unnest, parent_unit: QueryUnit):
+            """Process UNNEST expression and store metadata in parent_unit."""
+            # Extract the array column being unnested
+            array_expr = None
+            if unnest_node.expressions:
+                array_expr = unnest_node.expressions[0]
+
+            if not array_expr:
+                return
+
+            # Get source table and column from array expression
+            source_table = None
+            source_column = None
+            if isinstance(array_expr, exp.Column):
+                source_column = array_expr.name
+                if hasattr(array_expr, "table") and array_expr.table:
+                    source_table = (
+                        array_expr.table.name
+                        if hasattr(array_expr.table, "name")
+                        else str(array_expr.table)
+                    )
+
+            # Get the alias for the unnested values
+            unnest_alias = None
+            alias_node = unnest_node.args.get("alias")
+            if alias_node:
+                # TableAlias has columns attribute for the value aliases
+                if hasattr(alias_node, "columns") and alias_node.columns:
+                    unnest_alias = alias_node.columns[0].name
+                elif hasattr(alias_node, "this"):
+                    unnest_alias = (
+                        alias_node.this.name
+                        if hasattr(alias_node.this, "name")
+                        else str(alias_node.this)
+                    )
+
+            if not unnest_alias:
+                unnest_alias = f"_unnest_{self.subquery_counter}"
+                self.subquery_counter += 1
+
+            # Get offset alias if WITH OFFSET is used
+            offset_alias = None
+            offset_node = unnest_node.args.get("offset")
+            if offset_node:
+                if hasattr(offset_node, "name"):
+                    offset_alias = offset_node.name
+                elif hasattr(offset_node, "this"):
+                    offset_alias = (
+                        offset_node.this if isinstance(offset_node.this, str) else str(offset_node)
+                    )
+                else:
+                    offset_alias = str(offset_node)
+
+            # Store UNNEST info in parent_unit
+            parent_unit.unnest_sources[unnest_alias] = {
+                "source_table": source_table,
+                "source_column": source_column,
+                "offset_alias": offset_alias,
+                "expansion_type": "unnest",
+            }
+
+            # Also add offset alias if present
+            if offset_alias:
+                parent_unit.unnest_sources[offset_alias] = {
+                    "source_table": source_table,
+                    "source_column": source_column,
+                    "is_offset": True,
+                    "unnest_alias": unnest_alias,
+                    "expansion_type": "unnest",
+                }
+
+        # Helper to process Snowflake LATERAL FLATTEN
+        def process_lateral_flatten(lateral_node: exp.Lateral, parent_unit: QueryUnit):
+            """Process Snowflake LATERAL FLATTEN and store metadata."""
+            inner_expr = lateral_node.this
+            if not isinstance(inner_expr, exp.Explode):
+                return
+
+            # Extract INPUT parameter from FLATTEN
+            source_table = None
+            source_column = None
+
+            input_expr = inner_expr.this
+            if isinstance(input_expr, exp.EQ):
+                # INPUT => col format
+                right = input_expr.right
+                if isinstance(right, exp.Column):
+                    source_column = right.name
+                    if hasattr(right, "table") and right.table:
+                        source_table = (
+                            right.table.name if hasattr(right.table, "name") else str(right.table)
+                        )
+            elif isinstance(input_expr, exp.Column):
+                source_column = input_expr.name
+                if hasattr(input_expr, "table") and input_expr.table:
+                    source_table = (
+                        input_expr.table.name
+                        if hasattr(input_expr.table, "name")
+                        else str(input_expr.table)
+                    )
+
+            # Get alias
+            flatten_alias = None
+            if hasattr(lateral_node, "alias") and lateral_node.alias:
+                if hasattr(lateral_node.alias, "this"):
+                    flatten_alias = (
+                        lateral_node.alias.this.name
+                        if hasattr(lateral_node.alias.this, "name")
+                        else str(lateral_node.alias.this)
+                    )
+                else:
+                    flatten_alias = str(lateral_node.alias)
+
+            if not flatten_alias:
+                flatten_alias = f"_flatten_{self.subquery_counter}"
+                self.subquery_counter += 1
+
+            # Store FLATTEN info
+            parent_unit.unnest_sources[flatten_alias] = {
+                "source_table": source_table,
+                "source_column": source_column,
+                "offset_alias": None,  # FLATTEN uses .INDEX field instead
+                "expansion_type": "flatten",
+                "flatten_fields": ["VALUE", "INDEX", "KEY", "PATH", "SEQ", "THIS"],
+            }
 
         # Helper to process a single table source
         def process_table_source(source_node):
@@ -634,11 +762,22 @@ class RecursiveQueryParser:
         # Process the main FROM source
         if isinstance(from_node, (exp.Table, exp.Subquery)):
             process_table_source(from_node)
+        elif isinstance(from_node, exp.Unnest):
+            # UNNEST directly in FROM clause
+            process_unnest_source(from_node, parent_unit)
+        elif isinstance(from_node, exp.Lateral):
+            # LATERAL FLATTEN (Snowflake)
+            process_lateral_flatten(from_node, parent_unit)
         elif hasattr(from_node, "this"):
             # FROM clause with this attribute
-            process_table_source(from_node.this)
+            if isinstance(from_node.this, exp.Unnest):
+                process_unnest_source(from_node.this, parent_unit)
+            elif isinstance(from_node.this, exp.Lateral):
+                process_lateral_flatten(from_node.this, parent_unit)
+            else:
+                process_table_source(from_node.this)
 
-        # Process JOIN clauses
+        # Process JOIN clauses (includes CROSS JOIN UNNEST)
         # JOINs are stored in the 'joins' attribute
         if hasattr(from_node, "args") and "joins" in from_node.args:
             joins = from_node.args["joins"]
@@ -646,7 +785,43 @@ class RecursiveQueryParser:
                 for join in joins:
                     # Each join has a 'this' which is the table/subquery being joined
                     if hasattr(join, "this"):
-                        process_table_source(join.this)
+                        join_source = join.this
+                        if isinstance(join_source, exp.Unnest):
+                            process_unnest_source(join_source, parent_unit)
+                        elif isinstance(join_source, exp.Lateral):
+                            process_lateral_flatten(join_source, parent_unit)
+                        else:
+                            process_table_source(join_source)
+
+        # Also scan the entire from_node for UNNEST expressions that may be nested
+        for node in from_node.walk():
+            if isinstance(node, exp.Unnest):
+                # Check if we already processed this UNNEST (by checking unnest_sources)
+                alias_node = node.args.get("alias")
+                if alias_node:
+                    alias = None
+                    if hasattr(alias_node, "columns") and alias_node.columns:
+                        alias = alias_node.columns[0].name
+                    elif hasattr(alias_node, "this"):
+                        alias = (
+                            alias_node.this.name
+                            if hasattr(alias_node.this, "name")
+                            else str(alias_node.this)
+                        )
+                    if alias and alias not in parent_unit.unnest_sources:
+                        process_unnest_source(node, parent_unit)
+            elif isinstance(node, exp.Lateral) and isinstance(node.this, exp.Explode):
+                # Snowflake LATERAL FLATTEN
+                if hasattr(node, "alias") and node.alias:
+                    alias = None
+                    if hasattr(node.alias, "this"):
+                        alias = (
+                            node.alias.this.name
+                            if hasattr(node.alias.this, "name")
+                            else str(node.alias.this)
+                        )
+                    if alias and alias not in parent_unit.unnest_sources:
+                        process_lateral_flatten(node, parent_unit)
 
     def _parse_where_subqueries(
         self, where_node: exp.Expression, parent_unit: QueryUnit, depth: int

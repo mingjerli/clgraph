@@ -403,6 +403,10 @@ class PipelineLineageBuilder:
                     # Preserve JSON extraction metadata
                     json_path=getattr(edge, "json_path", None),
                     json_function=getattr(edge, "json_function", None),
+                    # Preserve array expansion metadata
+                    is_array_expansion=getattr(edge, "is_array_expansion", False),
+                    expansion_type=getattr(edge, "expansion_type", None),
+                    offset_column=getattr(edge, "offset_column", None),
                 )
                 pipeline.add_edge(pipeline_edge)
 

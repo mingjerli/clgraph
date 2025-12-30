@@ -874,11 +874,33 @@ class RecursiveLineageBuilder:
                 # Resolve table_ref to either a query unit or base table
                 # If table_ref is None, try to infer the default source
                 effective_table_ref = table_ref
+
+                # Check if this is an UNNEST alias (check both table_ref and col_name)
+                # Case 1: Qualified reference like unnest_alias.field (table_ref = unnest_alias)
+                # Case 2: Unqualified reference where column name is the UNNEST alias itself
+                unnest_info = None
+                if table_ref and table_ref in unit.unnest_sources:
+                    unnest_info = unit.unnest_sources[table_ref]
+                elif not table_ref and col_name in unit.unnest_sources:
+                    # Unqualified column name matches UNNEST alias
+                    unnest_info = unit.unnest_sources[col_name]
+
                 if not table_ref:
                     # No explicit table reference - infer from FROM clause
                     default_table = self._get_default_from_table(unit)
                     if default_table:
                         effective_table_ref = default_table
+
+                if unnest_info:
+                    # This is a reference to an UNNEST result
+                    self._create_unnest_edge(
+                        unit=unit,
+                        output_node=output_node,
+                        col_info=col_info,
+                        unnest_info=unnest_info,
+                        col_name=col_name,
+                    )
+                    continue
 
                 source_unit = (
                     self._resolve_source_unit(unit, effective_table_ref)
@@ -1143,6 +1165,72 @@ class RecursiveLineageBuilder:
         self.lineage_graph.add_node(node)
 
         return node
+
+    def _create_unnest_edge(
+        self,
+        unit: QueryUnit,
+        output_node: ColumnNode,
+        col_info: Dict,
+        unnest_info: Dict[str, Any],
+        col_name: str,
+    ):
+        """
+        Create an array expansion edge from UNNEST source to output column.
+
+        Args:
+            unit: The current query unit
+            output_node: The output column node
+            col_info: Column info dictionary
+            unnest_info: UNNEST metadata from query parser
+            col_name: The column name being referenced (may be field of struct)
+        """
+        source_table = unnest_info.get("source_table")
+        source_column = unnest_info.get("source_column")
+        expansion_type = unnest_info.get("expansion_type", "unnest")
+        offset_alias = unnest_info.get("offset_alias")
+
+        # Handle offset reference (WITH OFFSET)
+        if unnest_info.get("is_offset"):
+            # This is a reference to the offset/position column
+            # The source is still the array column
+            actual_unnest_alias = unnest_info.get("unnest_alias")
+            if actual_unnest_alias and actual_unnest_alias in unit.unnest_sources:
+                actual_unnest_info = unit.unnest_sources[actual_unnest_alias]
+                source_table = actual_unnest_info.get("source_table")
+                source_column = actual_unnest_info.get("source_column")
+
+        if not source_column:
+            # Can't create edge without source column info
+            return
+
+        # Determine the source table (resolve alias if needed)
+        actual_source_table = source_table
+        if source_table and source_table in unit.alias_mapping:
+            actual_source_table, _ = unit.alias_mapping[source_table]
+        elif source_table is None:
+            # Try to get from depends_on_tables
+            if unit.depends_on_tables:
+                actual_source_table = unit.depends_on_tables[0]
+
+        if not actual_source_table:
+            return
+
+        # Create or find the source array column node
+        source_node = self._find_or_create_table_column_node(actual_source_table, source_column)
+
+        # Create edge with array expansion metadata
+        edge = ColumnEdge(
+            from_node=source_node,
+            to_node=output_node,
+            edge_type="array_expansion",
+            transformation="array_expansion",
+            context=unit.unit_type.value,
+            expression=col_info["expression"],
+            is_array_expansion=True,
+            expansion_type=expansion_type,
+            offset_column=offset_alias if unnest_info.get("is_offset") else None,
+        )
+        self.lineage_graph.add_edge(edge)
 
     def _create_column_node(
         self, unit: QueryUnit, col_info: Dict, is_output: bool = False
