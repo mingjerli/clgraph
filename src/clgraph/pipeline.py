@@ -410,6 +410,9 @@ class PipelineLineageBuilder:
                     # Preserve nested access metadata
                     nested_path=getattr(edge, "nested_path", None),
                     access_type=getattr(edge, "access_type", None),
+                    # Preserve LATERAL correlation metadata
+                    is_lateral_correlation=getattr(edge, "is_lateral_correlation", False),
+                    lateral_alias=getattr(edge, "lateral_alias", None),
                 )
                 pipeline.add_edge(pipeline_edge)
 

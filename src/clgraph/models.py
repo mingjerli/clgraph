@@ -168,6 +168,16 @@ class QueryUnit:
     # Example: {'item': {'source_table': 'orders', 'source_column': 'items', 'offset_alias': None, 'expansion_type': 'unnest'}}
     unnest_sources: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
+    # LATERAL subquery metadata
+    is_lateral: bool = False  # True if this is a LATERAL subquery
+    lateral_parent: Optional[str] = None  # unit_id of the preceding table being correlated to
+    correlated_columns: List[str] = field(
+        default_factory=list
+    )  # Columns from outer scope (e.g., ["orders.order_id"])
+    # Maps alias -> LateralInfo dict
+    # Example: {'t': {'correlated_columns': ['orders.order_id'], 'preceding_tables': ['orders']}}
+    lateral_sources: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+
     # Metadata
     depth: int = 0  # Nesting depth (0 = main query)
     order: int = 0  # Topological order for CTEs
@@ -382,6 +392,12 @@ class ColumnEdge:
     # ─── Nested Access Metadata ───
     nested_path: Optional[str] = None  # Normalized path like "[0].field" or "['key']"
     access_type: Optional[str] = None  # "array", "map", "struct", or "mixed"
+
+    # ─── LATERAL Correlation Metadata ───
+    is_lateral_correlation: bool = False  # True if this edge is a LATERAL correlation reference
+    lateral_alias: Optional[str] = (
+        None  # Alias of the LATERAL subquery (e.g., "t" in "LATERAL (...) t")
+    )
 
     def __hash__(self):
         return hash((self.from_node.full_name, self.to_node.full_name))

@@ -611,6 +611,87 @@ class RecursiveQueryParser:
                 "flatten_fields": ["VALUE", "INDEX", "KEY", "PATH", "SEQ", "THIS"],
             }
 
+        # Helper to process general LATERAL subquery (correlated subquery)
+        def process_lateral_subquery(
+            lateral_node: exp.Lateral, parent_unit: QueryUnit, preceding_tables: List[str]
+        ):
+            """Process LATERAL subquery and identify correlated column references.
+
+            Args:
+                lateral_node: The LATERAL AST node
+                parent_unit: The parent query unit
+                preceding_tables: List of table names/aliases that precede this LATERAL
+            """
+            inner_expr = lateral_node.this
+
+            # Skip if this is a FLATTEN (handled separately)
+            if isinstance(inner_expr, exp.Explode):
+                process_lateral_flatten(lateral_node, parent_unit)
+                return
+
+            # Skip if not a Subquery
+            if not isinstance(inner_expr, exp.Subquery):
+                return
+
+            subquery = inner_expr.this
+            if not isinstance(subquery, exp.Select):
+                return
+
+            # Get LATERAL alias
+            lateral_alias = None
+            if hasattr(lateral_node, "alias") and lateral_node.alias:
+                if hasattr(lateral_node.alias, "this"):
+                    lateral_alias = (
+                        lateral_node.alias.this.name
+                        if hasattr(lateral_node.alias.this, "name")
+                        else str(lateral_node.alias.this)
+                    )
+                else:
+                    lateral_alias = str(lateral_node.alias)
+
+            if not lateral_alias:
+                lateral_alias = f"_lateral_{self.subquery_counter}"
+                self.subquery_counter += 1
+
+            # Find all column references in the subquery
+            correlated_columns: List[str] = []
+            for col in subquery.find_all(exp.Column):
+                table_ref = None
+                if hasattr(col, "table") and col.table:
+                    table_ref = (
+                        str(col.table.name) if hasattr(col.table, "name") else str(col.table)
+                    )
+
+                # Check if this column references a preceding table (correlation)
+                if table_ref and table_ref in preceding_tables:
+                    correlated_columns.append(f"{table_ref}.{col.name}")
+
+            # Store LATERAL info
+            parent_unit.lateral_sources[lateral_alias] = {
+                "correlated_columns": correlated_columns,
+                "preceding_tables": preceding_tables.copy(),
+                "subquery_sql": subquery.sql(),
+            }
+
+            # Parse the LATERAL subquery as a unit
+            subquery_name = lateral_alias
+            subquery_unit = self._parse_select_unit(
+                select_node=subquery,
+                unit_type=QueryUnitType.SUBQUERY_FROM,
+                name=subquery_name,
+                parent_unit=parent_unit,
+                depth=depth + 1,
+            )
+
+            # Mark as LATERAL and store correlation info
+            subquery_unit.is_lateral = True
+            subquery_unit.correlated_columns = correlated_columns
+
+            # Add dependency and alias mapping
+            if subquery_unit.unit_id not in parent_unit.depends_on_units:
+                parent_unit.depends_on_units.append(subquery_unit.unit_id)
+            parent_unit.alias_mapping[lateral_alias] = (subquery_name, True)
+
         # Helper to process a single table source
         def process_table_source(source_node):
             if isinstance(source_node, exp.Table):
@@ -759,23 +840,67 @@ class RecursiveQueryParser:
                     # Store alias mapping for subquery
                     parent_unit.alias_mapping[subquery_name] = (subquery_name, True)
 
+        # Helper to get table name/alias from a source node
+        def get_source_name(source_node) -> Optional[str]:
+            """Get the name or alias of a table source."""
+            if isinstance(source_node, exp.Table):
+                if hasattr(source_node, "alias") and source_node.alias:
+                    return str(source_node.alias)
+                return source_node.name
+            elif isinstance(source_node, exp.Subquery):
+                if hasattr(source_node, "alias") and source_node.alias:
+                    return str(source_node.alias)
+            return None
+
+        # Get preceding tables from alias_mapping for LATERAL correlation detection
+        # This allows detecting correlations to tables already registered in previous
+        # calls to _parse_from_sources (e.g., FROM clause before processing JOINs)
+        preceding_tables: List[str] = list(parent_unit.alias_mapping.keys())
+        # Also add tables from depends_on_tables (base tables)
+        preceding_tables.extend(parent_unit.depends_on_tables)
+
+        # Helper to register a table/alias to preceding tables
+        def register_preceding_table(name: str):
+            if name and name not in preceding_tables:
+                preceding_tables.append(name)
+
         # Process the main FROM source
         if isinstance(from_node, (exp.Table, exp.Subquery)):
             process_table_source(from_node)
+            source_name = get_source_name(from_node)
+            if source_name:
+                register_preceding_table(source_name)
         elif isinstance(from_node, exp.Unnest):
             # UNNEST directly in FROM clause
             process_unnest_source(from_node, parent_unit)
         elif isinstance(from_node, exp.Lateral):
-            # LATERAL FLATTEN (Snowflake)
-            process_lateral_flatten(from_node, parent_unit)
+            # LATERAL subquery - process with preceding tables context
+            process_lateral_subquery(from_node, parent_unit, preceding_tables)
+        elif isinstance(from_node, exp.Join):
+            # JOIN clause with a LATERAL subquery inside
+            if hasattr(from_node, "this"):
+                join_source = from_node.this
+                if isinstance(join_source, exp.Lateral):
+                    process_lateral_subquery(join_source, parent_unit, preceding_tables)
+                elif isinstance(join_source, exp.Unnest):
+                    process_unnest_source(join_source, parent_unit)
+                else:
+                    process_table_source(join_source)
+                    source_name = get_source_name(join_source)
+                    if source_name:
+                        register_preceding_table(source_name)
         elif hasattr(from_node, "this"):
             # FROM clause with this attribute
             if isinstance(from_node.this, exp.Unnest):
                 process_unnest_source(from_node.this, parent_unit)
             elif isinstance(from_node.this, exp.Lateral):
-                process_lateral_flatten(from_node.this, parent_unit)
+                # LATERAL subquery - process with preceding tables context
+                process_lateral_subquery(from_node.this, parent_unit, preceding_tables)
             else:
                 process_table_source(from_node.this)
+                source_name = get_source_name(from_node.this)
+                if source_name:
+                    register_preceding_table(source_name)
 
         # Process JOIN clauses (includes CROSS JOIN UNNEST)
         # JOINs are stored in the 'joins' attribute
@@ -789,9 +914,14 @@ class RecursiveQueryParser:
                         if isinstance(join_source, exp.Unnest):
                             process_unnest_source(join_source, parent_unit)
                         elif isinstance(join_source, exp.Lateral):
-                            process_lateral_flatten(join_source, parent_unit)
+                            # LATERAL subquery in JOIN - process with preceding tables
+                            process_lateral_subquery(join_source, parent_unit, preceding_tables)
                         else:
                             process_table_source(join_source)
+                            # Add to preceding tables for subsequent LATERAL
+                            source_name = get_source_name(join_source)
+                            if source_name:
+                                register_preceding_table(source_name)
 
         # Also scan the entire from_node for UNNEST expressions that may be nested
         for node in from_node.walk():
@@ -810,18 +940,34 @@ class RecursiveQueryParser:
                         )
                     if alias and alias not in parent_unit.unnest_sources:
                         process_unnest_source(node, parent_unit)
-            elif isinstance(node, exp.Lateral) and isinstance(node.this, exp.Explode):
-                # Snowflake LATERAL FLATTEN
-                if hasattr(node, "alias") and node.alias:
+            elif isinstance(node, exp.Lateral):
+                # Check if this is a FLATTEN (Explode) or general LATERAL subquery
+                if isinstance(node.this, exp.Explode):
+                    # Snowflake LATERAL FLATTEN
+                    if hasattr(node, "alias") and node.alias:
+                        alias = None
+                        if hasattr(node.alias, "this"):
+                            alias = (
+                                node.alias.this.name
+                                if hasattr(node.alias.this, "name")
+                                else str(node.alias.this)
+                            )
+                        if alias and alias not in parent_unit.unnest_sources:
+                            process_lateral_flatten(node, parent_unit)
+                elif isinstance(node.this, exp.Subquery):
+                    # General LATERAL subquery - check if not already processed
                     alias = None
-                    if hasattr(node.alias, "this"):
-                        alias = (
-                            node.alias.this.name
-                            if hasattr(node.alias.this, "name")
-                            else str(node.alias.this)
-                        )
-                    if alias and alias not in parent_unit.unnest_sources:
-                        process_lateral_flatten(node, parent_unit)
+                    if hasattr(node, "alias") and node.alias:
+                        if hasattr(node.alias, "this"):
+                            alias = (
+                                node.alias.this.name
+                                if hasattr(node.alias.this, "name")
+                                else str(node.alias.this)
+                            )
+                        else:
+                            alias = str(node.alias)
+                    if alias and alias not in parent_unit.lateral_sources:
+                        process_lateral_subquery(node, parent_unit, preceding_tables)
 
     def _parse_where_subqueries(
         self, where_node: exp.Expression, parent_unit: QueryUnit, depth: int

@@ -471,6 +471,53 @@ class RecursiveLineageBuilder:
             self.lineage_graph.nodes[self._get_node_key(unit, col_info)] for col_info in output_cols
         ]
 
+        # 5. Create lateral correlation edges if this is a LATERAL subquery
+        if unit.is_lateral and unit.correlated_columns:
+            self._create_lateral_correlation_edges(unit)
+
+    def _create_lateral_correlation_edges(self, unit: QueryUnit):
+        """
+        Create correlation edges for a LATERAL subquery.
+
+        For each correlated column (reference to outer table), create an edge
+        showing the correlation relationship.
+        """
+        lateral_alias = unit.name
+
+        for correlated_col in unit.correlated_columns:
+            # Parse table.column format
+            parts = correlated_col.split(".", 1)
+            if len(parts) == 2:
+                table_name, col_name = parts
+
+                # Create source node for the correlated column
+                source_node = self._find_or_create_table_column_node(table_name, col_name)
+
+                # Create a correlation context node for the LATERAL subquery
+                # This represents the fact that the LATERAL uses this column for correlation
+                correlation_node = ColumnNode(
+                    full_name=f"{lateral_alias}._correlation.{col_name}",
+                    column_name=f"_correlation.{col_name}",
+                    table_name=lateral_alias,
+                    layer="correlation",
+                    node_type="correlation",
+                    is_star=False,
+                )
+                self.lineage_graph.add_node(correlation_node)
+
+                # Create correlation edge
+                edge = ColumnEdge(
+                    from_node=source_node,
+                    to_node=correlation_node,
+                    edge_type="lateral_correlation",
+                    transformation="lateral_correlation",
+                    context="LATERAL",
+                    expression=f"LATERAL correlation: {correlated_col}",
+                    is_lateral_correlation=True,
+                    lateral_alias=lateral_alias,
+                )
+                self.lineage_graph.add_edge(edge)
+
     def _extract_output_columns(self, unit: QueryUnit) -> List[Dict]:
         """
         Extract output columns from a query unit's SELECT.

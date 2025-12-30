@@ -135,6 +135,11 @@ class JSONExporter:
             if getattr(edge, "access_type", None):
                 edge_dict["access_type"] = edge.access_type
 
+            # Include LATERAL correlation metadata if present
+            if getattr(edge, "is_lateral_correlation", False):
+                edge_dict["is_lateral_correlation"] = True
+                edge_dict["lateral_alias"] = getattr(edge, "lateral_alias", None)
+
             result["edges"].append(edge_dict)
 
         # Export tables
