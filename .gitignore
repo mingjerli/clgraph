@@ -78,6 +78,9 @@ target/
 # Jupyter Notebook
 .ipynb_checkpoints
 
+# Allow example notebooks (explicitly tracked)
+!examples/**/*.ipynb
+
 # IPython
 profile_default/
 ipython_config.py
