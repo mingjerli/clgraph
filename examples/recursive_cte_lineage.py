@@ -187,16 +187,17 @@ def main():
     pipeline = Pipeline(queries, dialect="postgres")
 
     print("\nPipeline Queries:")
-    for q in pipeline.queries:
-        print(f"  {q.query_id}: {q.operation.value}")
+    for query_id, q in pipeline.table_graph.queries.items():
+        print(f"  {query_id}: {q.operation.value}")
         if q.destination_table:
             print(f"    -> {q.destination_table}")
 
     print("\nTable Dependencies:")
     for table_name in pipeline.table_graph.tables:
-        table = pipeline.table_graph.tables[table_name]
-        if table.source_tables:
-            print(f"  {table_name} <- {table.source_tables}")
+        deps = pipeline.table_graph.get_dependencies(table_name)
+        if deps:
+            dep_names = [d.table_name for d in deps]
+            print(f"  {table_name} <- {dep_names}")
 
     # Example 6: Export with Recursive CTE
     print("\n" + "=" * 70)
@@ -221,7 +222,7 @@ def main():
 
     print("\nExported Columns:")
     for col in export_data.get("columns", []):
-        print(f"  {col['table']}.{col['column']}: {col['node_type']}")
+        print(f"  {col['table_name']}.{col['column_name']}: {col['node_type']}")
 
     # Summary
     print("\n" + "=" * 70)
