@@ -433,6 +433,8 @@ class PipelineLineageBuilder:
                     window_frame_end=getattr(edge, "window_frame_end", None),
                     window_order_direction=getattr(edge, "window_order_direction", None),
                     window_order_nulls=getattr(edge, "window_order_nulls", None),
+                    # Preserve complex aggregate metadata
+                    aggregate_spec=getattr(edge, "aggregate_spec", None),
                 )
                 pipeline.add_edge(pipeline_edge)
 

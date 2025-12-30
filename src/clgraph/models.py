@@ -283,6 +283,60 @@ class QueryUnitGraph:
 
 
 # ============================================================================
+# Complex Aggregate Models
+# ============================================================================
+
+
+class AggregateType(Enum):
+    """Type of aggregate function output."""
+
+    SCALAR = "scalar"  # SUM, COUNT, AVG -> single value
+    ARRAY = "array"  # ARRAY_AGG -> array
+    STRING = "string"  # STRING_AGG -> concatenated string
+    OBJECT = "object"  # OBJECT_AGG -> JSON/map
+    STATISTICAL = "statistical"  # PERCENTILE -> computed value
+
+
+@dataclass
+class OrderByColumn:
+    """Column specification in ORDER BY clause."""
+
+    column: str
+    direction: str = "asc"  # "asc" or "desc"
+    nulls: Optional[str] = None  # "first" or "last"
+
+
+@dataclass
+class AggregateSpec:
+    """Specification for an aggregate function."""
+
+    function_name: str
+    aggregate_type: AggregateType
+    return_type: str = "any"  # "array<int>", "string", "object", etc.
+
+    # Input columns
+    value_columns: List[str] = field(default_factory=list)  # Column(s) being aggregated
+    key_columns: List[str] = field(default_factory=list)  # For OBJECT_AGG key column
+
+    # Modifiers
+    distinct: bool = False
+    order_by: List[OrderByColumn] = field(default_factory=list)
+    limit: Optional[int] = None  # For ARRAY_AGG LIMIT
+
+    # Parameters
+    separator: Optional[str] = None  # For STRING_AGG
+    null_handling: str = "exclude"  # "exclude", "include", "respect"
+
+    def __repr__(self) -> str:
+        parts = [self.function_name]
+        if self.distinct:
+            parts.append("DISTINCT")
+        if self.value_columns:
+            parts.append(f"({', '.join(self.value_columns)})")
+        return " ".join(parts)
+
+
+# ============================================================================
 # Column Lineage Models
 # ============================================================================
 
@@ -452,6 +506,9 @@ class ColumnEdge:
     window_frame_end: Optional[str] = None  # "current row", "1 following", etc.
     window_order_direction: Optional[str] = None  # "asc" or "desc" (for order edges)
     window_order_nulls: Optional[str] = None  # "first" or "last" (for order edges)
+
+    # ─── Complex Aggregate Metadata ───
+    aggregate_spec: Optional["AggregateSpec"] = None  # Full aggregate specification
 
     def __hash__(self):
         return hash((self.from_node.full_name, self.to_node.full_name, self.edge_type))
@@ -739,6 +796,10 @@ __all__ = [
     "ColumnNode",
     "ColumnEdge",
     "ColumnLineageGraph",
+    # Complex aggregates
+    "AggregateType",
+    "AggregateSpec",
+    "OrderByColumn",
     # Multi-query pipeline
     "SQLOperation",
     "ParsedQuery",

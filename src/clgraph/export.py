@@ -170,6 +170,27 @@ class JSONExporter:
                 if getattr(edge, "window_order_nulls", None):
                     edge_dict["window_order_nulls"] = edge.window_order_nulls
 
+            # Include complex aggregate specification if present
+            agg_spec = getattr(edge, "aggregate_spec", None)
+            if agg_spec is not None:
+                edge_dict["aggregate_spec"] = {
+                    "function_name": agg_spec.function_name,
+                    "aggregate_type": agg_spec.aggregate_type.value,
+                    "return_type": agg_spec.return_type,
+                    "value_columns": agg_spec.value_columns,
+                    "key_columns": agg_spec.key_columns,
+                    "distinct": agg_spec.distinct,
+                    "order_by": [
+                        {
+                            "column": o.column,
+                            "direction": o.direction,
+                            "nulls": o.nulls,
+                        }
+                        for o in agg_spec.order_by
+                    ],
+                    "separator": agg_spec.separator,
+                }
+
             result["edges"].append(edge_dict)
 
         # Export tables
