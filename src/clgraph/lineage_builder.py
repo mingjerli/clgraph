@@ -479,6 +479,79 @@ class RecursiveLineageBuilder:
         if unit.qualify_info:
             self._create_qualify_edges(unit, output_cols)
 
+        # 7. Create GROUPING SETS/CUBE/ROLLUP edges for grouping columns
+        if unit.grouping_config:
+            self._create_grouping_edges(unit, output_cols)
+
+    def _create_grouping_edges(self, unit: QueryUnit, output_cols: List[Dict]):
+        """
+        Create edges for columns used in GROUPING SETS/CUBE/ROLLUP.
+
+        These constructs generate multiple grouping levels in a single query.
+        The columns used in grouping affect output aggregations.
+
+        Args:
+            unit: The query unit with grouping config
+            output_cols: The output columns of this unit
+        """
+        grouping_config = unit.grouping_config
+        if not grouping_config:
+            return
+
+        grouping_type = grouping_config.get("grouping_type", "")
+        grouping_columns = grouping_config.get("grouping_columns", [])
+
+        # Get the first aggregate output column as the target for grouping edges
+        # (Grouping affects all aggregate columns)
+        output_node = None
+        for col_info in output_cols:
+            if col_info.get("is_aggregate") or col_info.get("type") == "aggregate":
+                node_key = self._get_node_key(unit, col_info)
+                if node_key in self.lineage_graph.nodes:
+                    output_node = self.lineage_graph.nodes[node_key]
+                    break
+
+        # If no aggregate found, use first non-star output column
+        if not output_node:
+            for col_info in output_cols:
+                if not col_info.get("is_star"):
+                    node_key = self._get_node_key(unit, col_info)
+                    if node_key in self.lineage_graph.nodes:
+                        output_node = self.lineage_graph.nodes[node_key]
+                        break
+
+        if not output_node:
+            return
+
+        # Create edges for each grouping column
+        for col_ref in grouping_columns:
+            source_node = self._resolve_grouping_column(unit, col_ref)
+            if source_node:
+                edge = ColumnEdge(
+                    from_node=source_node,
+                    to_node=output_node,
+                    edge_type=f"grouping_{grouping_type}",
+                    transformation=f"grouping_{grouping_type}",
+                    context=grouping_type.upper(),
+                    is_grouping_column=True,
+                    grouping_type=grouping_type,
+                )
+                self.lineage_graph.add_edge(edge)
+
+    def _resolve_grouping_column(self, unit: QueryUnit, col_ref: str) -> Optional[ColumnNode]:
+        """
+        Resolve a column reference from GROUPING to a ColumnNode.
+
+        Args:
+            unit: The query unit
+            col_ref: Column reference like "region" or "sales_data.region"
+
+        Returns:
+            ColumnNode or None if not found
+        """
+        # Reuse the QUALIFY column resolution logic
+        return self._resolve_qualify_column(unit, col_ref)
+
     def _create_qualify_edges(self, unit: QueryUnit, output_cols: List[Dict]):
         """
         Create edges for columns used in QUALIFY clause.

@@ -190,6 +190,13 @@ class QueryUnit:
     #           'window_functions': ['ROW_NUMBER']}
     qualify_info: Optional[Dict[str, Any]] = None
 
+    # GROUPING SETS/CUBE/ROLLUP metadata
+    # Stores info about complex grouping operations
+    # Example: {'grouping_type': 'cube',
+    #           'grouping_columns': ['region', 'product'],
+    #           'grouping_sets': [['region', 'product'], ['region'], ['product'], []]}
+    grouping_config: Optional[Dict[str, Any]] = None
+
     # Metadata
     depth: int = 0  # Nesting depth (0 = main query)
     order: int = 0  # Topological order for CTEs
@@ -420,6 +427,10 @@ class ColumnEdge:
     is_qualify_column: bool = False  # True if this column is used in QUALIFY clause
     qualify_context: Optional[str] = None  # "partition", "order", or "filter"
     qualify_function: Optional[str] = None  # Window function name (e.g., "ROW_NUMBER")
+
+    # ─── GROUPING SETS/CUBE/ROLLUP Metadata ───
+    is_grouping_column: bool = False  # True if column is used in GROUPING SETS/CUBE/ROLLUP
+    grouping_type: Optional[str] = None  # "cube", "rollup", "grouping_sets"
 
     def __hash__(self):
         return hash((self.from_node.full_name, self.to_node.full_name, self.edge_type))

@@ -152,6 +152,11 @@ class JSONExporter:
                 edge_dict["qualify_context"] = getattr(edge, "qualify_context", None)
                 edge_dict["qualify_function"] = getattr(edge, "qualify_function", None)
 
+            # Include GROUPING SETS/CUBE/ROLLUP metadata if present
+            if getattr(edge, "is_grouping_column", False):
+                edge_dict["is_grouping_column"] = True
+                edge_dict["grouping_type"] = getattr(edge, "grouping_type", None)
+
             result["edges"].append(edge_dict)
 
         # Export tables

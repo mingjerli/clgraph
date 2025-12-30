@@ -421,6 +421,9 @@ class PipelineLineageBuilder:
                     is_qualify_column=getattr(edge, "is_qualify_column", False),
                     qualify_context=getattr(edge, "qualify_context", None),
                     qualify_function=getattr(edge, "qualify_function", None),
+                    # Preserve GROUPING SETS/CUBE/ROLLUP metadata
+                    is_grouping_column=getattr(edge, "is_grouping_column", False),
+                    grouping_type=getattr(edge, "grouping_type", None),
                 )
                 pipeline.add_edge(pipeline_edge)
 

@@ -149,11 +149,16 @@ class RecursiveQueryParser:
         if qualify_clause:
             self._parse_qualify_clause(qualify_clause, unit)
 
-        # 7. Parse SELECT expressions (may contain scalar subqueries)
+        # 7. Parse GROUP BY clause for GROUPING SETS/CUBE/ROLLUP
+        group_clause = select_node.args.get("group")
+        if group_clause:
+            self._parse_grouping_sets(group_clause, unit)
+
+        # 8. Parse SELECT expressions (may contain scalar subqueries)
         for expr in select_node.expressions:
             self._parse_select_subqueries(expr, unit, depth)
 
-        # 7. Validate star usage (after parsing FROM/JOINs so we know table count)
+        # 9. Validate star usage (after parsing FROM/JOINs so we know table count)
         self._validate_star_usage(unit, select_node)
 
         # Add unit to graph
@@ -1247,6 +1252,117 @@ class RecursiveQueryParser:
             "order_columns": order_columns,
             "window_functions": window_functions,
         }
+
+    def _parse_grouping_sets(self, group_clause: exp.Group, unit: QueryUnit):
+        """
+        Parse GROUP BY clause for GROUPING SETS, CUBE, and ROLLUP constructs.
+
+        These constructs generate multiple grouping levels in a single query:
+        - CUBE(a, b): All combinations: (a,b), (a), (b), ()
+        - ROLLUP(a, b): Hierarchical: (a,b), (a), ()
+        - GROUPING SETS(...): Explicit list of grouping combinations
+
+        Args:
+            group_clause: The GROUP BY clause expression
+            unit: The query unit to store grouping config
+        """
+        # Check for CUBE
+        cube_list = group_clause.args.get("cube", [])
+        if cube_list:
+            for cube_node in cube_list:
+                if isinstance(cube_node, exp.Cube):
+                    columns = self._extract_grouping_columns(cube_node.expressions)
+                    # CUBE generates all 2^n combinations
+                    grouping_sets = self._expand_cube(columns)
+                    unit.grouping_config = {
+                        "grouping_type": "cube",
+                        "grouping_columns": columns,
+                        "grouping_sets": grouping_sets,
+                    }
+                    return
+
+        # Check for ROLLUP
+        rollup_list = group_clause.args.get("rollup", [])
+        if rollup_list:
+            for rollup_node in rollup_list:
+                if isinstance(rollup_node, exp.Rollup):
+                    columns = self._extract_grouping_columns(rollup_node.expressions)
+                    # ROLLUP generates n+1 hierarchical combinations
+                    grouping_sets = self._expand_rollup(columns)
+                    unit.grouping_config = {
+                        "grouping_type": "rollup",
+                        "grouping_columns": columns,
+                        "grouping_sets": grouping_sets,
+                    }
+                    return
+
+        # Check for GROUPING SETS
+        gs_list = group_clause.args.get("grouping_sets", [])
+        if gs_list:
+            for gs_node in gs_list:
+                if isinstance(gs_node, exp.GroupingSets):
+                    grouping_sets = []
+                    columns_set: set = set()
+                    for set_expr in gs_node.expressions:
+                        if isinstance(set_expr, exp.Tuple):
+                            # Tuple: (a, b)
+                            cols = self._extract_grouping_columns(set_expr.expressions)
+                            grouping_sets.append(cols)
+                            columns_set.update(cols)
+                        elif isinstance(set_expr, exp.Paren):
+                            # Single column: (a)
+                            cols = self._extract_grouping_columns([set_expr.this])
+                            grouping_sets.append(cols)
+                            columns_set.update(cols)
+                        else:
+                            # Could be empty () for grand total
+                            grouping_sets.append([])
+                    unit.grouping_config = {
+                        "grouping_type": "grouping_sets",
+                        "grouping_columns": list(columns_set),
+                        "grouping_sets": grouping_sets,
+                    }
+                    return
+
+    def _extract_grouping_columns(self, expressions: List[exp.Expression]) -> List[str]:
+        """Extract column names from a list of expressions."""
+        columns = []
+        for expr in expressions:
+            if isinstance(expr, exp.Column):
+                table_ref = str(expr.table) if expr.table else None
+                col_name = expr.name
+                full_name = f"{table_ref}.{col_name}" if table_ref else col_name
+                if full_name not in columns:
+                    columns.append(full_name)
+            else:
+                # Walk nested expressions for columns
+                for col in expr.find_all(exp.Column):
+                    table_ref = str(col.table) if col.table else None
+                    col_name = col.name
+                    full_name = f"{table_ref}.{col_name}" if table_ref else col_name
+                    if full_name not in columns:
+                        columns.append(full_name)
+        return columns
+
+    def _expand_cube(self, columns: List[str]) -> List[List[str]]:
+        """Expand CUBE into all 2^n combinations."""
+        from itertools import combinations
+
+        result = []
+        n = len(columns)
+        # Generate all subsets from full set to empty set
+        for r in range(n, -1, -1):
+            for combo in combinations(columns, r):
+                result.append(list(combo))
+        return result
+
+    def _expand_rollup(self, columns: List[str]) -> List[List[str]]:
+        """Expand ROLLUP into hierarchical combinations."""
+        result = []
+        # From full set down to empty set hierarchically
+        for i in range(len(columns), -1, -1):
+            result.append(columns[:i])
+        return result
 
     def _parse_select_subqueries(self, expr: exp.Expression, parent_unit: QueryUnit, depth: int):
         """Parse scalar subqueries in SELECT clause"""
