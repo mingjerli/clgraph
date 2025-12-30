@@ -54,6 +54,13 @@ dev = [
     "ty>=0.0.1a0",
     "jinja2>=3.0.0",
     "duckdb>=0.9.0",
+    # Notebook testing
+    "nbformat>=5.0.0",
+    "nbclient>=0.7.0",
+    "ipykernel>=6.0.0",
+    # For examples that use pandas/numpy
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
     # Include LLM deps for testing
     "langchain>=1.0.0",
     "langchain-core>=1.0.0",

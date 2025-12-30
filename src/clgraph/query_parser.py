@@ -1987,6 +1987,10 @@ class RecursiveQueryParser:
             List of column names (qualified if table is present)
         """
         columns = []
+        if isinstance(expr, str):
+            # Sometimes expr is a string (e.g., from certain window functions)
+            # Just return empty - we can't extract columns from a string
+            return columns
         if isinstance(expr, exp.Column):
             table_ref = str(expr.table) if expr.table else None
             col_name = expr.name
@@ -1994,7 +1998,7 @@ class RecursiveQueryParser:
                 columns.append(f"{table_ref}.{col_name}")
             else:
                 columns.append(col_name)
-        else:
+        elif hasattr(expr, "find_all"):
             # Walk expression tree for columns
             for col in expr.find_all(exp.Column):
                 table_ref = str(col.table) if col.table else None

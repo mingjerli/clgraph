@@ -1,16 +1,11 @@
 # clgraph Examples
 
-This directory contains comprehensive examples demonstrating various features of clgraph for SQL column lineage analysis.
+This directory contains comprehensive Jupyter notebook examples demonstrating various features of clgraph for SQL column lineage analysis.
 
 ## Basic Examples
 
-### `simple_example.py`
+### `simple_example.ipynb`
 Basic introduction to clgraph with CTEs and joins.
-
-**Run:**
-```bash
-python examples/simple_example.py
-```
 
 **Features demonstrated:**
 - Basic column lineage tracing
@@ -20,13 +15,8 @@ python examples/simple_example.py
 
 ---
 
-### `pipeline_example.py`
+### `pipeline_example.ipynb`
 Multi-query pipeline analysis demonstrating cross-query lineage tracking.
-
-**Run:**
-```bash
-python examples/pipeline_example.py
-```
 
 **Features demonstrated:**
 - Multi-query pipelines
@@ -38,13 +28,8 @@ python examples/pipeline_example.py
 
 ## Advanced Features
 
-### `metadata_and_export_example.py`
+### `metadata_and_export_example.ipynb`
 Working with metadata, descriptions, and exporting lineage.
-
-**Run:**
-```bash
-python examples/metadata_and_export_example.py
-```
 
 **Features demonstrated:**
 - Column metadata (PII, owner, tags)
@@ -54,13 +39,8 @@ python examples/metadata_and_export_example.py
 
 ---
 
-### `metadata_comments_example.py`
+### `metadata_comments_example.ipynb`
 Extracting and using metadata from SQL comments.
-
-**Run:**
-```bash
-python examples/metadata_comments_example.py
-```
 
 **Features demonstrated:**
 - SQL comment parsing
@@ -69,28 +49,20 @@ python examples/metadata_comments_example.py
 
 ---
 
-### `llm_description_generation.py`
+### `llm_description_generation.ipynb`
 Using LLMs to generate column descriptions.
-
-**Run:**
-```bash
-python examples/llm_description_generation.py
-```
 
 **Features demonstrated:**
 - LLM-powered description generation
 - Automated documentation
 - Description propagation
 
+**Note:** Requires Ollama or LLM API access.
+
 ---
 
-### `pipeline_execution_example.py`
+### `pipeline_execution_example.ipynb`
 Pipeline execution and orchestration.
-
-**Run:**
-```bash
-python examples/pipeline_execution_example.py
-```
 
 **Features demonstrated:**
 - Synchronous pipeline execution
@@ -100,15 +72,10 @@ python examples/pipeline_execution_example.py
 
 ---
 
-## Set Operations (NEW)
+## Set Operations
 
-### `set_operations_example.py`
+### `set_operations_example.ipynb`
 Comprehensive examples of UNION, INTERSECT, and EXCEPT operations.
-
-**Run:**
-```bash
-python examples/set_operations_example.py
-```
 
 **Features demonstrated:**
 - UNION ALL - combining datasets
@@ -119,26 +86,12 @@ python examples/set_operations_example.py
 - Set operations with CTEs
 - Set operations with subqueries
 
-**Examples included:**
-1. Basic UNION ALL - Active and archived users
-2. UNION DISTINCT - User ID deduplication
-3. Three-way UNION - Multiple data sources
-4. INTERSECT - Common elements
-5. EXCEPT - Set differences
-6. UNION with CTEs - Complex aggregations
-7. UNION with subqueries - Nested patterns
-
 ---
 
-## PIVOT Operations (NEW)
+## PIVOT Operations
 
-### `pivot_example.py`
+### `pivot_example.ipynb`
 Comprehensive examples of PIVOT operations for transforming rows to columns.
-
-**Run:**
-```bash
-python examples/pivot_example.py
-```
 
 **Features demonstrated:**
 - Basic PIVOT - quarterly data transformation
@@ -148,31 +101,12 @@ python examples/pivot_example.py
 - PIVOT with filters and JOINs
 - Real-world financial reporting
 
-**Examples included:**
-1. Basic PIVOT - Quarterly sales by product
-2. PIVOT from base table - Regional revenue
-3. Multiple aggregations - Sales and orders
-4. PIVOT with CTE - User activity analysis
-5. PIVOT with filters - Product performance
-6. Real-world example - Financial reporting
-
-**Use cases:**
-- Creating cross-tabulations
-- Building dashboards
-- Transforming time-series data
-- Financial reporting
-
 ---
 
-## UNPIVOT Operations (NEW)
+## UNPIVOT Operations
 
-### `unpivot_example.py`
+### `unpivot_example.ipynb`
 Comprehensive examples of UNPIVOT operations for normalizing data.
-
-**Run:**
-```bash
-python examples/unpivot_example.py
-```
 
 **Features demonstrated:**
 - Basic UNPIVOT - quarterly normalization
@@ -180,75 +114,64 @@ python examples/unpivot_example.py
 - NULL handling with INCLUDE NULLS
 - UNPIVOT with CTEs
 - Real-world survey data analysis
-- PIVOT vs UNPIVOT comparison
-
-**Examples included:**
-1. Basic UNPIVOT - Quarterly revenue
-2. Multiple measures - Sales and costs
-3. NULL handling - Include/exclude NULLs
-4. UNPIVOT with CTE - Normalized reporting
-5. Real-world example - Survey responses
-6. PIVOT vs UNPIVOT comparison
-
-**Use cases:**
-- Normalizing wide-format data
-- Survey data analysis
-- Time-series normalization
-- Database schema migration
-
-**Note:** UNPIVOT support in sqlglot may be limited for some dialects.
 
 ---
 
-## Running Examples
+## Running Notebooks
 
-All examples can be run directly with Python:
+### Using Jupyter
 
-```bash
-# Basic example
-python examples/simple_example.py
-
-# Set operations
-python examples/set_operations_example.py
-
-# PIVOT operations
-python examples/pivot_example.py
-
-# UNPIVOT operations
-python examples/unpivot_example.py
-```
-
-Or using uv (if configured):
+Open notebooks directly in Jupyter Lab or Jupyter Notebook:
 
 ```bash
-uv run python examples/simple_example.py
+# Install Jupyter if needed
+pip install jupyterlab
+
+# Start Jupyter
+jupyter lab examples/
 ```
 
----
+### Running All Notebooks (Testing)
 
-## Example Output
+To verify all notebooks run correctly:
 
-Each example includes:
-- ✅ Clear SQL query examples
-- ✅ Explanation of what the query does
-- ✅ Visual before/after transformations (for PIVOT/UNPIVOT)
-- ✅ Lineage analysis results
-- ✅ Node and edge counts
-- ✅ Output column listings
-- ✅ Source table identification
+```bash
+# From the clgraph directory
+python run_all_notebooks.py --skip-llm
+
+# Include LLM examples (requires Ollama)
+python run_all_notebooks.py
+```
+
+Or using make:
+
+```bash
+make check-examples        # Skip LLM examples
+make check-examples-llm    # Include LLM examples
+```
 
 ---
 
 ## SQL Files
 
-The `sql_files/` directory contains example SQL queries used in pipeline analysis:
+The `sql_files/` directory contains:
+- Example SQL queries for pipeline analysis
+- Notebooks demonstrating file-based pipeline workflows:
+  - `run_lineage.ipynb` - Lineage analysis from SQL files
+  - `run_metadata.ipynb` - Metadata management example
+  - `run_with_duckdb.ipynb` - Execute pipeline with DuckDB
 
-```bash
-examples/sql_files/
-├── staging/      # Staging layer queries
-├── analytics/    # Analytics layer queries
-└── reporting/    # Reporting layer queries
-```
+---
+
+## Example Output
+
+Each notebook includes:
+- Clear SQL query examples
+- Markdown explanations for each step
+- Lineage analysis results
+- Node and edge counts
+- Output column listings
+- Source table identification
 
 ---
 
@@ -266,7 +189,6 @@ After exploring these examples, check out:
 
 For questions or issues:
 - GitHub Issues: https://github.com/mingjerli/clgraph/issues
-- Documentation: (link to docs site)
 
 ---
 
@@ -274,6 +196,6 @@ For questions or issues:
 
 Have a good example to share? Contributions are welcome!
 1. Fork the repository
-2. Add your example to this directory
+2. Add your notebook to this directory
 3. Update this README
 4. Submit a pull request
