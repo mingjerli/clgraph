@@ -101,10 +101,10 @@ class NotebookRunner:
             if self.save_outputs and nb is not None:
                 nbformat.write(nb, notebook_path)
             # Include traceback for better debugging
-            error_msg = f"Cell execution error in cell {e.cell_index}: {e.ename}: {e.evalue}"
-            if e.traceback:
+            error_msg = f"Cell execution error: {e.ename}: {e.evalue}"
+            if hasattr(e, "traceback") and e.traceback:
                 # Get last few lines of traceback for context
-                tb_lines = e.traceback.split("\n")[-10:]
+                tb_lines = str(e.traceback).split("\n")[-10:]
                 error_msg += "\n    Traceback:\n    " + "\n    ".join(tb_lines)
             return False, error_msg
         except TimeoutError:
