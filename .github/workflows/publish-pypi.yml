@@ -37,7 +37,7 @@ jobs:
         run: uv run ruff format --check .
 
       - name: Run tests
-        run: uv run pytest tests/ -v --cov=src/clpipe --cov-report=term-missing
+        run: uv run pytest tests/ -v --cov=src/clgraph --cov-report=term-missing
 
   build:
     name: Build Distribution
@@ -75,7 +75,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: testpypi
-      url: https://test.pypi.org/project/clpipe/
+      url: https://test.pypi.org/project/clgraph/
     permissions:
       id-token: write  # Required for trusted publishing
 
