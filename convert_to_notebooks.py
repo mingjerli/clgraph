@@ -141,7 +141,6 @@ def split_by_section_markers(code: str) -> list[tuple[str, str]]:
     # Patterns that indicate a new section
     separator_pattern = re.compile(r"^# [=\-]{10,}$")
     step_pattern = re.compile(r"^# (Step \d+|Example \d+|\d+\.)")
-    header_pattern = re.compile(r"^# [A-Z][^#]*$")  # # TITLE or # Title...
 
     i = 0
     while i < len(lines):
