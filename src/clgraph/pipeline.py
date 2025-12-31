@@ -372,6 +372,14 @@ class PipelineLineageBuilder:
                 is_star=node.is_star,
                 except_columns=node.except_columns,
                 replace_columns=node.replace_columns,
+                # TVF/Synthetic column fields
+                is_synthetic=getattr(node, "is_synthetic", False),
+                synthetic_source=getattr(node, "synthetic_source", None),
+                tvf_parameters=getattr(node, "tvf_parameters", {}),
+                # VALUES/Literal column fields
+                is_literal=getattr(node, "is_literal", False),
+                literal_values=getattr(node, "literal_values", None),
+                literal_type=getattr(node, "literal_type", None),
             )
             pipeline.add_column(column)
 
@@ -400,6 +408,41 @@ class PipelineLineageBuilder:
                     transformation=edge.transformation,
                     context=edge.context,
                     query_id=query.query_id,
+                    # Preserve JSON extraction metadata
+                    json_path=getattr(edge, "json_path", None),
+                    json_function=getattr(edge, "json_function", None),
+                    # Preserve array expansion metadata
+                    is_array_expansion=getattr(edge, "is_array_expansion", False),
+                    expansion_type=getattr(edge, "expansion_type", None),
+                    offset_column=getattr(edge, "offset_column", None),
+                    # Preserve nested access metadata
+                    nested_path=getattr(edge, "nested_path", None),
+                    access_type=getattr(edge, "access_type", None),
+                    # Preserve LATERAL correlation metadata
+                    is_lateral_correlation=getattr(edge, "is_lateral_correlation", False),
+                    lateral_alias=getattr(edge, "lateral_alias", None),
+                    # Preserve MERGE operation metadata
+                    is_merge_operation=getattr(edge, "is_merge_operation", False),
+                    merge_action=getattr(edge, "merge_action", None),
+                    merge_condition=getattr(edge, "merge_condition", None),
+                    # Preserve QUALIFY clause metadata
+                    is_qualify_column=getattr(edge, "is_qualify_column", False),
+                    qualify_context=getattr(edge, "qualify_context", None),
+                    qualify_function=getattr(edge, "qualify_function", None),
+                    # Preserve GROUPING SETS/CUBE/ROLLUP metadata
+                    is_grouping_column=getattr(edge, "is_grouping_column", False),
+                    grouping_type=getattr(edge, "grouping_type", None),
+                    # Preserve window function metadata
+                    is_window_function=getattr(edge, "is_window_function", False),
+                    window_role=getattr(edge, "window_role", None),
+                    window_function=getattr(edge, "window_function", None),
+                    window_frame_type=getattr(edge, "window_frame_type", None),
+                    window_frame_start=getattr(edge, "window_frame_start", None),
+                    window_frame_end=getattr(edge, "window_frame_end", None),
+                    window_order_direction=getattr(edge, "window_order_direction", None),
+                    window_order_nulls=getattr(edge, "window_order_nulls", None),
+                    # Preserve complex aggregate metadata
+                    aggregate_spec=getattr(edge, "aggregate_spec", None),
                 )
                 pipeline.add_edge(pipeline_edge)
 
@@ -686,10 +729,9 @@ class PipelineLineageBuilder:
             if ast.expression and isinstance(ast.expression, exp.Select):
                 return ast.expression.sql()
 
-        # MERGE uses a USING clause which is a SELECT or table
+        # MERGE INTO statement - pass full SQL to lineage builder
         elif isinstance(ast, exp.Merge):
-            # Merge is complex - for now skip lineage
-            return None
+            return query.sql
 
         # Plain SELECT
         elif isinstance(ast, exp.Select):

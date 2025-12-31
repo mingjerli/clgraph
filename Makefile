@@ -1,4 +1,4 @@
-.PHONY: help setup test test-verbose test-coverage test-docs test-docs-verbose test-llm clean lint lint-fix lint-fix-unsafe format format-check type-check check check-examples-verbose pre-commit install install-all install-light install-hooks build publish-test publish docs
+.PHONY: help setup test test-verbose test-coverage test-docs test-docs-verbose test-llm clean lint lint-fix lint-fix-unsafe format format-check type-check check check-examples-verbose pre-commit install install-all install-light install-hooks build publish-test publish docs rebuild-notebooks rebuild-notebooks-llm
 
 # Default target
 help:
@@ -20,6 +20,8 @@ help:
 	@echo "  make check-examples - Run all examples (skips LLM examples)"
 	@echo "  make check-examples-verbose - Run examples with verbose output (skips LLM)"
 	@echo "  make check-examples-llm - Run ALL examples including LLM (requires Ollama)"
+	@echo "  make rebuild-notebooks - Run all notebooks and save outputs (skips LLM)"
+	@echo "  make rebuild-notebooks-llm - Rebuild ALL notebooks including LLM (requires Ollama)"
 	@echo "  make pre-commit     - Run pre-commit hook (ruff + ty)"
 	@echo "  make install        - Install package in editable mode (dev deps)"
 	@echo "  make install-all    - Install package with ALL optional deps (llm, mcp, airflow)"
@@ -144,20 +146,32 @@ check: format lint type-check test test-docs
 	@echo ""
 	@echo "✓ All checks passed!"
 
-# Run all examples (skips LLM examples by default)
+# Run all notebooks (skips LLM notebooks by default)
 check-examples:
-	@echo "Running all examples (skipping LLM examples)..."
-	@uv run python run_all_examples.py --skip-llm
+	@echo "Running all notebooks (skipping LLM notebooks)..."
+	@uv run python run_all_notebooks.py --skip-llm
 
-# Run all examples with verbose output
+# Run all notebooks with verbose output
 check-examples-verbose:
-	@echo "Running all examples (verbose, skipping LLM examples)..."
-	@uv run python run_all_examples.py --verbose --skip-llm
+	@echo "Running all notebooks (verbose, skipping LLM notebooks)..."
+	@uv run python run_all_notebooks.py --verbose --skip-llm
 
-# Run ALL examples including LLM (requires Ollama)
+# Run ALL notebooks including LLM (requires Ollama)
 check-examples-llm:
-	@echo "Running ALL examples including LLM (requires Ollama)..."
-	@uv run python run_all_examples.py --verbose
+	@echo "Running ALL notebooks including LLM (requires Ollama)..."
+	@uv run python run_all_notebooks.py --verbose
+
+# Rebuild all notebooks (run and save outputs)
+rebuild-notebooks:
+	@echo "Rebuilding all notebooks (running and saving outputs)..."
+	@uv run python run_all_notebooks.py --skip-llm --save-outputs
+	@echo "✓ Notebooks rebuilt with outputs!"
+
+# Rebuild ALL notebooks including LLM (requires Ollama running)
+rebuild-notebooks-llm:
+	@echo "Rebuilding ALL notebooks including LLM (requires Ollama)..."
+	@uv run python run_all_notebooks.py --save-outputs
+	@echo "✓ All notebooks rebuilt with outputs!"
 
 # Pre-commit: format code, fix lint issues, and run the git pre-commit hook
 pre-commit:

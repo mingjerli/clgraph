@@ -106,6 +106,8 @@ class QueryUnitType(Enum):
 
     MAIN_QUERY = "main_query"
     CTE = "cte"
+    CTE_BASE = "cte_base"  # Base/anchor case of a recursive CTE
+    CTE_RECURSIVE = "cte_recursive"  # Recursive case of a recursive CTE
     SUBQUERY_FROM = "subquery_from"  # Subquery in FROM clause
     SUBQUERY_SELECT = "subquery_select"  # Scalar subquery in SELECT
     SUBQUERY_WHERE = "subquery_where"  # Subquery in WHERE
@@ -122,6 +124,56 @@ class QueryUnitType(Enum):
     PIVOT = "pivot"  # PIVOT operation
     UNPIVOT = "unpivot"  # UNPIVOT operation
     SUBQUERY_PIVOT_SOURCE = "subquery_pivot_source"  # Source query for PIVOT/UNPIVOT
+
+    # MERGE/UPSERT operations
+    MERGE = "merge"  # MERGE INTO statement
+    MERGE_SOURCE = "merge_source"  # Source subquery in MERGE
+
+
+@dataclass
+class RecursiveCTEInfo:
+    """Information about a recursive CTE."""
+
+    cte_name: str
+    is_recursive: bool = True
+
+    # Column info
+    base_columns: List[str] = field(default_factory=list)  # Columns from base case
+    recursive_columns: List[str] = field(default_factory=list)  # Columns from recursive case
+
+    # Union type between base and recursive
+    union_type: str = "union_all"  # "union" or "union_all"
+
+    # Self-reference info
+    self_reference_alias: Optional[str] = (
+        None  # Alias used for self-ref (e.g., "h" in "JOIN cte h")
+    )
+    join_condition: Optional[str] = None  # How recursive joins to self
+
+    # Recursion control
+    max_recursion: Optional[int] = None  # MAXRECURSION hint if present
+
+    def __repr__(self):
+        return f"RecursiveCTEInfo({self.cte_name}, alias={self.self_reference_alias})"
+
+
+@dataclass
+class ValuesInfo:
+    """Information about a VALUES clause (inline table literal)."""
+
+    alias: str  # Table alias (e.g., "t" in "VALUES (...) AS t(id, name)")
+    column_names: List[str] = field(default_factory=list)  # Column aliases
+    row_count: int = 0  # Number of rows
+
+    # Inferred column types
+    column_types: List[str] = field(default_factory=list)  # e.g., ["integer", "string"]
+
+    # Sample data for debugging/display (first few rows)
+    sample_values: List[List[Any]] = field(default_factory=list)
+
+    def __repr__(self) -> str:
+        cols = ", ".join(self.column_names) if self.column_names else "..."
+        return f"ValuesInfo({self.alias}({cols}), {self.row_count} rows)"
 
 
 @dataclass
@@ -162,6 +214,61 @@ class QueryUnit:
     # UNPIVOT operations
     unpivot_config: Optional[Dict[str, Any]] = None  # Configuration for UNPIVOT
     # Example: {'value_column': 'revenue', 'unpivot_columns': ['q1', 'q2', 'q3', 'q4'], 'name_column': 'quarter'}
+
+    # UNNEST/Array expansion sources in FROM clause
+    # Maps alias -> UnnestInfo dict
+    # Example: {'item': {'source_table': 'orders', 'source_column': 'items', 'offset_alias': None, 'expansion_type': 'unnest'}}
+    unnest_sources: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+
+    # LATERAL subquery metadata
+    is_lateral: bool = False  # True if this is a LATERAL subquery
+    lateral_parent: Optional[str] = None  # unit_id of the preceding table being correlated to
+    correlated_columns: List[str] = field(
+        default_factory=list
+    )  # Columns from outer scope (e.g., ["orders.order_id"])
+    # Maps alias -> LateralInfo dict
+    # Example: {'t': {'correlated_columns': ['orders.order_id'], 'preceding_tables': ['orders']}}
+    lateral_sources: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+
+    # Table-Valued Functions in FROM clause
+    # Maps alias -> TVFInfo
+    # Example: {'t': TVFInfo(function_name='generate_series', tvf_type=TVFType.GENERATOR, alias='t', ...)}
+    tvf_sources: Dict[str, "TVFInfo"] = field(default_factory=dict)
+
+    # QUALIFY clause metadata
+    # Stores info about QUALIFY clause used for row filtering based on window functions
+    # Example: {'condition': 'ROW_NUMBER() OVER (...) = 1',
+    #           'partition_columns': ['customer_id'],
+    #           'order_columns': ['order_date'],
+    #           'window_functions': ['ROW_NUMBER']}
+    qualify_info: Optional[Dict[str, Any]] = None
+
+    # GROUPING SETS/CUBE/ROLLUP metadata
+    # Stores info about complex grouping operations
+    # Example: {'grouping_type': 'cube',
+    #           'grouping_columns': ['region', 'product'],
+    #           'grouping_sets': [['region', 'product'], ['region'], ['product'], []]}
+    grouping_config: Optional[Dict[str, Any]] = None
+
+    # Window function metadata
+    # Stores info about window functions used in this query unit
+    # Example: {'windows': [{'output_column': 'rolling_sum', 'function': 'SUM', 'arguments': ['amount'],
+    #                        'partition_by': ['customer_id'], 'order_by': [{'column': 'date', 'direction': 'asc'}],
+    #                        'frame_type': 'rows', 'frame_start': '6 preceding', 'frame_end': 'current row'}]}
+    window_info: Optional[Dict[str, Any]] = None
+
+    # Named window definitions from WINDOW clause
+    # Example: {'w': {'partition_by': ['c'], 'order_by': [{'column': 'd', 'direction': 'asc'}]}}
+    window_definitions: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+
+    # Recursive CTE metadata
+    recursive_cte_info: Optional["RecursiveCTEInfo"] = None  # Info for recursive CTEs
+    is_recursive_reference: bool = False  # True if this unit references a recursive CTE
+
+    # VALUES clause in FROM clause
+    # Maps alias -> ValuesInfo
+    # Example: {'t': ValuesInfo(alias='t', column_names=['id', 'name'], row_count=2)}
+    values_sources: Dict[str, "ValuesInfo"] = field(default_factory=dict)
 
     # Metadata
     depth: int = 0  # Nesting depth (0 = main query)
@@ -238,6 +345,99 @@ class QueryUnitGraph:
 
 
 # ============================================================================
+# Complex Aggregate Models
+# ============================================================================
+
+
+class AggregateType(Enum):
+    """Type of aggregate function output."""
+
+    SCALAR = "scalar"  # SUM, COUNT, AVG -> single value
+    ARRAY = "array"  # ARRAY_AGG -> array
+    STRING = "string"  # STRING_AGG -> concatenated string
+    OBJECT = "object"  # OBJECT_AGG -> JSON/map
+    STATISTICAL = "statistical"  # PERCENTILE -> computed value
+
+
+@dataclass
+class OrderByColumn:
+    """Column specification in ORDER BY clause."""
+
+    column: str
+    direction: str = "asc"  # "asc" or "desc"
+    nulls: Optional[str] = None  # "first" or "last"
+
+
+@dataclass
+class AggregateSpec:
+    """Specification for an aggregate function."""
+
+    function_name: str
+    aggregate_type: AggregateType
+    return_type: str = "any"  # "array<int>", "string", "object", etc.
+
+    # Input columns
+    value_columns: List[str] = field(default_factory=list)  # Column(s) being aggregated
+    key_columns: List[str] = field(default_factory=list)  # For OBJECT_AGG key column
+
+    # Modifiers
+    distinct: bool = False
+    order_by: List[OrderByColumn] = field(default_factory=list)
+    limit: Optional[int] = None  # For ARRAY_AGG LIMIT
+
+    # Parameters
+    separator: Optional[str] = None  # For STRING_AGG
+    null_handling: str = "exclude"  # "exclude", "include", "respect"
+
+    def __repr__(self) -> str:
+        parts = [self.function_name]
+        if self.distinct:
+            parts.append("DISTINCT")
+        if self.value_columns:
+            parts.append(f"({', '.join(self.value_columns)})")
+        return " ".join(parts)
+
+
+# ============================================================================
+# Table-Valued Function Models
+# ============================================================================
+
+
+class TVFType(Enum):
+    """Type of Table-Valued Function."""
+
+    GENERATOR = "generator"  # No column input, generates data (GENERATE_SERIES)
+    COLUMN_INPUT = "column_input"  # Takes column(s) as input (UNNEST, EXPLODE)
+    EXTERNAL = "external"  # External data source (READ_CSV, EXTERNAL_QUERY)
+    SYSTEM = "system"  # System/metadata tables (INFORMATION_SCHEMA)
+
+
+@dataclass
+class TVFInfo:
+    """Information about a Table-Valued Function."""
+
+    function_name: str
+    tvf_type: TVFType
+    alias: str
+    output_columns: List[str] = field(default_factory=list)
+
+    # For GENERATOR type - function parameters
+    parameters: Dict[str, Any] = field(default_factory=dict)
+    # e.g., {"start": 1, "end": 10}
+
+    # For COLUMN_INPUT type - input column references
+    input_columns: List[str] = field(default_factory=list)
+    # e.g., ["orders.items"]
+
+    # For EXTERNAL type - external source location
+    external_source: Optional[str] = None
+    # e.g., "s3://bucket/file.csv"
+
+    def __repr__(self) -> str:
+        return f"TVFInfo({self.function_name} AS {self.alias})"
+
+
+# ============================================================================
 # Column Lineage Models
 # ============================================================================
 
@@ -291,6 +491,16 @@ class ColumnNode:
     pii: bool = False
     tags: Set[str] = field(default_factory=set)
     custom_metadata: Dict[str, Any] = field(default_factory=dict)
+
+    # ─── TVF/Synthetic Column ───
+    is_synthetic: bool = False  # True for TVF-generated columns
+    synthetic_source: Optional[str] = None  # TVF name that created this column
+    tvf_parameters: Dict[str, Any] = field(default_factory=dict)  # TVF parameters
+
+    # ─── VALUES/Literal Column ───
+    is_literal: bool = False  # True for VALUES-generated columns
+    literal_values: Optional[List[Any]] = None  # Sample values from VALUES clause
+    literal_type: Optional[str] = None  # Inferred type (e.g., "integer", "string")
 
     # ─── Validation ───
     warnings: List[str] = field(default_factory=list)
@@ -365,13 +575,67 @@ class ColumnEdge:
     transformation: Optional[str] = None  # Description of transformation
     expression: Optional[str] = None  # SQL expression
 
+    # ─── JSON Extraction Metadata ───
+    json_path: Optional[str] = None  # Normalized JSON path (e.g., "$.address.city")
+    json_function: Optional[str] = None  # Original function name (e.g., "JSON_EXTRACT")
+
+    # ─── Array Expansion Metadata ───
+    is_array_expansion: bool = False  # True if this edge is from UNNEST/FLATTEN/EXPLODE
+    expansion_type: Optional[str] = None  # "unnest", "flatten", "explode"
+    offset_column: Optional[str] = None  # Position column name if WITH OFFSET
+
+    # ─── Nested Access Metadata ───
+    nested_path: Optional[str] = None  # Normalized path like "[0].field" or "['key']"
+    access_type: Optional[str] = None  # "array", "map", "struct", or "mixed"
+
+    # ─── LATERAL Correlation Metadata ───
+    is_lateral_correlation: bool = False  # True if this edge is a LATERAL correlation reference
+    lateral_alias: Optional[str] = (
+        None  # Alias of the LATERAL subquery (e.g., "t" in "LATERAL (...) t")
+    )
+
+    # ─── MERGE Statement Metadata ───
+    is_merge_operation: bool = False  # True if this edge is from a MERGE statement
+    merge_action: Optional[str] = None  # "match", "update", "insert", "delete"
+    merge_condition: Optional[str] = None  # Condition for conditional WHEN clauses
+
+    # ─── QUALIFY Clause Metadata ───
+    is_qualify_column: bool = False  # True if this column is used in QUALIFY clause
+    qualify_context: Optional[str] = None  # "partition", "order", or "filter"
+    qualify_function: Optional[str] = None  # Window function name (e.g., "ROW_NUMBER")
+
+    # ─── GROUPING SETS/CUBE/ROLLUP Metadata ───
+    is_grouping_column: bool = False  # True if column is used in GROUPING SETS/CUBE/ROLLUP
+    grouping_type: Optional[str] = None  # "cube", "rollup", "grouping_sets"
+
+    # ─── Window Function Metadata ───
+    is_window_function: bool = False  # True if this edge involves a window function
+    window_role: Optional[str] = None  # "aggregate", "partition", "order"
+    window_function: Optional[str] = None  # Function name (e.g., "SUM", "ROW_NUMBER", "LAG")
+    window_frame_type: Optional[str] = None  # "rows", "range", "groups"
+    window_frame_start: Optional[str] = None  # "unbounded preceding", "3 preceding", etc.
+    window_frame_end: Optional[str] = None  # "current row", "1 following", etc.
+    window_order_direction: Optional[str] = None  # "asc" or "desc" (for order edges)
+    window_order_nulls: Optional[str] = None  # "first" or "last" (for order edges)
+
+    # ─── Complex Aggregate Metadata ───
+    aggregate_spec: Optional["AggregateSpec"] = None  # Full aggregate specification
+
+    # ─── Table-Valued Function Metadata ───
+    tvf_info: Optional["TVFInfo"] = None  # Full TVF specification
+    is_tvf_output: bool = False  # True if this edge is from a TVF output
+
     def __hash__(self):
-        return hash((self.from_node.full_name, self.to_node.full_name))
+        return hash((self.from_node.full_name, self.to_node.full_name, self.edge_type))
 
     def __eq__(self, other):
         if not isinstance(other, ColumnEdge):
             return False
-        return self.from_node == other.from_node and self.to_node == other.to_node
+        return (
+            self.from_node == other.from_node
+            and self.to_node == other.to_node
+            and self.edge_type == other.edge_type
+        )
 
     def __repr__(self):
         return f"ColumnEdge({self.from_node.full_name!r} -> {self.to_node.full_name!r})"
@@ -643,10 +907,19 @@ __all__ = [
     "QueryUnitType",
     "QueryUnit",
     "QueryUnitGraph",
+    "RecursiveCTEInfo",
+    "ValuesInfo",
     # Column lineage
     "ColumnNode",
     "ColumnEdge",
     "ColumnLineageGraph",
+    # Complex aggregates
+    "AggregateType",
+    "AggregateSpec",
+    "OrderByColumn",
+    # Table-valued functions
+    "TVFType",
+    "TVFInfo",
     # Multi-query pipeline
     "SQLOperation",
     "ParsedQuery",

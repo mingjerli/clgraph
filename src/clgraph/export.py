@@ -90,6 +90,22 @@ class JSONExporter:
                 "operation": col.operation,
             }
 
+            # Include synthetic column metadata if present
+            if getattr(col, "is_synthetic", False):
+                col_dict["is_synthetic"] = True
+                col_dict["synthetic_source"] = getattr(col, "synthetic_source", None)
+                tvf_params = getattr(col, "tvf_parameters", None)
+                if tvf_params:
+                    col_dict["tvf_parameters"] = tvf_params
+
+            # Include literal column metadata if present (VALUES clause)
+            if getattr(col, "is_literal", False):
+                col_dict["is_literal"] = True
+                col_dict["literal_type"] = getattr(col, "literal_type", None)
+                literal_values = getattr(col, "literal_values", None)
+                if literal_values:
+                    col_dict["literal_values"] = literal_values
+
             if include_metadata:
                 col_dict.update(
                     {
@@ -108,15 +124,104 @@ class JSONExporter:
 
         # Export edges
         for edge in graph.edges:
-            result["edges"].append(
-                {
-                    "from_column": edge.from_node.full_name,
-                    "to_column": edge.to_node.full_name,
-                    "edge_type": edge.edge_type,
-                    "transformation": edge.transformation,
-                    "query_id": edge.query_id,
+            edge_dict = {
+                "from_column": edge.from_node.full_name,
+                "to_column": edge.to_node.full_name,
+                "edge_type": edge.edge_type,
+                "transformation": edge.transformation,
+                "query_id": edge.query_id,
+            }
+
+            # Include JSON extraction metadata if present
+            if getattr(edge, "json_path", None):
+                edge_dict["json_path"] = edge.json_path
+            if getattr(edge, "json_function", None):
+                edge_dict["json_function"] = edge.json_function
+
+            # Include array expansion metadata if present
+            if getattr(edge, "is_array_expansion", False):
+                edge_dict["is_array_expansion"] = True
+                edge_dict["expansion_type"] = getattr(edge, "expansion_type", None)
+                if getattr(edge, "offset_column", None):
+                    edge_dict["offset_column"] = edge.offset_column
+
+            # Include nested access metadata if present
+            if getattr(edge, "nested_path", None):
+                edge_dict["nested_path"] = edge.nested_path
+            if getattr(edge, "access_type", None):
+                edge_dict["access_type"] = edge.access_type
+
+            # Include LATERAL correlation metadata if present
+            if getattr(edge, "is_lateral_correlation", False):
+                edge_dict["is_lateral_correlation"] = True
+                edge_dict["lateral_alias"] = getattr(edge, "lateral_alias", None)
+
+            # Include MERGE operation metadata if present
+            if getattr(edge, "is_merge_operation", False):
+                edge_dict["is_merge_operation"] = True
+                edge_dict["merge_action"] = getattr(edge, "merge_action", None)
+                edge_dict["merge_condition"] = getattr(edge, "merge_condition", None)
+
+            # Include QUALIFY clause metadata if present
+            if getattr(edge, "is_qualify_column", False):
+                edge_dict["is_qualify_column"] = True
+                edge_dict["qualify_context"] = getattr(edge, "qualify_context", None)
+                edge_dict["qualify_function"] = getattr(edge, "qualify_function", None)
+
+            # Include GROUPING SETS/CUBE/ROLLUP metadata if present
+            if getattr(edge, "is_grouping_column", False):
+                edge_dict["is_grouping_column"] = True
+                edge_dict["grouping_type"] = getattr(edge, "grouping_type", None)
+
+            # Include window function metadata if present
+            if getattr(edge, "is_window_function", False):
+                edge_dict["is_window_function"] = True
+                edge_dict["window_role"] = getattr(edge, "window_role", None)
+                edge_dict["window_function"] = getattr(edge, "window_function", None)
+                edge_dict["window_frame_type"] = getattr(edge, "window_frame_type", None)
+                edge_dict["window_frame_start"] = getattr(edge, "window_frame_start", None)
+                edge_dict["window_frame_end"] = getattr(edge, "window_frame_end", None)
+                if getattr(edge, "window_order_direction", None):
+                    edge_dict["window_order_direction"] = edge.window_order_direction
+                if getattr(edge, "window_order_nulls", None):
+                    edge_dict["window_order_nulls"] = edge.window_order_nulls
+
+            # Include complex aggregate specification if present
+            agg_spec = getattr(edge, "aggregate_spec", None)
+            if agg_spec is not None:
+                edge_dict["aggregate_spec"] = {
+                    "function_name": agg_spec.function_name,
+                    "aggregate_type": agg_spec.aggregate_type.value,
+                    "return_type": agg_spec.return_type,
+                    "value_columns": agg_spec.value_columns,
+                    "key_columns": agg_spec.key_columns,
+                    "distinct": agg_spec.distinct,
+                    "order_by": [
+                        {
+                            "column": o.column,
+                            "direction": o.direction,
+                            "nulls": o.nulls,
+                        }
+                        for o in agg_spec.order_by
+                    ],
+                    "separator": agg_spec.separator,
                 }
-            )
+
+            # Include TVF edge metadata if present
+            if getattr(edge, "is_tvf_output", False):
+                edge_dict["is_tvf_output"] = True
+                tvf_info = getattr(edge, "tvf_info", None)
+                if tvf_info:
+                    edge_dict["tvf_info"] = {
+                        "function_name": tvf_info.function_name,
+                        "tvf_type": tvf_info.tvf_type.value,
+                        "alias": tvf_info.alias,
+                        "output_columns": tvf_info.output_columns,
+                        "parameters": tvf_info.parameters,
+                        "external_source": tvf_info.external_source,
+                    }
+
+            result["edges"].append(edge_dict)
 
         # Export tables
         for table in graph.table_graph.tables.values():
