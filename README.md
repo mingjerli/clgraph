@@ -333,10 +333,14 @@ print("✓ Exported to lineage.json, columns.csv, lineage.dot")
 
 **Output:**
 ```
-📊 Propagating metadata for 6 columns...
+📊 Pass 1: Propagating metadata backward from 6 output columns...
+📊 Pass 2: Propagating metadata forward for 6 columns...
 ✅ Done! Propagated metadata for 6 columns
-Found 2 PII columns:
+Found 3 PII columns:
   ColumnNode('raw.orders.user_email')
+    Owner: data-team
+    Tags: contact, sensitive
+  ColumnNode('source.orders.user_email')
     Owner: data-team
     Tags: contact, sensitive
   ColumnNode('analytics.revenue.user_email')
@@ -524,7 +528,7 @@ Tool: trace_backward
 Sources: 1 columns
 Tool: trace_forward
 Tool: search_columns
-Found: 2 matches
+Found: 3 matches
 ```
 
 **Supported question types:**
@@ -667,11 +671,11 @@ print(f"PII columns: {result.message}")
 
 **Output:**
 ```
-Tables: ['raw.orders', 'staging.orders', 'analytics.revenue']
-Columns: ['customer_email', 'total']
+Tables: ['analytics.revenue', 'raw.orders', 'staging.orders']
+Columns: [{'name': 'customer_email'}, {'name': 'total'}]
 Sources: Column analytics.revenue.total is derived from: raw.orders.amount
 Impacts: Column raw.orders.amount impacts: analytics.revenue.total
-Matches: Found 2 columns matching 'email'
+Matches: Found 3 columns matching 'email'
 PII columns: No PII columns found
 ```
 
