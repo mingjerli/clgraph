@@ -18,11 +18,17 @@ except Exception:
 from .agent import AgentResult, LineageAgent, QuestionType
 from .diff import ColumnDiff, PipelineDiff
 
+# Import execution functionality
+from .execution import PipelineExecutor
+
 # Import export functionality
 from .export import CSVExporter, JSONExporter
 
 # Import validation models
 from .models import IssueCategory, IssueSeverity, ValidationIssue
+
+# Import orchestrator integrations
+from .orchestrators import AirflowOrchestrator, DagsterOrchestrator
 from .parser import (
     ColumnEdge,
     ColumnLineageGraph,
@@ -177,4 +183,9 @@ __all__ = [
     "BASIC_TOOLS",
     "LLM_TOOLS",
     "ALL_TOOLS",
+    # Orchestrator integrations
+    "AirflowOrchestrator",
+    "DagsterOrchestrator",
+    # Execution
+    "PipelineExecutor",
 ]
