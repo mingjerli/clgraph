@@ -9,10 +9,7 @@ Contains Pipeline class for unified SQL workflow orchestration with:
 - Airflow DAG generation
 """
 
-import asyncio
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
 from sqlglot import exp
@@ -2087,37 +2084,9 @@ class Pipeline:
         Returns:
             List of levels, where each level is a list of query IDs
         """
-        levels = []
-        completed = set()
+        from .execution import PipelineExecutor
 
-        while len(completed) < len(self.table_graph.queries):
-            current_level = []
-
-            for query_id, query in self.table_graph.queries.items():
-                if query_id in completed:
-                    continue
-
-                # Check if all dependencies are completed
-                dependencies_met = True
-                for source_table in query.source_tables:
-                    # Find query that creates this table
-                    table_node = self.table_graph.tables.get(source_table)
-                    if table_node and table_node.created_by:
-                        if table_node.created_by not in completed:
-                            dependencies_met = False
-                            break
-
-                if dependencies_met:
-                    current_level.append(query_id)
-
-            if not current_level:
-                # No progress - circular dependency
-                raise RuntimeError("Circular dependency detected in pipeline")
-
-            levels.append(current_level)
-            completed.update(current_level)
-
-        return levels
+        return PipelineExecutor(self).get_execution_levels()
 
     def to_airflow_dag(
         self,
@@ -2186,90 +2155,17 @@ class Pipeline:
             - Airflow 3.x: Fully supported (3.0.0+)
             - TaskFlow API is compatible across both versions
         """
-        try:
-            import airflow  # type: ignore[import-untyped]
-            from airflow.decorators import dag, task  # type: ignore[import-untyped]
-        except ImportError as e:
-            raise ImportError(
-                "Airflow is required for DAG generation. "
-                "Install it with:\n"
-                "  - Airflow 2.x: pip install 'apache-airflow>=2.7.0,<3.0.0'\n"
-                "  - Airflow 3.x: pip install 'apache-airflow>=3.0.0'"
-            ) from e
+        from .orchestrators import AirflowOrchestrator
 
-        # Detect Airflow version if not specified
-        if airflow_version is None:
-            detected_version = airflow.__version__
-            major_version = int(detected_version.split(".")[0])
-            airflow_version = str(major_version)
-
-        # Validate version
-        if airflow_version not in ("2", "3"):
-            raise ValueError(
-                f"Unsupported Airflow version: {airflow_version}. Supported versions: 2, 3"
-            )
-
-        if start_date is None:
-            start_date = datetime(2024, 1, 1)
-
-        if default_args is None:
-            default_args = {
-                "owner": "data_team",
-                "retries": 2,
-                "retry_delay": timedelta(minutes=5),
-            }
-
-        # Build DAG parameters
-        dag_params = {
-            "dag_id": dag_id,
-            "schedule": schedule,
-            "start_date": start_date,
-            "default_args": default_args,
-            **dag_kwargs,  # Allow user to override any parameter
-        }
-
-        # Set default values only if not provided by user
-        dag_params.setdefault("catchup", False)
-        dag_params.setdefault("tags", ["clgraph"])
-
-        table_graph = self.table_graph
-
-        @dag(**dag_params)
-        def pipeline_dag():
-            """Generated pipeline DAG"""
-
-            # Create task callables for each query
-            task_callables = {}
-
-            for query_id in table_graph.topological_sort():
-                query = table_graph.queries[query_id]
-                sql_to_execute = query.sql
-
-                # Create task with unique function name using closure
-                def make_task(qid, sql):
-                    @task(task_id=qid.replace("-", "_"))
-                    def execute_query():
-                        """Execute SQL query"""
-                        executor(sql)
-                        return f"Completed: {qid}"
-
-                    return execute_query
-
-                task_callables[query_id] = make_task(query_id, sql_to_execute)
-
-            # Instantiate all tasks once before wiring dependencies
-            task_instances = {qid: callable() for qid, callable in task_callables.items()}
-
-            # Set up dependencies based on table lineage
-            for _table_name, table_node in table_graph.tables.items():
-                if table_node.created_by:
-                    upstream_id = table_node.created_by
-                    for downstream_id in table_node.read_by:
-                        if upstream_id in task_instances and downstream_id in task_instances:
-                            # Airflow: downstream >> upstream means upstream runs first
-                            task_instances[upstream_id] >> task_instances[downstream_id]
-
-        return pipeline_dag()
+        return AirflowOrchestrator(self).to_dag(
+            executor=executor,
+            dag_id=dag_id,
+            schedule=schedule,
+            start_date=start_date,
+            default_args=default_args,
+            airflow_version=airflow_version,
+            **dag_kwargs,
+        )
 
     def run(
         self,
@@ -2302,71 +2198,13 @@ class Pipeline:
             result = pipeline.run(executor=execute_sql, max_workers=4)
             print(f"Completed {len(result['completed'])} queries")
         """
-        if verbose:
-            print(f"🚀 Starting pipeline execution ({len(self.table_graph.queries)} queries)")
-            print()
+        from .execution import PipelineExecutor
 
-        # Track completed queries
-        completed = set()
-        failed = []
-        start_time = time.time()
-
-        # Group queries by level for concurrent execution
-        levels = self._get_execution_levels()
-
-        # Execute level by level
-        for level_num, level_queries in enumerate(levels, 1):
-            if verbose:
-                print(f"📊 Level {level_num}: {len(level_queries)} queries")
-
-            # Execute queries in this level concurrently
-            with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                futures = {}
-
-                for query_id in level_queries:
-                    query = self.table_graph.queries[query_id]
-                    future = pool.submit(executor, query.sql)
-                    futures[future] = query_id
-
-                # Wait for completion
-                for future in as_completed(futures):
-                    query_id = futures[future]
-
-                    try:
-                        future.result()
-                        completed.add(query_id)
-
-                        if verbose:
-                            print(f"  ✅ {query_id}")
-                    except Exception as e:
-                        failed.append((query_id, str(e)))
-
-                        if verbose:
-                            print(f"  ❌ {query_id}: {e}")
-
-            if verbose:
-                print()
-
-        elapsed = time.time() - start_time
-
-        # Summary
-        if verbose:
-            print("=" * 60)
-            print(f"✅ Pipeline completed in {elapsed:.2f}s")
-            print(f"   Successful: {len(completed)}")
-            print(f"   Failed: {len(failed)}")
-            if failed:
-                print("\n⚠️  Failed queries:")
-                for query_id, error in failed:
-                    print(f"   - {query_id}: {error}")
-            print("=" * 60)
-
-        return {
-            "completed": list(completed),
-            "failed": failed,
-            "elapsed_seconds": elapsed,
-            "total_queries": len(self.table_graph.queries),
-        }
+        return PipelineExecutor(self).run(
+            executor=executor,
+            max_workers=max_workers,
+            verbose=verbose,
+        )
 
     async def async_run(
         self,
@@ -2398,72 +2236,13 @@ class Pipeline:
             result = await pipeline.async_run(executor=execute_sql, max_workers=4)
             print(f"Completed {len(result['completed'])} queries")
         """
-        if verbose:
-            print(f"🚀 Starting async pipeline execution ({len(self.table_graph.queries)} queries)")
-            print()
+        from .execution import PipelineExecutor
 
-        # Track completed queries
-        completed = set()
-        failed = []
-        start_time = time.time()
-
-        # Group queries by level for concurrent execution
-        levels = self._get_execution_levels()
-
-        # Create semaphore to limit concurrency
-        semaphore = asyncio.Semaphore(max_workers)
-
-        # Execute level by level
-        for level_num, level_queries in enumerate(levels, 1):
-            if verbose:
-                print(f"📊 Level {level_num}: {len(level_queries)} queries")
-
-            async def execute_with_semaphore(query_id: str, sql: str):
-                """Execute query with semaphore for concurrency control"""
-                async with semaphore:
-                    try:
-                        await executor(sql)
-                        completed.add(query_id)
-                        if verbose:
-                            print(f"  ✅ {query_id}")
-                    except Exception as e:
-                        failed.append((query_id, str(e)))
-                        if verbose:
-                            print(f"  ❌ {query_id}: {e}")
-
-            # Execute queries in this level concurrently
-            tasks = []
-            for query_id in level_queries:
-                query = self.table_graph.queries[query_id]
-                task = execute_with_semaphore(query_id, query.sql)
-                tasks.append(task)
-
-            # Wait for all tasks in this level to complete
-            await asyncio.gather(*tasks)
-
-            if verbose:
-                print()
-
-        elapsed = time.time() - start_time
-
-        # Summary
-        if verbose:
-            print("=" * 60)
-            print(f"✅ Pipeline completed in {elapsed:.2f}s")
-            print(f"   Successful: {len(completed)}")
-            print(f"   Failed: {len(failed)}")
-            if failed:
-                print("\n⚠️  Failed queries:")
-                for query_id, error in failed:
-                    print(f"   - {query_id}: {error}")
-            print("=" * 60)
-
-        return {
-            "completed": list(completed),
-            "failed": failed,
-            "elapsed_seconds": elapsed,
-            "total_queries": len(self.table_graph.queries),
-        }
+        return await PipelineExecutor(self).async_run(
+            executor=executor,
+            max_workers=max_workers,
+            verbose=verbose,
+        )
 
     # ========================================================================
     # Orchestrator Methods - Dagster
@@ -2526,96 +2305,15 @@ class Pipeline:
             - Dependencies are automatically inferred from table lineage
             - Deployment: Drop the definitions.py file in your Dagster workspace
         """
-        try:
-            import dagster as dg
-        except ImportError as e:
-            raise ImportError(
-                "Dagster is required for asset generation. "
-                "Install it with: pip install 'dagster>=1.5.0'"
-            ) from e
+        from .orchestrators import DagsterOrchestrator
 
-        table_graph = self.table_graph
-
-        assets = []
-        asset_key_mapping: Dict[str, Any] = {}  # query_id -> AssetKey
-
-        # Process each query that creates a table
-        for query_id in table_graph.topological_sort():
-            query = table_graph.queries[query_id]
-            target_table = query.destination_table
-
-            if target_table is None:
-                continue  # Skip queries that don't create tables
-
-            # Determine upstream dependencies (source tables created by this pipeline)
-            upstream_asset_keys = []
-            for source_table in query.source_tables:
-                if source_table in table_graph.tables:
-                    table_node = table_graph.tables[source_table]
-                    # Only add as dep if it's created by another query in this pipeline
-                    if table_node.created_by and table_node.created_by in asset_key_mapping:
-                        upstream_asset_keys.append(asset_key_mapping[table_node.created_by])
-
-            # Build asset key (sanitize table name for Dagster compatibility)
-            # Dagster names must match ^[A-Za-z0-9_]+$
-            safe_table_name = target_table.replace(".", "_").replace("-", "_")
-            if key_prefix:
-                if isinstance(key_prefix, str):
-                    prefix_list = [key_prefix]
-                else:
-                    prefix_list = list(key_prefix)
-                asset_key = dg.AssetKey([*prefix_list, safe_table_name])
-            else:
-                asset_key = dg.AssetKey(safe_table_name)
-
-            # Store mapping for dependency resolution
-            asset_key_mapping[query_id] = asset_key
-
-            # Capture SQL in closure
-            sql_to_execute = query.sql
-            table_name = target_table
-            query_identifier = query_id
-
-            # Build asset configuration
-            asset_config: Dict[str, Any] = {
-                "key": asset_key,
-                "compute_kind": compute_kind,
-                **asset_kwargs,
-            }
-
-            if group_name:
-                asset_config["group_name"] = group_name
-
-            if upstream_asset_keys:
-                asset_config["deps"] = upstream_asset_keys
-
-            # Create asset factory function
-            def make_asset(qid: str, sql: str, tbl: str, config: Dict[str, Any], exec_fn: Callable):
-                @dg.asset(**config)
-                def sql_asset(context: dg.AssetExecutionContext):
-                    """Execute SQL to materialize asset."""
-                    context.log.info(f"Materializing table: {tbl}")
-                    context.log.info(f"Query ID: {qid}")
-                    context.log.debug(f"SQL: {sql[:500]}...")
-                    exec_fn(sql)
-                    return dg.MaterializeResult(
-                        metadata={
-                            "query_id": dg.MetadataValue.text(qid),
-                            "table": dg.MetadataValue.text(tbl),
-                        }
-                    )
-
-                # Rename function for better debugging in Dagster UI
-                safe_name = tbl.replace(".", "_").replace("-", "_")
-                sql_asset.__name__ = safe_name
-                sql_asset.__qualname__ = safe_name
-
-                return sql_asset
-
-            asset = make_asset(query_identifier, sql_to_execute, table_name, asset_config, executor)
-            assets.append(asset)
-
-        return assets
+        return DagsterOrchestrator(self).to_assets(
+            executor=executor,
+            group_name=group_name,
+            key_prefix=key_prefix,
+            compute_kind=compute_kind,
+            **asset_kwargs,
+        )
 
     def to_dagster_job(
         self,
@@ -2663,73 +2361,15 @@ class Pipeline:
             - Consider using to_dagster_assets() for better Dagster integration
             - Deployment: Drop the definitions.py file in your Dagster workspace
         """
-        try:
-            import dagster as dg
-        except ImportError as e:
-            raise ImportError(
-                "Dagster is required for job generation. "
-                "Install it with: pip install 'dagster>=1.5.0'"
-            ) from e
+        from .orchestrators import DagsterOrchestrator
 
-        table_graph = self.table_graph
-
-        # Generate description if not provided
-        if description is None:
-            query_count = len(table_graph.queries)
-            table_count = len(table_graph.tables)
-            description = (
-                f"Pipeline with {query_count} queries operating on {table_count} tables. "
-                f"Generated by clgraph."
-            )
-
-        # Create ops for each query
-        ops: Dict[str, Any] = {}
-        op_mapping: Dict[str, str] = {}  # query_id -> op_name
-
-        for query_id in table_graph.topological_sort():
-            query = table_graph.queries[query_id]
-            sql_to_execute = query.sql
-
-            # Generate safe op name
-            op_name = query_id.replace("-", "_").replace(".", "_")
-            op_mapping[query_id] = op_name
-
-            def make_op(qid: str, sql: str, name: str, exec_fn: Callable):
-                @dg.op(name=name)
-                def sql_op(context: dg.OpExecutionContext):
-                    """Execute SQL query."""
-                    context.log.info(f"Executing query: {qid}")
-                    exec_fn(sql)
-                    return qid
-
-                return sql_op
-
-            ops[query_id] = make_op(query_id, sql_to_execute, op_name, executor)
-
-        # Build the job graph
-        @dg.job(name=job_name, description=description, tags=tags or {}, **job_kwargs)
-        def pipeline_job():
-            """Generated pipeline job."""
-            op_results: Dict[str, Any] = {}
-
-            for query_id in table_graph.topological_sort():
-                # Find upstream dependencies
-                query = table_graph.queries[query_id]
-                upstream_results = []
-
-                for source_table in query.source_tables:
-                    if source_table in table_graph.tables:
-                        table_node = table_graph.tables[source_table]
-                        if table_node.created_by and table_node.created_by in op_results:
-                            upstream_results.append(op_results[table_node.created_by])
-
-                # Execute op - dependencies are implicit via the graph structure
-                # In Dagster, we need to wire dependencies differently
-                op_results[query_id] = ops[query_id]()
-
-            return op_results
-
-        return pipeline_job
+        return DagsterOrchestrator(self).to_job(
+            executor=executor,
+            job_name=job_name,
+            description=description,
+            tags=tags,
+            **job_kwargs,
+        )
 
     # ========================================================================
     # Validation Methods
