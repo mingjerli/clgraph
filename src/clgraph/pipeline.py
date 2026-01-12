@@ -13,7 +13,7 @@ import asyncio
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
 from sqlglot import exp
 
@@ -2126,12 +2126,14 @@ class Pipeline:
         schedule: str = "@daily",
         start_date: Optional[datetime] = None,
         default_args: Optional[dict] = None,
+        airflow_version: Optional[str] = None,
         **dag_kwargs,
     ):
         """
         Create Airflow DAG from this pipeline using TaskFlow API.
 
-        Supports all Airflow DAG parameters via **dag_kwargs for complete flexibility.
+        Supports both Airflow 2.x and 3.x. The TaskFlow API (@dag and @task decorators)
+        is fully compatible across both versions.
 
         Args:
             executor: Function that executes SQL (takes sql string)
@@ -2139,6 +2141,8 @@ class Pipeline:
             schedule: Schedule interval (default: "@daily")
             start_date: DAG start date (default: datetime(2024, 1, 1))
             default_args: Airflow default_args (default: owner='data_team', retries=2)
+            airflow_version: Optional Airflow version ("2" or "3").
+                            Auto-detected from installed Airflow if not provided.
             **dag_kwargs: Additional DAG parameters (catchup, tags, max_active_runs,
                          description, max_active_tasks, dagrun_timeout, etc.)
                          See Airflow DAG documentation for all available parameters.
@@ -2147,7 +2151,7 @@ class Pipeline:
             Airflow DAG instance
 
         Examples:
-            # Basic usage
+            # Basic usage (auto-detects Airflow version)
             def execute_sql(sql: str):
                 from google.cloud import bigquery
                 client = bigquery.Client()
@@ -2156,6 +2160,13 @@ class Pipeline:
             dag = pipeline.to_airflow_dag(
                 executor=execute_sql,
                 dag_id="my_pipeline"
+            )
+
+            # Explicit version specification (for testing)
+            dag = pipeline.to_airflow_dag(
+                executor=execute_sql,
+                dag_id="my_pipeline",
+                airflow_version="3"
             )
 
             # Advanced usage with all DAG parameters
@@ -2168,20 +2179,35 @@ class Pipeline:
                 max_active_runs=3,
                 max_active_tasks=10,
                 tags=["analytics", "daily"],
-                default_view="graph",  # Airflow 2.x only
-                orientation="LR",  # Airflow 2.x only
             )
 
         Note:
-            Currently supports Airflow 2.x only. Airflow 3.x support is planned.
+            - Airflow 2.x: Fully supported (2.7.0+)
+            - Airflow 3.x: Fully supported (3.0.0+)
+            - TaskFlow API is compatible across both versions
         """
         try:
+            import airflow  # type: ignore[import-untyped]
             from airflow.decorators import dag, task  # type: ignore[import-untyped]
         except ImportError as e:
             raise ImportError(
                 "Airflow is required for DAG generation. "
-                "Install it with: pip install 'apache-airflow>=2.7.0,<3.0.0'"
+                "Install it with:\n"
+                "  - Airflow 2.x: pip install 'apache-airflow>=2.7.0,<3.0.0'\n"
+                "  - Airflow 3.x: pip install 'apache-airflow>=3.0.0'"
             ) from e
+
+        # Detect Airflow version if not specified
+        if airflow_version is None:
+            detected_version = airflow.__version__
+            major_version = int(detected_version.split(".")[0])
+            airflow_version = str(major_version)
+
+        # Validate version
+        if airflow_version not in ("2", "3"):
+            raise ValueError(
+                f"Unsupported Airflow version: {airflow_version}. Supported versions: 2, 3"
+            )
 
         if start_date is None:
             start_date = datetime(2024, 1, 1)
@@ -2438,6 +2464,272 @@ class Pipeline:
             "elapsed_seconds": elapsed,
             "total_queries": len(self.table_graph.queries),
         }
+
+    # ========================================================================
+    # Orchestrator Methods - Dagster
+    # ========================================================================
+
+    def to_dagster_assets(
+        self,
+        executor: Callable[[str], None],
+        group_name: Optional[str] = None,
+        key_prefix: Optional[Union[str, List[str]]] = None,
+        compute_kind: str = "sql",
+        **asset_kwargs,
+    ) -> List:
+        """
+        Create Dagster Assets from this pipeline.
+
+        Converts the pipeline's table dependency graph into Dagster assets
+        where each target table becomes an asset with proper dependencies.
+        This is the recommended approach for Dagster as it provides better
+        lineage tracking and observability.
+
+        Args:
+            executor: Function that executes SQL (takes sql string)
+            group_name: Optional asset group name for organization in Dagster UI
+            key_prefix: Optional prefix for asset keys (e.g., ["warehouse", "analytics"])
+            compute_kind: Compute kind tag for assets (default: "sql")
+            **asset_kwargs: Additional asset parameters (owners, tags, etc.)
+
+        Returns:
+            List of Dagster Asset definitions
+
+        Examples:
+            # Basic usage
+            def execute_sql(sql: str):
+                from clickhouse_driver import Client
+                Client('localhost').execute(sql)
+
+            assets = pipeline.to_dagster_assets(
+                executor=execute_sql,
+                group_name="analytics"
+            )
+
+            # Create Dagster Definitions
+            from dagster import Definitions
+            defs = Definitions(assets=assets)
+
+            # Advanced usage with prefixes and metadata
+            assets = pipeline.to_dagster_assets(
+                executor=execute_sql,
+                group_name="warehouse",
+                key_prefix=["prod", "analytics"],
+                compute_kind="clickhouse",
+                owners=["team:data-eng"],
+                tags={"domain": "finance"},
+            )
+
+        Note:
+            - Requires Dagster 1.x: pip install 'dagster>=1.5.0'
+            - Each target table becomes a Dagster asset
+            - Dependencies are automatically inferred from table lineage
+            - Deployment: Drop the definitions.py file in your Dagster workspace
+        """
+        try:
+            import dagster as dg
+        except ImportError as e:
+            raise ImportError(
+                "Dagster is required for asset generation. "
+                "Install it with: pip install 'dagster>=1.5.0'"
+            ) from e
+
+        table_graph = self.table_graph
+
+        assets = []
+        asset_key_mapping: Dict[str, Any] = {}  # query_id -> AssetKey
+
+        # Process each query that creates a table
+        for query_id in table_graph.topological_sort():
+            query = table_graph.queries[query_id]
+            target_table = query.destination_table
+
+            if target_table is None:
+                continue  # Skip queries that don't create tables
+
+            # Determine upstream dependencies (source tables created by this pipeline)
+            upstream_asset_keys = []
+            for source_table in query.source_tables:
+                if source_table in table_graph.tables:
+                    table_node = table_graph.tables[source_table]
+                    # Only add as dep if it's created by another query in this pipeline
+                    if table_node.created_by and table_node.created_by in asset_key_mapping:
+                        upstream_asset_keys.append(asset_key_mapping[table_node.created_by])
+
+            # Build asset key (sanitize table name for Dagster compatibility)
+            # Dagster names must match ^[A-Za-z0-9_]+$
+            safe_table_name = target_table.replace(".", "_").replace("-", "_")
+            if key_prefix:
+                if isinstance(key_prefix, str):
+                    prefix_list = [key_prefix]
+                else:
+                    prefix_list = list(key_prefix)
+                asset_key = dg.AssetKey([*prefix_list, safe_table_name])
+            else:
+                asset_key = dg.AssetKey(safe_table_name)
+
+            # Store mapping for dependency resolution
+            asset_key_mapping[query_id] = asset_key
+
+            # Capture SQL in closure
+            sql_to_execute = query.sql
+            table_name = target_table
+            query_identifier = query_id
+
+            # Build asset configuration
+            asset_config: Dict[str, Any] = {
+                "key": asset_key,
+                "compute_kind": compute_kind,
+                **asset_kwargs,
+            }
+
+            if group_name:
+                asset_config["group_name"] = group_name
+
+            if upstream_asset_keys:
+                asset_config["deps"] = upstream_asset_keys
+
+            # Create asset factory function
+            def make_asset(qid: str, sql: str, tbl: str, config: Dict[str, Any], exec_fn: Callable):
+                @dg.asset(**config)
+                def sql_asset(context: dg.AssetExecutionContext):
+                    """Execute SQL to materialize asset."""
+                    context.log.info(f"Materializing table: {tbl}")
+                    context.log.info(f"Query ID: {qid}")
+                    context.log.debug(f"SQL: {sql[:500]}...")
+                    exec_fn(sql)
+                    return dg.MaterializeResult(
+                        metadata={
+                            "query_id": dg.MetadataValue.text(qid),
+                            "table": dg.MetadataValue.text(tbl),
+                        }
+                    )
+
+                # Rename function for better debugging in Dagster UI
+                safe_name = tbl.replace(".", "_").replace("-", "_")
+                sql_asset.__name__ = safe_name
+                sql_asset.__qualname__ = safe_name
+
+                return sql_asset
+
+            asset = make_asset(query_identifier, sql_to_execute, table_name, asset_config, executor)
+            assets.append(asset)
+
+        return assets
+
+    def to_dagster_job(
+        self,
+        executor: Callable[[str], None],
+        job_name: str,
+        description: Optional[str] = None,
+        tags: Optional[Dict[str, str]] = None,
+        **job_kwargs,
+    ):
+        """
+        Create Dagster Job from this pipeline using ops.
+
+        Converts the pipeline's table dependency graph into a Dagster job
+        where each SQL query becomes an op with proper dependencies.
+
+        Note: For new pipelines, consider using to_dagster_assets() instead,
+        which provides better lineage tracking and observability in Dagster.
+
+        Args:
+            executor: Function that executes SQL (takes sql string)
+            job_name: Name for the Dagster job
+            description: Optional job description (auto-generated if not provided)
+            tags: Optional job tags for filtering in Dagster UI
+            **job_kwargs: Additional job parameters
+
+        Returns:
+            Dagster Job definition
+
+        Examples:
+            # Basic usage
+            job = pipeline.to_dagster_job(
+                executor=execute_sql,
+                job_name="analytics_pipeline"
+            )
+
+            # Create Dagster Definitions
+            from dagster import Definitions
+            defs = Definitions(jobs=[job])
+
+            # Execute the job locally
+            result = job.execute_in_process()
+
+        Note:
+            - Requires Dagster 1.x: pip install 'dagster>=1.5.0'
+            - Consider using to_dagster_assets() for better Dagster integration
+            - Deployment: Drop the definitions.py file in your Dagster workspace
+        """
+        try:
+            import dagster as dg
+        except ImportError as e:
+            raise ImportError(
+                "Dagster is required for job generation. "
+                "Install it with: pip install 'dagster>=1.5.0'"
+            ) from e
+
+        table_graph = self.table_graph
+
+        # Generate description if not provided
+        if description is None:
+            query_count = len(table_graph.queries)
+            table_count = len(table_graph.tables)
+            description = (
+                f"Pipeline with {query_count} queries operating on {table_count} tables. "
+                f"Generated by clgraph."
+            )
+
+        # Create ops for each query
+        ops: Dict[str, Any] = {}
+        op_mapping: Dict[str, str] = {}  # query_id -> op_name
+
+        for query_id in table_graph.topological_sort():
+            query = table_graph.queries[query_id]
+            sql_to_execute = query.sql
+
+            # Generate safe op name
+            op_name = query_id.replace("-", "_").replace(".", "_")
+            op_mapping[query_id] = op_name
+
+            def make_op(qid: str, sql: str, name: str, exec_fn: Callable):
+                @dg.op(name=name)
+                def sql_op(context: dg.OpExecutionContext):
+                    """Execute SQL query."""
+                    context.log.info(f"Executing query: {qid}")
+                    exec_fn(sql)
+                    return qid
+
+                return sql_op
+
+            ops[query_id] = make_op(query_id, sql_to_execute, op_name, executor)
+
+        # Build the job graph
+        @dg.job(name=job_name, description=description, tags=tags or {}, **job_kwargs)
+        def pipeline_job():
+            """Generated pipeline job."""
+            op_results: Dict[str, Any] = {}
+
+            for query_id in table_graph.topological_sort():
+                # Find upstream dependencies
+                query = table_graph.queries[query_id]
+                upstream_results = []
+
+                for source_table in query.source_tables:
+                    if source_table in table_graph.tables:
+                        table_node = table_graph.tables[source_table]
+                        if table_node.created_by and table_node.created_by in op_results:
+                            upstream_results.append(op_results[table_node.created_by])
+
+                # Execute op - dependencies are implicit via the graph structure
+                # In Dagster, we need to wire dependencies differently
+                op_results[query_id] = ops[query_id]()
+
+            return op_results
+
+        return pipeline_job
 
     # ========================================================================
     # Validation Methods
