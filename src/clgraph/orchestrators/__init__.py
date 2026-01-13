@@ -7,10 +7,11 @@ allowing clgraph pipelines to be deployed to production environments.
 Supported orchestrators:
 - Airflow (2.x and 3.x)
 - Dagster (1.x)
+- Prefect (2.x and 3.x)
 
 Example:
     from clgraph import Pipeline
-    from clgraph.orchestrators import AirflowOrchestrator, DagsterOrchestrator
+    from clgraph.orchestrators import AirflowOrchestrator, DagsterOrchestrator, PrefectOrchestrator
 
     pipeline = Pipeline.from_sql_files("queries/", dialect="bigquery")
 
@@ -21,14 +22,20 @@ Example:
     # Generate Dagster assets
     dagster = DagsterOrchestrator(pipeline)
     assets = dagster.to_assets(executor=execute_sql, group_name="analytics")
+
+    # Generate Prefect flow
+    prefect = PrefectOrchestrator(pipeline)
+    flow = prefect.to_flow(executor=execute_sql, flow_name="my_pipeline")
 """
 
 from .airflow import AirflowOrchestrator
 from .base import BaseOrchestrator
 from .dagster import DagsterOrchestrator
+from .prefect import PrefectOrchestrator
 
 __all__ = [
     "BaseOrchestrator",
     "AirflowOrchestrator",
     "DagsterOrchestrator",
+    "PrefectOrchestrator",
 ]

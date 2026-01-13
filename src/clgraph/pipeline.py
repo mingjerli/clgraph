@@ -2372,6 +2372,136 @@ class Pipeline:
         )
 
     # ========================================================================
+    # Orchestrator Methods - Prefect
+    # ========================================================================
+
+    def to_prefect_flow(
+        self,
+        executor: Callable[[str], None],
+        flow_name: str,
+        description: Optional[str] = None,
+        retries: int = 2,
+        retry_delay_seconds: int = 60,
+        timeout_seconds: Optional[int] = None,
+        tags: Optional[List[str]] = None,
+        **flow_kwargs,
+    ):
+        """
+        Create Prefect Flow from this pipeline.
+
+        Converts the pipeline's table dependency graph into a Prefect flow
+        where each SQL query becomes a task with proper dependencies.
+
+        Args:
+            executor: Function that executes SQL (takes sql string)
+            flow_name: Name for the Prefect flow
+            description: Optional flow description (auto-generated if not provided)
+            retries: Number of retries for failed tasks (default: 2)
+            retry_delay_seconds: Delay between retries in seconds (default: 60)
+            timeout_seconds: Optional task timeout in seconds
+            tags: Optional list of tags for filtering
+            **flow_kwargs: Additional flow parameters (version, task_runner, etc.)
+
+        Returns:
+            Prefect Flow function
+
+        Examples:
+            # Basic usage
+            def execute_sql(sql: str):
+                from clickhouse_driver import Client
+                Client('localhost').execute(sql)
+
+            flow_fn = pipeline.to_prefect_flow(
+                executor=execute_sql,
+                flow_name="my_pipeline"
+            )
+
+            # Run the flow
+            flow_fn()
+
+            # Advanced usage with all parameters
+            flow_fn = pipeline.to_prefect_flow(
+                executor=execute_sql,
+                flow_name="my_pipeline",
+                description="Daily analytics pipeline",
+                retries=3,
+                retry_delay_seconds=120,
+                tags=["analytics", "daily"],
+            )
+
+        Note:
+            - Requires Prefect 2.x or 3.x: pip install 'prefect>=2.0'
+            - Tasks are automatically wired based on table dependencies
+            - Use to_prefect_deployment() for scheduled execution
+        """
+        from .orchestrators import PrefectOrchestrator
+
+        return PrefectOrchestrator(self).to_flow(
+            executor=executor,
+            flow_name=flow_name,
+            description=description,
+            retries=retries,
+            retry_delay_seconds=retry_delay_seconds,
+            timeout_seconds=timeout_seconds,
+            tags=tags,
+            **flow_kwargs,
+        )
+
+    def to_prefect_deployment(
+        self,
+        executor: Callable[[str], None],
+        flow_name: str,
+        deployment_name: str,
+        cron: Optional[str] = None,
+        interval_seconds: Optional[int] = None,
+        work_pool_name: Optional[str] = None,
+        **kwargs,
+    ):
+        """
+        Create Prefect Deployment from this pipeline for scheduled execution.
+
+        Args:
+            executor: Function that executes SQL (takes sql string)
+            flow_name: Name for the Prefect flow
+            deployment_name: Name for the deployment
+            cron: Cron schedule (e.g., "0 0 * * *" for daily at midnight)
+            interval_seconds: Interval schedule in seconds (alternative to cron)
+            work_pool_name: Work pool to use for execution
+            **kwargs: Additional parameters passed to to_prefect_flow()
+
+        Returns:
+            Prefect Deployment instance
+
+        Examples:
+            # Create deployment with cron schedule
+            deployment = pipeline.to_prefect_deployment(
+                executor=execute_sql,
+                flow_name="my_pipeline",
+                deployment_name="daily_run",
+                cron="0 0 * * *",  # Daily at midnight
+            )
+
+            # Apply the deployment
+            deployment.apply()
+
+        Note:
+            - Requires Prefect 2.x or 3.x: pip install 'prefect>=2.0'
+            - Deployment must be applied to register with Prefect server
+            - Use work_pool_name to specify execution environment
+        """
+        from .orchestrators import PrefectOrchestrator
+
+        return PrefectOrchestrator(self).to_deployment(
+            executor=executor,
+            flow_name=flow_name,
+            deployment_name=deployment_name,
+            cron=cron,
+            interval_seconds=interval_seconds,
+            work_pool_name=work_pool_name,
+            **kwargs,
+        )
+
+    # ========================================================================
     # Validation Methods
     # ========================================================================
 
