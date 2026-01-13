@@ -8,10 +8,16 @@ Supported orchestrators:
 - Airflow (2.x and 3.x)
 - Dagster (1.x)
 - Prefect (2.x and 3.x)
+- Kestra (YAML-based declarative workflows)
 
 Example:
     from clgraph import Pipeline
-    from clgraph.orchestrators import AirflowOrchestrator, DagsterOrchestrator, PrefectOrchestrator
+    from clgraph.orchestrators import (
+        AirflowOrchestrator,
+        DagsterOrchestrator,
+        PrefectOrchestrator,
+        KestraOrchestrator,
+    )
 
     pipeline = Pipeline.from_sql_files("queries/", dialect="bigquery")
 
@@ -26,16 +32,22 @@ Example:
     # Generate Prefect flow
     prefect = PrefectOrchestrator(pipeline)
     flow = prefect.to_flow(executor=execute_sql, flow_name="my_pipeline")
+
+    # Generate Kestra flow YAML
+    kestra = KestraOrchestrator(pipeline)
+    yaml_content = kestra.to_flow(flow_id="my_pipeline", namespace="clgraph")
 """
 
 from .airflow import AirflowOrchestrator
 from .base import BaseOrchestrator
 from .dagster import DagsterOrchestrator
+from .kestra import KestraOrchestrator
 from .prefect import PrefectOrchestrator
 
 __all__ = [
     "BaseOrchestrator",
     "AirflowOrchestrator",
     "DagsterOrchestrator",
+    "KestraOrchestrator",
     "PrefectOrchestrator",
 ]
