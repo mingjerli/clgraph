@@ -90,10 +90,10 @@ class TestToKestraFlowBasic:
 
 
 class TestToKestraFlowDependencies:
-    """Test Kestra flow dependency handling."""
+    """Test Kestra flow dependency handling via topological ordering."""
 
     def test_linear_dependencies(self):
-        """Test linear dependency chain."""
+        """Test linear dependency chain - tasks should be in topological order."""
         pipeline = Pipeline(
             [
                 ("step1", "CREATE TABLE step1 AS SELECT 1"),
@@ -105,17 +105,14 @@ class TestToKestraFlowDependencies:
         yaml_content = pipeline.to_kestra_flow(flow_id="linear_deps", namespace="clgraph.test")
 
         flow = yaml.safe_load(yaml_content)
-        tasks_by_id = {t["id"]: t for t in flow["tasks"]}
+        task_ids = [t["id"] for t in flow["tasks"]]
 
-        # step1 has no dependencies
-        assert "dependsOn" not in tasks_by_id["step1"]
-        # step2 depends on step1
-        assert tasks_by_id["step2"]["dependsOn"] == ["step1"]
-        # step3 depends on step2
-        assert tasks_by_id["step3"]["dependsOn"] == ["step2"]
+        # Tasks should be in topological order: step1 before step2 before step3
+        assert task_ids.index("step1") < task_ids.index("step2")
+        assert task_ids.index("step2") < task_ids.index("step3")
 
     def test_diamond_dependencies(self):
-        """Test diamond pattern dependencies."""
+        """Test diamond pattern dependencies - tasks should be in valid topological order."""
         pipeline = Pipeline(
             [
                 ("source", "CREATE TABLE source AS SELECT 1 as id"),
@@ -131,19 +128,17 @@ class TestToKestraFlowDependencies:
         yaml_content = pipeline.to_kestra_flow(flow_id="diamond_deps", namespace="clgraph.test")
 
         flow = yaml.safe_load(yaml_content)
-        tasks_by_id = {t["id"]: t for t in flow["tasks"]}
+        task_ids = [t["id"] for t in flow["tasks"]]
 
-        # source has no dependencies
-        assert "dependsOn" not in tasks_by_id["source"]
-        # left and right depend on source
-        assert tasks_by_id["left_branch"]["dependsOn"] == ["source"]
-        assert tasks_by_id["right_branch"]["dependsOn"] == ["source"]
-        # final depends on both left and right
-        final_deps = set(tasks_by_id["final"]["dependsOn"])
-        assert final_deps == {"left_branch", "right_branch"}
+        # source should come before left and right branches
+        assert task_ids.index("source") < task_ids.index("left_branch")
+        assert task_ids.index("source") < task_ids.index("right_branch")
+        # final should come after both branches
+        assert task_ids.index("left_branch") < task_ids.index("final")
+        assert task_ids.index("right_branch") < task_ids.index("final")
 
-    def test_no_dependencies_for_source_queries(self):
-        """Test that source queries have no dependsOn field."""
+    def test_no_depends_on_field(self):
+        """Test that tasks don't have dependsOn field (Kestra uses sequential execution)."""
         pipeline = Pipeline(
             [
                 ("source1", "CREATE TABLE source1 AS SELECT 1"),
@@ -158,10 +153,10 @@ class TestToKestraFlowDependencies:
         yaml_content = pipeline.to_kestra_flow(flow_id="multi_source", namespace="clgraph.test")
 
         flow = yaml.safe_load(yaml_content)
-        tasks_by_id = {t["id"]: t for t in flow["tasks"]}
 
-        assert "dependsOn" not in tasks_by_id["source1"]
-        assert "dependsOn" not in tasks_by_id["source2"]
+        # No task should have dependsOn field
+        for task in flow["tasks"]:
+            assert "dependsOn" not in task
 
 
 class TestToKestraFlowScheduling:
@@ -433,16 +428,14 @@ class TestKestraFlowComplexPipeline:
         assert flow["namespace"] == "clgraph.enterprise"
         assert len(flow["tasks"]) == 4
 
-        tasks_by_id = {t["id"]: t for t in flow["tasks"]}
+        task_ids = [t["id"] for t in flow["tasks"]]
 
-        # Verify dependencies
-        assert "dependsOn" not in tasks_by_id["raw_sales"]
-        assert "dependsOn" not in tasks_by_id["raw_products"]
-        assert set(tasks_by_id["sales_with_products"]["dependsOn"]) == {
-            "raw_sales",
-            "raw_products",
-        }
-        assert tasks_by_id["daily_summary"]["dependsOn"] == ["sales_with_products"]
+        # Verify topological ordering (no dependsOn field, just correct order)
+        # raw_sales and raw_products should come before sales_with_products
+        assert task_ids.index("raw_sales") < task_ids.index("sales_with_products")
+        assert task_ids.index("raw_products") < task_ids.index("sales_with_products")
+        # sales_with_products should come before daily_summary
+        assert task_ids.index("sales_with_products") < task_ids.index("daily_summary")
 
     def test_many_queries_pipeline(self):
         """Test with many queries."""
@@ -465,7 +458,7 @@ class TestKestraFlowComplexPipeline:
         flow = yaml.safe_load(yaml_content)
         assert len(flow["tasks"]) == 10
 
-        # Verify chain dependencies
-        tasks_by_id = {t["id"]: t for t in flow["tasks"]}
+        # Verify topological ordering (each step should come after its predecessor)
+        task_ids = [t["id"] for t in flow["tasks"]]
         for i in range(1, 10):
-            assert tasks_by_id[f"step_{i}"]["dependsOn"] == [f"step_{i - 1}"]
+            assert task_ids.index(f"step_{i - 1}") < task_ids.index(f"step_{i}")

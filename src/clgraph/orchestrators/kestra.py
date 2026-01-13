@@ -19,8 +19,9 @@ class KestraOrchestrator(BaseOrchestrator):
     """
     Converts clgraph pipelines to Kestra YAML flows.
 
-    Kestra uses YAML-based workflow definitions with tasks that can have
-    dependencies via the `dependsOn` field.
+    Kestra uses YAML-based workflow definitions. Tasks are executed sequentially
+    in the order they're defined. This orchestrator generates tasks in topological
+    order to ensure dependencies are respected.
 
     Example:
         from clgraph.orchestrators import KestraOrchestrator
@@ -90,7 +91,7 @@ class KestraOrchestrator(BaseOrchestrator):
         Note:
             - Use to_flow_with_triggers() to add scheduling
             - Tasks use io.kestra.plugin.jdbc.clickhouse.Query type
-            - Dependencies are managed via dependsOn field
+            - Tasks are ordered topologically to respect dependencies
         """
         table_graph = self.table_graph
 
@@ -111,22 +112,14 @@ class KestraOrchestrator(BaseOrchestrator):
                 "password": "",
             }
 
-        # Build tasks list
+        # Build tasks list in topological order
+        # Kestra executes tasks sequentially in the order they're defined,
+        # so topological ordering ensures dependencies are respected
         tasks = []
-        task_id_mapping: Dict[str, str] = {}  # query_id -> task_id
 
         for query_id in table_graph.topological_sort():
             query = table_graph.queries[query_id]
             task_id = self._sanitize_name(query_id)
-            task_id_mapping[query_id] = task_id
-
-            # Find dependencies
-            depends_on = []
-            for source_table in query.source_tables:
-                if source_table in table_graph.tables:
-                    table_node = table_graph.tables[source_table]
-                    if table_node.created_by and table_node.created_by in task_id_mapping:
-                        depends_on.append(task_id_mapping[table_node.created_by])
 
             task: Dict[str, Any] = {
                 "id": task_id,
@@ -141,9 +134,6 @@ class KestraOrchestrator(BaseOrchestrator):
                     "interval": retry_delay,
                 },
             }
-
-            if depends_on:
-                task["dependsOn"] = depends_on
 
             tasks.append(task)
 
