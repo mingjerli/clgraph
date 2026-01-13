@@ -2502,6 +2502,100 @@ class Pipeline:
         )
 
     # ========================================================================
+    # Orchestrator Methods - Kestra
+    # ========================================================================
+
+    def to_kestra_flow(
+        self,
+        flow_id: str,
+        namespace: str,
+        description: Optional[str] = None,
+        connection_config: Optional[Dict[str, str]] = None,
+        cron: Optional[str] = None,
+        retry_attempts: int = 3,
+        labels: Optional[Dict[str, str]] = None,
+        **kwargs,
+    ) -> str:
+        """
+        Generate Kestra flow YAML from this pipeline.
+
+        Kestra is a declarative orchestration platform using YAML-based
+        workflow definitions. This method generates a complete flow file.
+
+        Args:
+            flow_id: Unique identifier for the flow
+            namespace: Kestra namespace (e.g., "clgraph.production")
+            description: Optional flow description (auto-generated if not provided)
+            connection_config: Database connection config dict:
+                {
+                    "url": "jdbc:clickhouse://host:port/db",
+                    "username": "default",
+                    "password": "",
+                }
+            cron: Optional cron expression for scheduling (e.g., "0 0 * * *")
+            retry_attempts: Number of retry attempts (default: 3)
+            labels: Optional key-value labels for the flow
+            **kwargs: Additional flow configuration
+
+        Returns:
+            YAML string representing Kestra flow
+
+        Examples:
+            # Basic usage
+            yaml_content = pipeline.to_kestra_flow(
+                flow_id="enterprise_pipeline",
+                namespace="clgraph.production"
+            )
+
+            # Save to file
+            with open("flows/enterprise_pipeline.yml", "w") as f:
+                f.write(yaml_content)
+
+            # With schedule and custom connection
+            yaml_content = pipeline.to_kestra_flow(
+                flow_id="daily_analytics",
+                namespace="clgraph.analytics",
+                cron="0 0 * * *",  # Daily at midnight
+                connection_config={
+                    "url": "jdbc:clickhouse://localhost:8123/default",
+                    "username": "default",
+                    "password": "",
+                },
+                labels={"env": "production", "team": "analytics"},
+            )
+
+        Note:
+            - Kestra uses io.kestra.plugin.jdbc.clickhouse.Query task type
+            - Dependencies are managed via dependsOn field
+            - Install Kestra ClickHouse plugin for database connectivity
+        """
+        from .orchestrators import KestraOrchestrator
+
+        orchestrator = KestraOrchestrator(self)
+
+        if cron:
+            return orchestrator.to_flow_with_triggers(
+                flow_id=flow_id,
+                namespace=namespace,
+                description=description,
+                connection_config=connection_config,
+                cron=cron,
+                retry_attempts=retry_attempts,
+                labels=labels,
+                **kwargs,
+            )
+        else:
+            return orchestrator.to_flow(
+                flow_id=flow_id,
+                namespace=namespace,
+                description=description,
+                connection_config=connection_config,
+                retry_attempts=retry_attempts,
+                labels=labels,
+                **kwargs,
+            )
+
+    # ========================================================================
     # Validation Methods
     # ========================================================================
 
