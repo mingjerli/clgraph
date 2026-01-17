@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple, TypedDict
 
 import sqlglot
 from sqlglot import exp
+from sqlglot.optimizer import qualify_columns
 
 from .metadata_parser import MetadataExtractor
 from .models import (
@@ -463,6 +464,106 @@ def _find_nested_access_ancestor(
     return outermost_nested
 
 
+def _convert_to_nested_schema(
+    flat_schema: Dict[str, List[str]],
+) -> Dict[str, Dict[str, Dict[str, str]]]:
+    """
+    Convert flat table schema to nested format for sqlglot optimizer.
+
+    The sqlglot optimizer.qualify_columns requires a nested schema format:
+    {
+        "schema_name": {
+            "table_name": {
+                "column_name": "type"
+            }
+        }
+    }
+
+    Our flat format is:
+    {
+        "schema.table": ["col1", "col2", ...]
+    }
+
+    Args:
+        flat_schema: Dict mapping "schema.table" to list of column names
+
+    Returns:
+        Nested schema dict suitable for sqlglot optimizer
+    """
+    nested: Dict[str, Dict[str, Dict[str, str]]] = {}
+
+    for qualified_table, columns in flat_schema.items():
+        parts = qualified_table.split(".")
+
+        if len(parts) >= 2:
+            # Has schema prefix: "schema.table" or "catalog.schema.table"
+            schema_name = parts[-2]  # Second to last part
+            table_name = parts[-1]  # Last part
+        else:
+            # No schema prefix - use empty string as schema
+            schema_name = ""
+            table_name = qualified_table
+
+        if schema_name not in nested:
+            nested[schema_name] = {}
+
+        if table_name not in nested[schema_name]:
+            nested[schema_name][table_name] = {}
+
+        for col in columns:
+            # Use "UNKNOWN" as type since we don't have type info
+            nested[schema_name][table_name][col] = "UNKNOWN"
+
+    return nested
+
+
+def _qualify_sql_with_schema(
+    sql_query: str,
+    external_table_columns: Dict[str, List[str]],
+    dialect: str,
+) -> str:
+    """
+    Qualify unqualified column references in SQL using schema information.
+
+    When a SQL query has multiple tables joined and columns are unqualified
+    (no table prefix), this function uses the schema to determine which table
+    each column belongs to and adds the appropriate table prefix.
+
+    Args:
+        sql_query: The SQL query to qualify
+        external_table_columns: Dict mapping table names to column lists
+        dialect: SQL dialect for parsing
+
+    Returns:
+        The SQL query with qualified column references
+    """
+    if not external_table_columns:
+        return sql_query
+
+    try:
+        # Parse the SQL
+        parsed = sqlglot.parse_one(sql_query, read=dialect)
+
+        # Convert to nested schema format
+        nested_schema = _convert_to_nested_schema(external_table_columns)
+
+        # Use sqlglot's qualify_columns to add table prefixes
+        qualified = qualify_columns.qualify_columns(
+            parsed,
+            schema=nested_schema,
+            dialect=dialect,
+            infer_schema=True,
+        )
+
+        # Return the qualified SQL
+        return qualified.sql(dialect=dialect)
+
+    except Exception:
+        # If qualification fails, return original SQL
+        # The lineage builder will handle unqualified columns as before
+        return sql_query
+
+
 # ============================================================================
 # Part 1: Recursive Lineage Builder
 # ============================================================================
@@ -485,8 +586,12 @@ class RecursiveLineageBuilder:
         self.dialect = dialect
         self.query_id = query_id
 
-        # Parse query structure first
-        parser = RecursiveQueryParser(sql_query, dialect=dialect)
+        # Qualify unqualified columns using schema info before parsing
+        # This ensures columns like "order_date" in a JOIN get the correct table prefix
+        qualified_sql = _qualify_sql_with_schema(sql_query, self.external_table_columns, dialect)
+
+        # Parse query structure using qualified SQL
+        parser = RecursiveQueryParser(qualified_sql, dialect=dialect)
         self.unit_graph = parser.parse()
 
         # Column lineage graph (to be built)
