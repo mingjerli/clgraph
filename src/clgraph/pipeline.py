@@ -77,7 +77,7 @@ class PipelineLineageBuilder:
             # Step 2a: Run single-query lineage
             try:
                 # Extract SELECT statement from DDL/DML if needed
-                sql_for_lineage = self._extract_select_from_query(query)
+                sql_for_lineage = self._extract_select_from_query(query, pipeline.dialect)
 
                 if sql_for_lineage:
                     # Collect upstream table schemas from already-processed queries
@@ -708,23 +708,34 @@ class PipelineLineageBuilder:
 
         return False
 
-    def _extract_select_from_query(self, query: ParsedQuery) -> Optional[str]:
+    def _extract_select_from_query(
+        self, query: ParsedQuery, dialect: str = "bigquery"
+    ) -> Optional[str]:
         """
         Extract SELECT statement from DDL/DML queries.
         Single-query lineage only works on SELECT statements, so we need to extract
         the SELECT from CREATE TABLE AS SELECT, INSERT INTO ... SELECT, etc.
+
+        Args:
+            query: The parsed query to extract SELECT from
+            dialect: SQL dialect for proper SQL serialization (important for functions
+                    like DATE_TRUNC which have different argument orders in different dialects)
+
+        Returns:
+            The SELECT SQL string, or None if no SELECT found
         """
         ast = query.ast
 
         # CREATE TABLE/VIEW AS SELECT
         if isinstance(ast, exp.Create):
             if ast.expression and isinstance(ast.expression, exp.Select):
-                return ast.expression.sql()
+                # Use dialect to ensure proper SQL serialization
+                return ast.expression.sql(dialect=dialect)
 
         # INSERT INTO ... SELECT
         elif isinstance(ast, exp.Insert):
             if ast.expression and isinstance(ast.expression, exp.Select):
-                return ast.expression.sql()
+                return ast.expression.sql(dialect=dialect)
 
         # MERGE INTO statement - pass full SQL to lineage builder
         elif isinstance(ast, exp.Merge):
@@ -2594,6 +2605,67 @@ class Pipeline:
                 labels=labels,
                 **kwargs,
             )
+
+    # ========================================================================
+    # Orchestrator Methods - Mage
+    # ========================================================================
+
+    def to_mage_pipeline(
+        self,
+        executor: Callable[[str], None],
+        pipeline_name: str,
+        description: Optional[str] = None,
+        connection_name: str = "clickhouse_default",
+    ) -> Dict[str, Any]:
+        """
+        Generate Mage pipeline files from this pipeline.
+
+        Mage is a modern data pipeline tool with a notebook-style UI and
+        block-based architecture. Each SQL query becomes a block (either
+        data_loader or transformer).
+
+        Args:
+            executor: Function that executes SQL (for code reference)
+            pipeline_name: Name for the Mage pipeline
+            description: Optional pipeline description (auto-generated if not provided)
+            connection_name: Database connection name in Mage io_config.yaml
+
+        Returns:
+            Dictionary with pipeline file structure:
+            {
+                "metadata.yaml": <dict>,
+                "blocks": {"block_name": <code>, ...}
+            }
+
+        Examples:
+            # Generate Mage pipeline files
+            files = pipeline.to_mage_pipeline(
+                executor=execute_sql,
+                pipeline_name="enterprise_pipeline",
+            )
+
+            # Write files to Mage project
+            import yaml
+            with open("pipelines/enterprise_pipeline/metadata.yaml", "w") as f:
+                yaml.dump(files["metadata.yaml"], f)
+            for name, code in files["blocks"].items():
+                with open(f"pipelines/enterprise_pipeline/{name}.py", "w") as f:
+                    f.write(code)
+
+        Note:
+            - First query (no dependencies) becomes data_loader block
+            - Subsequent queries become transformer blocks
+            - Dependencies are managed via upstream_blocks/downstream_blocks
+            - Requires mage-ai package and ClickHouse connection in io_config.yaml
+        """
+        from .orchestrators import MageOrchestrator
+
+        return MageOrchestrator(self).to_pipeline_files(
+            executor=executor,
+            pipeline_name=pipeline_name,
+            description=description,
+            connection_name=connection_name,
+        )
 
     # ========================================================================
     # Validation Methods
