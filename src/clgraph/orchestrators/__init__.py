@@ -9,6 +9,7 @@ Supported orchestrators:
 - Dagster (1.x)
 - Prefect (2.x and 3.x)
 - Kestra (YAML-based declarative workflows)
+- Mage (notebook-style block-based pipelines)
 
 Example:
     from clgraph import Pipeline
@@ -17,6 +18,7 @@ Example:
         DagsterOrchestrator,
         PrefectOrchestrator,
         KestraOrchestrator,
+        MageOrchestrator,
     )
 
     pipeline = Pipeline.from_sql_files("queries/", dialect="bigquery")
@@ -36,12 +38,17 @@ Example:
     # Generate Kestra flow YAML
     kestra = KestraOrchestrator(pipeline)
     yaml_content = kestra.to_flow(flow_id="my_pipeline", namespace="clgraph")
+
+    # Generate Mage pipeline
+    mage = MageOrchestrator(pipeline)
+    files = mage.to_pipeline_files(executor=execute_sql, pipeline_name="my_pipeline")
 """
 
 from .airflow import AirflowOrchestrator
 from .base import BaseOrchestrator
 from .dagster import DagsterOrchestrator
 from .kestra import KestraOrchestrator
+from .mage import MageOrchestrator
 from .prefect import PrefectOrchestrator
 
 __all__ = [
@@ -49,5 +56,6 @@ __all__ = [
     "AirflowOrchestrator",
     "DagsterOrchestrator",
     "KestraOrchestrator",
+    "MageOrchestrator",
     "PrefectOrchestrator",
 ]
