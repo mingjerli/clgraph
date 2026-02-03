@@ -2612,10 +2612,10 @@ class Pipeline:
 
     def to_mage_pipeline(
         self,
-        executor: Callable[[str], None],
         pipeline_name: str,
         description: Optional[str] = None,
         connection_name: str = "clickhouse_default",
+        db_connector: str = "clickhouse",
     ) -> Dict[str, Any]:
         """
         Generate Mage pipeline files from this pipeline.
@@ -2625,10 +2625,10 @@ class Pipeline:
         data_loader or transformer).
 
         Args:
-            executor: Function that executes SQL (for code reference)
             pipeline_name: Name for the Mage pipeline
             description: Optional pipeline description (auto-generated if not provided)
             connection_name: Database connection name in Mage io_config.yaml
+            db_connector: Database connector type (clickhouse, postgres, bigquery, snowflake)
 
         Returns:
             Dictionary with pipeline file structure:
@@ -2640,7 +2640,6 @@ class Pipeline:
         Examples:
             # Generate Mage pipeline files
             files = pipeline.to_mage_pipeline(
-                executor=execute_sql,
                 pipeline_name="enterprise_pipeline",
             )
 
@@ -2656,15 +2655,15 @@ class Pipeline:
             - First query (no dependencies) becomes data_loader block
             - Subsequent queries become transformer blocks
             - Dependencies are managed via upstream_blocks/downstream_blocks
-            - Requires mage-ai package and ClickHouse connection in io_config.yaml
+            - Requires mage-ai package and database connection in io_config.yaml
         """
         from .orchestrators import MageOrchestrator
 
         return MageOrchestrator(self).to_pipeline_files(
-            executor=executor,
             pipeline_name=pipeline_name,
             description=description,
             connection_name=connection_name,
+            db_connector=db_connector,
         )
 
     # ========================================================================
