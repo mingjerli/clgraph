@@ -4,12 +4,9 @@ Tests for Mage orchestrator integration.
 Tests the to_mage_pipeline() method and MageOrchestrator class.
 """
 
+import pytest
+
 from clgraph import Pipeline
-
-
-def mock_executor(sql: str) -> None:
-    """Mock executor for testing."""
-    pass
 
 
 class TestToMagePipelineBasic:
@@ -25,7 +22,6 @@ class TestToMagePipelineBasic:
         )
 
         result = pipeline.to_mage_pipeline(
-            executor=mock_executor,
             pipeline_name="test_pipeline",
         )
 
@@ -42,7 +38,6 @@ class TestToMagePipelineBasic:
         )
 
         result = pipeline.to_mage_pipeline(
-            executor=mock_executor,
             pipeline_name="test_pipeline",
         )
 
@@ -64,7 +59,6 @@ class TestToMagePipelineBasic:
         )
 
         result = pipeline.to_mage_pipeline(
-            executor=mock_executor,
             pipeline_name="test_pipeline",
         )
 
@@ -76,7 +70,6 @@ class TestToMagePipelineBasic:
         pipeline = Pipeline([("q1", "CREATE TABLE t1 AS SELECT 1")])
 
         result = pipeline.to_mage_pipeline(
-            executor=mock_executor,
             pipeline_name="test_pipeline",
             description="Custom description for testing",
         )
@@ -93,7 +86,6 @@ class TestToMagePipelineBasic:
         )
 
         result = pipeline.to_mage_pipeline(
-            executor=mock_executor,
             pipeline_name="test_pipeline",
         )
 
@@ -106,7 +98,6 @@ class TestToMagePipelineBasic:
         pipeline = Pipeline([("q1", "CREATE TABLE t1 AS SELECT 1")])
 
         result = pipeline.to_mage_pipeline(
-            executor=mock_executor,
             pipeline_name="test_pipeline",
         )
 
@@ -117,7 +108,6 @@ class TestToMagePipelineBasic:
         pipeline = Pipeline([("q1", "CREATE TABLE t1 AS SELECT 1")])
 
         result = pipeline.to_mage_pipeline(
-            executor=mock_executor,
             pipeline_name="test_pipeline",
         )
 
@@ -139,7 +129,6 @@ class TestMageBlockTypes:
         )
 
         result = pipeline.to_mage_pipeline(
-            executor=mock_executor,
             pipeline_name="test_pipeline",
         )
 
@@ -157,7 +146,6 @@ class TestMageBlockTypes:
         )
 
         result = pipeline.to_mage_pipeline(
-            executor=mock_executor,
             pipeline_name="test_pipeline",
         )
 
@@ -175,7 +163,6 @@ class TestMageBlockTypes:
         )
 
         result = pipeline.to_mage_pipeline(
-            executor=mock_executor,
             pipeline_name="test_pipeline",
         )
 
@@ -193,7 +180,6 @@ class TestMageBlockTypes:
         )
 
         result = pipeline.to_mage_pipeline(
-            executor=mock_executor,
             pipeline_name="test_pipeline",
         )
 
@@ -216,7 +202,6 @@ class TestMageDependencies:
         )
 
         result = pipeline.to_mage_pipeline(
-            executor=mock_executor,
             pipeline_name="test_pipeline",
         )
 
@@ -238,7 +223,6 @@ class TestMageDependencies:
         )
 
         result = pipeline.to_mage_pipeline(
-            executor=mock_executor,
             pipeline_name="test_pipeline",
         )
 
@@ -264,7 +248,6 @@ class TestMageDependencies:
         )
 
         result = pipeline.to_mage_pipeline(
-            executor=mock_executor,
             pipeline_name="test_pipeline",
         )
 
@@ -304,7 +287,6 @@ class TestMageDependencies:
         )
 
         result = pipeline.to_mage_pipeline(
-            executor=mock_executor,
             pipeline_name="test_pipeline",
         )
 
@@ -324,7 +306,6 @@ class TestMageDependencies:
         )
 
         result = pipeline.to_mage_pipeline(
-            executor=mock_executor,
             pipeline_name="test_pipeline",
         )
 
@@ -342,7 +323,6 @@ class TestMageConfiguration:
         pipeline = Pipeline([("q1", "CREATE TABLE t1 AS SELECT 1")])
 
         result = pipeline.to_mage_pipeline(
-            executor=mock_executor,
             pipeline_name="test_pipeline",
         )
 
@@ -354,7 +334,6 @@ class TestMageConfiguration:
         pipeline = Pipeline([("q1", "CREATE TABLE t1 AS SELECT 1")])
 
         result = pipeline.to_mage_pipeline(
-            executor=mock_executor,
             pipeline_name="test_pipeline",
             connection_name="my_custom_conn",
         )
@@ -368,7 +347,6 @@ class TestMageConfiguration:
         pipeline = Pipeline([("q1", sql)])
 
         result = pipeline.to_mage_pipeline(
-            executor=mock_executor,
             pipeline_name="test_pipeline",
         )
 
@@ -376,16 +354,131 @@ class TestMageConfiguration:
         assert sql in block_code
 
     def test_clickhouse_import_in_block_code(self):
-        """Test that ClickHouse import is present in block code."""
+        """Test that ClickHouse import is present in block code by default."""
         pipeline = Pipeline([("q1", "CREATE TABLE t1 AS SELECT 1")])
 
         result = pipeline.to_mage_pipeline(
-            executor=mock_executor,
             pipeline_name="test_pipeline",
         )
 
         block_code = list(result["blocks"].values())[0]
         assert "from mage_ai.io.clickhouse import ClickHouse" in block_code
+
+
+class TestMageDbConnector:
+    """Test configurable database connector."""
+
+    def test_postgres_connector(self):
+        """Test postgres connector generates correct import and class."""
+        pipeline = Pipeline([("q1", "CREATE TABLE t1 AS SELECT 1")])
+
+        result = pipeline.to_mage_pipeline(
+            pipeline_name="test_pipeline",
+            db_connector="postgres",
+            connection_name="pg_default",
+        )
+
+        block_code = list(result["blocks"].values())[0]
+        assert "from mage_ai.io.postgres import Postgres" in block_code
+        assert "Postgres.with_config" in block_code
+        assert "pg_default" in block_code
+
+    def test_bigquery_connector(self):
+        """Test bigquery connector generates correct import and class."""
+        pipeline = Pipeline([("q1", "CREATE TABLE t1 AS SELECT 1")])
+
+        result = pipeline.to_mage_pipeline(
+            pipeline_name="test_pipeline",
+            db_connector="bigquery",
+            connection_name="bq_default",
+        )
+
+        block_code = list(result["blocks"].values())[0]
+        assert "from mage_ai.io.bigquery import BigQuery" in block_code
+        assert "BigQuery.with_config" in block_code
+        assert "bq_default" in block_code
+
+    def test_snowflake_connector(self):
+        """Test snowflake connector generates correct import and class."""
+        pipeline = Pipeline([("q1", "CREATE TABLE t1 AS SELECT 1")])
+
+        result = pipeline.to_mage_pipeline(
+            pipeline_name="test_pipeline",
+            db_connector="snowflake",
+            connection_name="sf_default",
+        )
+
+        block_code = list(result["blocks"].values())[0]
+        assert "from mage_ai.io.snowflake import Snowflake" in block_code
+        assert "Snowflake.with_config" in block_code
+        assert "sf_default" in block_code
+
+    def test_default_connector_is_clickhouse(self):
+        """Test that default db_connector is clickhouse."""
+        pipeline = Pipeline([("q1", "CREATE TABLE t1 AS SELECT 1")])
+
+        result = pipeline.to_mage_pipeline(
+            pipeline_name="test_pipeline",
+        )
+
+        block_code = list(result["blocks"].values())[0]
+        assert "ClickHouse.with_config" in block_code
+
+    def test_unsupported_connector_raises_error(self):
+        """Test that unsupported db_connector raises ValueError."""
+        pipeline = Pipeline([("q1", "CREATE TABLE t1 AS SELECT 1")])
+
+        with pytest.raises(ValueError, match="Unsupported db_connector"):
+            pipeline.to_mage_pipeline(
+                pipeline_name="test_pipeline",
+                db_connector="mysql",
+            )
+
+
+class TestMageConnectionNameValidation:
+    """Test connection_name validation to prevent code injection."""
+
+    def test_valid_connection_names(self):
+        """Test that valid connection names are accepted."""
+        pipeline = Pipeline([("q1", "CREATE TABLE t1 AS SELECT 1")])
+
+        for name in ["clickhouse_default", "my-conn", "conn123", "a_b-c"]:
+            result = pipeline.to_mage_pipeline(
+                pipeline_name="test_pipeline",
+                connection_name=name,
+            )
+            block_code = list(result["blocks"].values())[0]
+            assert name in block_code
+
+    def test_invalid_connection_name_raises_error(self):
+        """Test that invalid connection_name raises ValueError."""
+        pipeline = Pipeline([("q1", "CREATE TABLE t1 AS SELECT 1")])
+
+        with pytest.raises(ValueError, match="Invalid connection_name"):
+            pipeline.to_mage_pipeline(
+                pipeline_name="test_pipeline",
+                connection_name='"; import os; os.system("rm -rf /")',
+            )
+
+    def test_connection_name_with_spaces_raises_error(self):
+        """Test that connection_name with spaces raises ValueError."""
+        pipeline = Pipeline([("q1", "CREATE TABLE t1 AS SELECT 1")])
+
+        with pytest.raises(ValueError, match="Invalid connection_name"):
+            pipeline.to_mage_pipeline(
+                pipeline_name="test_pipeline",
+                connection_name="my connection",
+            )
+
+    def test_connection_name_with_dots_raises_error(self):
+        """Test that connection_name with dots raises ValueError."""
+        pipeline = Pipeline([("q1", "CREATE TABLE t1 AS SELECT 1")])
+
+        with pytest.raises(ValueError, match="Invalid connection_name"):
+            pipeline.to_mage_pipeline(
+                pipeline_name="test_pipeline",
+                connection_name="my.connection",
+            )
 
 
 class TestMageOrchestrator:
@@ -421,7 +514,7 @@ class TestMageOrchestrator:
         pipeline = Pipeline([("q1", "CREATE TABLE t1 AS SELECT 1")])
         orchestrator = MageOrchestrator(pipeline)
 
-        result = orchestrator.to_blocks(executor=mock_executor)
+        result = orchestrator.to_blocks()
 
         assert isinstance(result, dict)
         assert len(result) == 1
@@ -434,7 +527,6 @@ class TestMageOrchestrator:
         orchestrator = MageOrchestrator(pipeline)
 
         result = orchestrator.to_pipeline_files(
-            executor=mock_executor,
             pipeline_name="test",
         )
 
@@ -516,7 +608,6 @@ class TestMageComplexPipeline:
         )
 
         result = pipeline.to_mage_pipeline(
-            executor=mock_executor,
             pipeline_name="enterprise_pipeline",
         )
 
@@ -560,7 +651,6 @@ class TestMageComplexPipeline:
         pipeline = Pipeline(queries)
 
         result = pipeline.to_mage_pipeline(
-            executor=mock_executor,
             pipeline_name="long_chain",
         )
 
