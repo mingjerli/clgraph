@@ -175,7 +175,7 @@ class BaseTool(ABC):
         pass
 
     @abstractmethod
-    def run(self, **kwargs) -> ToolResult:
+    def run(self, *args, **kwargs) -> ToolResult:
         """
         Execute the tool with given parameters.
 
