@@ -743,7 +743,6 @@ name = "clgraph"
 version = "0.0.3"
 source = { editable = "." }
 dependencies = [
-    { name = "cloudpickle" },
     { name = "graphviz" },
     { name = "jinja2" },
     { name = "sqlglot" },
@@ -805,7 +804,6 @@ requires-dist = [
     { name = "apache-airflow", marker = "extra == 'airflow'", specifier = ">=2.7.0,<3.0.0" },
     { name = "build", marker = "extra == 'build'", specifier = ">=1.0.0" },
     { name = "clgraph", extras = ["llm", "mcp", "airflow"], marker = "extra == 'all'" },
-    { name = "cloudpickle", specifier = ">=3.1.2" },
     { name = "duckdb", marker = "extra == 'dev'", specifier = ">=0.9.0" },
     { name = "graphviz", specifier = ">=0.20.0" },
     { name = "graphviz", marker = "extra == 'examples'", specifier = ">=0.20.0" },
@@ -859,15 +857,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c6/19/f91d85941b79964d569a3729bf9f8b7f85ab47240248e77b7c0c8ed6ecc3/clickclick-20.10.2.tar.gz", hash = "sha256:4efb13e62353e34c5eef7ed6582c4920b418d7dedc86d819e22ee089ba01802c", size = 9914, upload-time = "2020-10-03T13:36:47.966Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7a/7e/c08007d3fb2bbefb430437a3573373590abedc03566b785d7d6763b22480/clickclick-20.10.2-py2.py3-none-any.whl", hash = "sha256:c8f33e6d9ec83f68416dd2136a7950125bd256ec39ccc9a85c6e280a16be2bb5", size = 7368, upload-time = "2020-10-03T13:36:49.842Z" },
-]
-
-[[package]]
-name = "cloudpickle"
-version = "3.1.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/27/fb/576f067976d320f5f0114a8d9fa1215425441bb35627b1993e5afd8111e5/cloudpickle-3.1.2.tar.gz", hash = "sha256:7fda9eb655c9c230dab534f1983763de5835249750e85fbcef43aaa30a9a2414", size = 22330, upload-time = "2025-11-03T09:25:26.604Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/88/39/799be3f2f0f38cc727ee3b4f1445fe6d5e4133064ec2e4115069418a5bb6/cloudpickle-3.1.2-py3-none-any.whl", hash = "sha256:9acb47f6afd73f60dc1df93bb801b472f05ff42fa6c84167d25cb206be1fbf4a", size = 22228, upload-time = "2025-11-03T09:25:25.534Z" },
 ]
 
 [[package]]

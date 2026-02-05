@@ -93,23 +93,27 @@ class TemplateTokenizer:
 
     def _resolve_template(self, template: str, context: Dict) -> str:
         """Resolve a single template with context"""
-        # Try Jinja2 resolution
+        # Try Jinja2 resolution using sandboxed environment
         try:
-            from jinja2 import Template as JinjaTemplate  # type: ignore[import-untyped]
+            from jinja2.sandbox import SandboxedEnvironment  # type: ignore[import-untyped]
 
-            jinja_template = JinjaTemplate(template)
+            env = SandboxedEnvironment()
+            jinja_template = env.from_string(template)
             return jinja_template.render(**context)
+        except ImportError:
+            return self._resolve_fstring_template(template, context)
         except Exception:
-            # If Jinja2 fails, try f-string style
-            try:
-                # Simple variable substitution
-                for key, value in context.items():
-                    template = template.replace(f"{{{key}}}", str(value))
-                    template = template.replace(f"{{{{ {key} }}}}", str(value))
-                return template
-            except Exception:
-                # If all fails, return original
-                return template
+            return self._resolve_fstring_template(template, context)
+
+    def _resolve_fstring_template(self, template: str, context: Dict) -> str:
+        """Resolve template using simple f-string style substitution"""
+        try:
+            for key, value in context.items():
+                template = template.replace(f"{{{key}}}", str(value))
+                template = template.replace(f"{{{{ {key} }}}}", str(value))
+            return template
+        except (KeyError, ValueError):
+            return template
 
 
 class MultiQueryParser:

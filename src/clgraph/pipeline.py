@@ -9,9 +9,12 @@ Contains Pipeline class for unified SQL workflow orchestration with:
 - Airflow DAG generation
 """
 
+import logging
+from collections import deque
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
+import sqlglot.errors
 from sqlglot import exp
 
 from .column import (
@@ -32,6 +35,8 @@ from .models import (
     ValidationIssue,
 )
 from .table import TableDependencyGraph
+
+logger = logging.getLogger(__name__)
 
 
 class PipelineLineageBuilder:
@@ -106,13 +111,11 @@ class PipelineLineageBuilder:
                     self._add_query_edges(pipeline, query, query_lineage)
                 else:
                     # No SELECT to analyze (e.g., UPDATE without SELECT)
-                    print(f"Info: Skipping lineage for {query_id} (no SELECT statement)")
-            except Exception as e:
-                # If lineage fails, skip this query
-                print(f"Warning: Failed to build lineage for {query_id}: {e}")
-                import traceback
-
-                traceback.print_exc()
+                    logger.info("Skipping lineage for %s (no SELECT statement)", query_id)
+            except (sqlglot.errors.SqlglotError, KeyError, ValueError, TypeError) as e:
+                # If lineage fails due to SQL parsing or data issues, skip this query
+                logger.warning("Failed to build lineage for %s: %s", query_id, e)
+                logger.debug("Traceback for %s lineage failure", query_id, exc_info=True)
                 continue
 
         # Step 3: Add cross-query edges
@@ -854,6 +857,14 @@ class Pipeline:
         """Access edges through column_graph for backward compatibility"""
         return self.column_graph.edges
 
+    def _get_incoming_edges(self, full_name: str) -> List[ColumnEdge]:
+        """Get incoming edges for a column using adjacency index."""
+        return self.column_graph._incoming_index.get(full_name, [])
+
+    def _get_outgoing_edges(self, full_name: str) -> List[ColumnEdge]:
+        """Get outgoing edges for a column using adjacency index."""
+        return self.column_graph._outgoing_index.get(full_name, [])
+
     def get_column(
         self, table_name: str, column_name: str, query_id: Optional[str] = None
     ) -> Optional[ColumnNode]:
@@ -1114,7 +1125,7 @@ class Pipeline:
                 id_counts[base_id] += 1
                 return f"{base_id}_{id_counts[base_id]}"
 
-        except Exception:
+        except (sqlglot.errors.SqlglotError, KeyError, AttributeError):
             # Fallback if parsing fails
             base_id = "query"
             if base_id not in id_counts:
@@ -1335,17 +1346,17 @@ class Pipeline:
 
         # BFS backward through edges
         visited = set()
-        queue = list(start_columns)
+        queue = deque(start_columns)
         sources = []
 
         while queue:
-            current = queue.pop(0)
+            current = queue.popleft()
             if current.full_name in visited:
                 continue
             visited.add(current.full_name)
 
             # Find incoming edges
-            incoming = [e for e in self.edges if e.to_node.full_name == current.full_name]
+            incoming = self._get_incoming_edges(current.full_name)
 
             if not incoming:
                 # No incoming edges = source column
@@ -1402,12 +1413,12 @@ class Pipeline:
 
         # BFS backward through edges, collecting all nodes and edges
         visited = set()
-        queue = list(start_columns)
+        queue = deque(start_columns)
         all_nodes = []
         all_edges = []
 
         while queue:
-            current = queue.pop(0)
+            current = queue.popleft()
             if current.full_name in visited:
                 continue
             visited.add(current.full_name)
@@ -1415,7 +1426,7 @@ class Pipeline:
             # Optionally skip CTE columns
             if not include_ctes and current.layer == "cte":
                 # Still need to traverse through CTEs to find real tables
-                incoming = [e for e in self.edges if e.to_node.full_name == current.full_name]
+                incoming = self._get_incoming_edges(current.full_name)
                 for edge in incoming:
                     queue.append(edge.from_node)
                 continue
@@ -1423,7 +1434,7 @@ class Pipeline:
             all_nodes.append(current)
 
             # Find incoming edges
-            incoming = [e for e in self.edges if e.to_node.full_name == current.full_name]
+            incoming = self._get_incoming_edges(current.full_name)
 
             for edge in incoming:
                 all_edges.append(edge)
@@ -1489,17 +1500,17 @@ class Pipeline:
 
         # BFS forward through edges
         visited = set()
-        queue = list(start_columns)
+        queue = deque(start_columns)
         descendants = []
 
         while queue:
-            current = queue.pop(0)
+            current = queue.popleft()
             if current.full_name in visited:
                 continue
             visited.add(current.full_name)
 
             # Find outgoing edges
-            outgoing = [e for e in self.edges if e.from_node.full_name == current.full_name]
+            outgoing = self._get_outgoing_edges(current.full_name)
 
             if not outgoing:
                 # No outgoing edges = final column
@@ -1551,12 +1562,12 @@ class Pipeline:
 
         # BFS forward through edges, collecting all nodes and edges
         visited = set()
-        queue = list(start_columns)
+        queue = deque(start_columns)
         all_nodes = []
         all_edges = []
 
         while queue:
-            current = queue.pop(0)
+            current = queue.popleft()
             if current.full_name in visited:
                 continue
             visited.add(current.full_name)
@@ -1564,7 +1575,7 @@ class Pipeline:
             # Optionally skip CTE columns
             if not include_ctes and current.layer == "cte":
                 # Still need to traverse through CTEs to find real tables
-                outgoing = [e for e in self.edges if e.from_node.full_name == current.full_name]
+                outgoing = self._get_outgoing_edges(current.full_name)
                 for edge in outgoing:
                     queue.append(edge.to_node)
                 continue
@@ -1572,7 +1583,7 @@ class Pipeline:
             all_nodes.append(current)
 
             # Find outgoing edges
-            outgoing = [e for e in self.edges if e.from_node.full_name == current.full_name]
+            outgoing = self._get_outgoing_edges(current.full_name)
 
             for edge in outgoing:
                 all_edges.append(edge)
@@ -1641,11 +1652,11 @@ class Pipeline:
         to_full_names = {col.full_name for col in to_columns}
 
         # BFS with path tracking, starting from all matching source columns
-        queue = [(col, []) for col in from_columns]
+        queue = deque((col, []) for col in from_columns)
         visited = set()
 
         while queue:
-            current, path = queue.pop(0)
+            current, path = queue.popleft()
             if current.full_name in visited:
                 continue
             visited.add(current.full_name)
@@ -1654,9 +1665,8 @@ class Pipeline:
                 return path
 
             # Find outgoing edges
-            for edge in self.edges:
-                if edge.from_node.full_name == current.full_name:
-                    queue.append((edge.to_node, path + [edge]))
+            for edge in self._get_outgoing_edges(current.full_name):
+                queue.append((edge.to_node, path + [edge]))
 
         return []  # No path found
 
@@ -1688,18 +1698,16 @@ class Pipeline:
                     ):
                         columns_to_process.append(col)
 
-        if verbose:
-            print(f"📊 Generating descriptions for {len(columns_to_process)} columns...")
+        logger.info("Generating descriptions for %d columns...", len(columns_to_process))
 
         # Process columns
         for i, col in enumerate(columns_to_process):
-            if verbose and (i + 1) % batch_size == 0:
-                print(f"   Processed {i + 1}/{len(columns_to_process)} columns...")
+            if (i + 1) % batch_size == 0:
+                logger.info("Processed %d/%d columns...", i + 1, len(columns_to_process))
 
             generate_description(col, self.llm, self)
 
-        if verbose:
-            print(f"✅ Done! Generated {len(columns_to_process)} descriptions")
+        logger.info("Done! Generated %d descriptions", len(columns_to_process))
 
     def propagate_all_metadata(self, verbose: bool = True):
         """
@@ -1722,11 +1730,10 @@ class Pipeline:
         # This handles metadata set via SQL comments on output columns
         output_columns = [col for col in self.columns.values() if col.layer == "output"]
 
-        if verbose:
-            print(
-                f"📊 Pass 1: Propagating metadata backward from "
-                f"{len(output_columns)} output columns..."
-            )
+        logger.info(
+            "Pass 1: Propagating metadata backward from %d output columns...",
+            len(output_columns),
+        )
 
         for col in output_columns:
             propagate_metadata_backward(col, self)
@@ -1744,17 +1751,16 @@ class Pipeline:
                 if col.table_name == target_table and col.is_computed():
                     columns_to_process.append(col)
 
-        if verbose:
-            print(
-                f"📊 Pass 2: Propagating metadata forward for {len(columns_to_process)} columns..."
-            )
+        logger.info(
+            "Pass 2: Propagating metadata forward for %d columns...",
+            len(columns_to_process),
+        )
 
         # Process columns
         for col in columns_to_process:
             propagate_metadata(col, self)
 
-        if verbose:
-            print(f"✅ Done! Propagated metadata for {len(columns_to_process)} columns")
+        logger.info("Done! Propagated metadata for %d columns", len(columns_to_process))
 
     def get_pii_columns(self) -> List[ColumnNode]:
         """
@@ -2021,10 +2027,10 @@ class Pipeline:
 
                 # Find all queries needed for this sink
                 visited = set()
-                queue = [sink_table]
+                queue = deque([sink_table])
 
                 while queue:
-                    current_table = queue.pop(0)
+                    current_table = queue.popleft()
                     if current_table in visited:
                         continue
                     visited.add(current_table)
@@ -2762,7 +2768,7 @@ class Pipeline:
         issues = self.get_issues(severity=severity) if severity else self.get_all_issues()
 
         if not issues:
-            print("✅ No validation issues found!")
+            logger.info("No validation issues found")
             return
 
         # Group by severity
@@ -2772,18 +2778,15 @@ class Pipeline:
         for issue in issues:
             by_severity[issue.severity.value].append(issue)
 
-        # Print by severity (errors first, then warnings, then info)
+        # Log by severity (errors first, then warnings, then info)
         for sev in ["error", "warning", "info"]:
             if sev not in by_severity:
                 continue
 
             issues_list = by_severity[sev]
-            icon = {"error": "❌", "warning": "⚠️", "info": "ℹ️"}[sev]
-            print(f"\n{icon} {sev.upper()} ({len(issues_list)})")
-            print("=" * 80)
-
+            logger.info("%s (%d)", sev.upper(), len(issues_list))
             for issue in issues_list:
-                print(f"\n{issue}")
+                logger.info("%s", issue)
 
 
 __all__ = [

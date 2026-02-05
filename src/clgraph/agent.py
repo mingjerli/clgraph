@@ -20,6 +20,7 @@ Example:
     print(result.data["sql"])
 """
 
+import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
@@ -29,6 +30,8 @@ from .tools import ToolResult, create_tool_registry
 
 if TYPE_CHECKING:
     from .pipeline import Pipeline
+
+logger = logging.getLogger(__name__)
 
 
 class QuestionType(Enum):
@@ -199,8 +202,7 @@ class LineageAgent:
         # Classify question
         question_type = self._classify_question(question)
 
-        if self.verbose:
-            print(f"Question type: {question_type}")
+        logger.debug("Question type: %s", question_type)
 
         # Route to appropriate handler
         try:
@@ -225,6 +227,7 @@ class LineageAgent:
             else:
                 return self._handle_general(question)
         except Exception as e:
+            logger.error("Agent query failed: %s", e, exc_info=True)
             return AgentResult(
                 answer=f"Sorry, I encountered an error: {e}",
                 question_type=question_type,

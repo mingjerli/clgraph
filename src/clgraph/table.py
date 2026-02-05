@@ -86,7 +86,7 @@ class TableNode:
             response = chain.invoke({})
 
             self.description = response.content.strip()
-        except Exception:
+        except (ImportError, ValueError, AttributeError, RuntimeError):
             # Fallback to simple rule-based description
             self._generate_fallback_description()
 

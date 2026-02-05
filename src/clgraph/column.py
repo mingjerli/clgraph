@@ -6,8 +6,9 @@ plus utility functions for description generation and metadata propagation.
 """
 
 import logging
+from collections import deque
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Set
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 
 from .models import (
     ColumnEdge,
@@ -64,8 +65,9 @@ def generate_description(column: ColumnNode, llm: Any, pipeline: "Pipeline"):
 
         column.description = response.content.strip()
         column.description_source = DescriptionSource.GENERATED
-    except Exception:
-        # Fallback to simple rule-based description
+    except (ImportError, ValueError, AttributeError, RuntimeError) as e:
+        # Fallback to simple rule-based description if LLM fails
+        logger.debug("LLM description generation failed: %s", e)
         _generate_fallback_description(column)
 
 
@@ -233,6 +235,11 @@ class PipelineLineageGraph:
     edges: List[ColumnEdge] = field(default_factory=list)
     issues: List[ValidationIssue] = field(default_factory=list)  # Validation issues
 
+    # Adjacency indices: full_name -> list of edges
+    _outgoing_index: Dict[str, List[ColumnEdge]] = field(default_factory=dict, repr=False)
+    _incoming_index: Dict[str, List[ColumnEdge]] = field(default_factory=dict, repr=False)
+    _column_deps_cache: Optional[Dict[str, Set[str]]] = field(default=None, repr=False)
+
     def add_column(self, column: ColumnNode) -> ColumnNode:
         """Add a column node to the graph"""
         self.columns[column.full_name] = column
@@ -241,6 +248,9 @@ class PipelineLineageGraph:
     def add_edge(self, edge: ColumnEdge):
         """Add a lineage edge"""
         self.edges.append(edge)
+        self._outgoing_index.setdefault(edge.from_node.full_name, []).append(edge)
+        self._incoming_index.setdefault(edge.to_node.full_name, []).append(edge)
+        self._column_deps_cache = None  # Invalidate cache
 
     def add_issue(self, issue: ValidationIssue):
         """Add a validation issue and log it"""
@@ -263,9 +273,14 @@ class PipelineLineageGraph:
         Build dependency map: column_full_name -> set of column_full_names it depends on.
         This is the column-level equivalent of TableDependencyGraph._build_table_dependencies.
 
+        Returns cached result when available; invalidated by add_edge().
+
         Returns:
             Dict mapping column full_name to set of upstream column full_names
         """
+        if self._column_deps_cache is not None:
+            return self._column_deps_cache
+
         deps: Dict[str, Set[str]] = {}
 
         for full_name in self.columns:
@@ -278,6 +293,7 @@ class PipelineLineageGraph:
             if to_name in deps:
                 deps[to_name].add(from_name)
 
+        self._column_deps_cache = deps
         return deps
 
     def get_upstream(self, full_name: str) -> List[ColumnNode]:
@@ -398,10 +414,10 @@ class PipelineLineageGraph:
         for col_name, col in table_columns.items():
             # BFS backward to find all reachable table columns
             visited: Set[str] = set()
-            queue = [col_name]
+            queue = deque([col_name])
 
             while queue:
-                current = queue.pop(0)
+                current = queue.popleft()
                 if current in visited:
                     continue
                 visited.add(current)
