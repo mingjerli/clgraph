@@ -606,12 +606,11 @@ def visualize_column_path(
 
     # Determine graph type and get appropriate accessors
     # PipelineLineageGraph uses .columns, ColumnLineageGraph uses .nodes
-    if hasattr(graph, "columns"):
+    if isinstance(graph, ColumnLineageGraph):
+        nodes_dict = graph.nodes
+    else:
         # PipelineLineageGraph
         nodes_dict = graph.columns
-    else:
-        # ColumnLineageGraph
-        nodes_dict = graph.nodes
 
     # Find target node
     if target_column not in nodes_dict:
@@ -635,8 +634,7 @@ def visualize_column_path(
         relevant_nodes.append(node)
 
         # Get incoming edges - different methods for different graph types
-        if hasattr(graph, "get_edges_to"):
-            # ColumnLineageGraph has get_edges_to method
+        if isinstance(graph, ColumnLineageGraph):
             incoming = graph.get_edges_to(node)
         else:
             # PipelineLineageGraph - filter edges manually

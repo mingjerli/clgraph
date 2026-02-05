@@ -270,7 +270,9 @@ class LineageAgent:
         """Extract table and column references from question."""
         # First, try to match against known table names (handles schema.table.column)
         # Sort by length descending to match longer table names first
-        known_tables = sorted(self.pipeline.table_graph.tables.keys(), key=len, reverse=True)
+        known_tables = sorted(
+            self.pipeline.table_graph.tables.keys(), key=lambda t: len(t), reverse=True
+        )
 
         for table_name in known_tables:
             # Check for table.column pattern
@@ -567,7 +569,7 @@ class LineageAgent:
         result = self.registry.run("explain_query", sql=sql)
 
         return AgentResult(
-            answer=result.message if result.success else result.error,
+            answer=(result.message if result.success else result.error) or "",
             question_type=QuestionType.SQL_EXPLAIN,
             tool_used="explain_query",
             tool_result=result,

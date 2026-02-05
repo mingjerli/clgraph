@@ -89,7 +89,7 @@ class PrefectOrchestrator(BaseOrchestrator):
             - Use to_deployment() for scheduled execution
         """
         try:
-            from prefect import flow, task
+            from prefect import flow, task  # type: ignore[unresolved-import]
         except ImportError as e:
             raise ImportError(
                 "Prefect is required for flow generation. "
@@ -212,7 +212,9 @@ class PrefectOrchestrator(BaseOrchestrator):
             - Use work_pool_name to specify execution environment
         """
         try:
-            from prefect import flow as flow_decorator  # noqa: F401
+            from prefect import (  # type: ignore[unresolved-import]
+                flow as flow_decorator,  # noqa: F401
+            )
         except ImportError as e:
             raise ImportError(
                 "Prefect is required for deployment generation. "

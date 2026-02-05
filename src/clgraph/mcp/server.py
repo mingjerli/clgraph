@@ -17,14 +17,14 @@ from ..tools.base import ParameterType
 
 # MCP SDK imports - these are optional dependencies
 try:
-    from mcp.server import Server
-    from mcp.server.stdio import stdio_server
-    from mcp.types import Resource, TextContent, Tool
+    from mcp.server import Server  # type: ignore[unresolved-import]
+    from mcp.server.stdio import stdio_server  # type: ignore[unresolved-import]
+    from mcp.types import Resource, TextContent, Tool  # type: ignore[unresolved-import]
 
     MCP_AVAILABLE = True
 except ImportError:
     MCP_AVAILABLE = False
-    Server = None  # type: ignore
+    Server = None
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +107,7 @@ def create_mcp_server(
         registry.register_all(BASIC_TOOLS)
 
     # Create server
+    assert Server is not None, "MCP SDK should be available at this point"
     server = Server("clgraph-lineage")
 
     # Register tool list handler
@@ -206,7 +207,7 @@ def create_mcp_server(
 
 def _get_full_schema(pipeline: Pipeline) -> str:
     """Get full pipeline schema as JSON."""
-    schema = {
+    schema: Dict[str, Any] = {
         "dialect": pipeline.dialect,
         "tables": {},
     }
@@ -321,7 +322,7 @@ async def run_mcp_server_async(
     server = create_mcp_server(pipeline, llm, include_llm_tools)
 
     async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream)
+        await server.run(read_stream, write_stream)  # type: ignore[possibly-missing-attribute]
 
 
 def run_mcp_server(
