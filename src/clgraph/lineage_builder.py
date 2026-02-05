@@ -983,7 +983,7 @@ class RecursiveLineageBuilder:
         For each correlated column (reference to outer table), create an edge
         showing the correlation relationship.
         """
-        lateral_alias = unit.name
+        lateral_alias = unit.name or ""
 
         for correlated_col in unit.correlated_columns:
             # Parse table.column format
@@ -2651,7 +2651,7 @@ class RecursiveLineageBuilder:
 
         # Extract ORDER BY within aggregate (fallback for standard syntax)
         if not order_by and hasattr(agg_func, "order") and agg_func.order:
-            for order_expr in agg_func.order.expressions:
+            for order_expr in agg_func.order.expressions:  # type: ignore[union-attr]
                 col_name = ""
                 direction = "asc"
                 nulls = None
@@ -2724,7 +2724,7 @@ class RecursiveLineageBuilder:
         elif isinstance(node, exp.Max):
             return "MAX"
         elif hasattr(node, "sql_name"):
-            return node.sql_name().upper()
+            return node.sql_name().upper()  # type: ignore[union-attr]
         elif hasattr(node, "name") and node.name:
             return node.name.upper()
         return "AGGREGATE"
@@ -3097,7 +3097,7 @@ class RecursiveLineageBuilder:
                             category=IssueCategory.UNQUALIFIED_COLUMN,
                             message=(
                                 f"Unqualified column '{col_name}' in expression for '{output_col_name}'. "
-                                f"With multiple tables ({', '.join(available_tables)}), "
+                                f"With multiple tables ({', '.join(str(t) for t in available_tables)}), "
                                 f"the source table is ambiguous."
                             ),
                             query_id=self.query_id,

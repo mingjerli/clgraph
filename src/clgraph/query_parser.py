@@ -863,6 +863,9 @@ class RecursiveQueryParser:
                 flatten_alias = f"_flatten_{self.subquery_counter}"
                 self.subquery_counter += 1
 
+            # Ensure str type for type checker (flatten_alias is guaranteed non-empty)
+            flatten_alias = str(flatten_alias)
+
             # Store FLATTEN info
             parent_unit.unnest_sources[flatten_alias] = {
                 "source_table": source_table,
@@ -913,6 +916,9 @@ class RecursiveQueryParser:
             if not lateral_alias:
                 lateral_alias = f"_lateral_{self.subquery_counter}"
                 self.subquery_counter += 1
+
+            # Ensure str type for type checker (lateral_alias is guaranteed non-empty)
+            lateral_alias = str(lateral_alias)
 
             # Find all column references in the subquery
             correlated_columns: List[str] = []

@@ -89,7 +89,7 @@ class DagsterOrchestrator(BaseOrchestrator):
             - Deployment: Drop the definitions.py file in your Dagster workspace
         """
         try:
-            import dagster as dg
+            import dagster as dg  # type: ignore[unresolved-import]
         except ImportError as e:
             raise ImportError(
                 "Dagster is required for asset generation. "
@@ -226,7 +226,7 @@ class DagsterOrchestrator(BaseOrchestrator):
             - Deployment: Drop the definitions.py file in your Dagster workspace
         """
         try:
-            import dagster as dg
+            import dagster as dg  # type: ignore[unresolved-import]
         except ImportError as e:
             raise ImportError(
                 "Dagster is required for job generation. "

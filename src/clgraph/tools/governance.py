@@ -59,15 +59,14 @@ class FindPIIColumnsTool(BaseTool):
                     key = f"{impact.table_name}.{impact.column_name}"
                     if key not in derived_pii:
                         derived_pii.add(key)
-                        pii_columns.append(
-                            {
-                                "table": impact.table_name,
-                                "column": impact.column_name,
-                                "description": impact.description,
-                                "owner": impact.owner,
-                                "derived_from_pii": True,
-                            }
-                        )
+                        derived_entry = {
+                            "table": impact.table_name,
+                            "column": impact.column_name,
+                            "description": impact.description,
+                            "owner": impact.owner,
+                            "derived_from_pii": True,
+                        }
+                        pii_columns.append(derived_entry)  # type: ignore[invalid-argument-type]
 
         if not pii_columns:
             msg = "No PII columns found"

@@ -95,7 +95,7 @@ class TemplateTokenizer:
         """Resolve a single template with context"""
         # Try Jinja2 resolution using sandboxed environment
         try:
-            from jinja2.sandbox import SandboxedEnvironment  # type: ignore[import-untyped]
+            from jinja2.sandbox import SandboxedEnvironment
 
             env = SandboxedEnvironment()
             jinja_template = env.from_string(template)
