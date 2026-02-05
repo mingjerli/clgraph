@@ -6,9 +6,12 @@ with concurrent execution within dependency levels.
 """
 
 import asyncio
+import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Tuple
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .pipeline import Pipeline
@@ -118,9 +121,7 @@ class PipelineExecutor:
             result = executor.run(execute_sql, max_workers=4)
             print(f"Completed {len(result['completed'])} queries")
         """
-        if verbose:
-            print(f"🚀 Starting pipeline execution ({len(self.table_graph.queries)} queries)")
-            print()
+        logger.info("Starting pipeline execution (%d queries)", len(self.table_graph.queries))
 
         # Track completed queries
         completed = set()
@@ -132,8 +133,7 @@ class PipelineExecutor:
 
         # Execute level by level
         for level_num, level_queries in enumerate(levels, 1):
-            if verbose:
-                print(f"📊 Level {level_num}: {len(level_queries)} queries")
+            logger.info("Level %d: %d queries", level_num, len(level_queries))
 
             # Execute queries in this level concurrently
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
@@ -151,31 +151,21 @@ class PipelineExecutor:
                     try:
                         future.result()
                         completed.add(query_id)
-
-                        if verbose:
-                            print(f"  ✅ {query_id}")
+                        logger.info("Completed: %s", query_id)
                     except Exception as e:
                         failed.append((query_id, str(e)))
-
-                        if verbose:
-                            print(f"  ❌ {query_id}: {e}")
-
-            if verbose:
-                print()
+                        logger.debug("Query %s execution failed", query_id, exc_info=True)
+                        logger.warning("Failed: %s: %s", query_id, e)
 
         elapsed = time.time() - start_time
 
         # Summary
-        if verbose:
-            print("=" * 60)
-            print(f"✅ Pipeline completed in {elapsed:.2f}s")
-            print(f"   Successful: {len(completed)}")
-            print(f"   Failed: {len(failed)}")
-            if failed:
-                print("\n⚠️  Failed queries:")
-                for query_id, error in failed:
-                    print(f"   - {query_id}: {error}")
-            print("=" * 60)
+        logger.info("Pipeline completed in %.2fs", elapsed)
+        logger.info("Successful: %d", len(completed))
+        logger.info("Failed: %d", len(failed))
+        if failed:
+            for query_id, error in failed:
+                logger.warning("Failed query - %s: %s", query_id, error)
 
         return {
             "completed": list(completed),
@@ -214,9 +204,7 @@ class PipelineExecutor:
             result = await executor.async_run(execute_sql, max_workers=4)
             print(f"Completed {len(result['completed'])} queries")
         """
-        if verbose:
-            print(f"🚀 Starting async pipeline execution ({len(self.table_graph.queries)} queries)")
-            print()
+        logger.info("Starting async pipeline execution (%d queries)", len(self.table_graph.queries))
 
         # Track completed queries
         completed = set()
@@ -231,8 +219,7 @@ class PipelineExecutor:
 
         # Execute level by level
         for level_num, level_queries in enumerate(levels, 1):
-            if verbose:
-                print(f"📊 Level {level_num}: {len(level_queries)} queries")
+            logger.info("Level %d: %d queries", level_num, len(level_queries))
 
             async def execute_with_semaphore(query_id: str, sql: str):
                 """Execute query with semaphore for concurrency control"""
@@ -240,12 +227,11 @@ class PipelineExecutor:
                     try:
                         await executor(sql)
                         completed.add(query_id)
-                        if verbose:
-                            print(f"  ✅ {query_id}")
+                        logger.info("Completed: %s", query_id)
                     except Exception as e:
                         failed.append((query_id, str(e)))
-                        if verbose:
-                            print(f"  ❌ {query_id}: {e}")
+                        logger.debug("Async query %s execution failed", query_id, exc_info=True)
+                        logger.warning("Failed: %s: %s", query_id, e)
 
             # Execute queries in this level concurrently
             tasks = []
@@ -257,22 +243,15 @@ class PipelineExecutor:
             # Wait for all tasks in this level to complete
             await asyncio.gather(*tasks)
 
-            if verbose:
-                print()
-
         elapsed = time.time() - start_time
 
         # Summary
-        if verbose:
-            print("=" * 60)
-            print(f"✅ Pipeline completed in {elapsed:.2f}s")
-            print(f"   Successful: {len(completed)}")
-            print(f"   Failed: {len(failed)}")
-            if failed:
-                print("\n⚠️  Failed queries:")
-                for query_id, error in failed:
-                    print(f"   - {query_id}: {error}")
-            print("=" * 60)
+        logger.info("Pipeline completed in %.2fs", elapsed)
+        logger.info("Successful: %d", len(completed))
+        logger.info("Failed: %d", len(failed))
+        if failed:
+            for query_id, error in failed:
+                logger.warning("Failed query - %s: %s", query_id, error)
 
         return {
             "completed": list(completed),

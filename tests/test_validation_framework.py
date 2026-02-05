@@ -358,7 +358,7 @@ class TestPipelineValidationAPI:
 class TestValidationReporting:
     """Test validation reporting and output formatting."""
 
-    def test_print_issues_no_crash(self, capsys):
+    def test_print_issues_no_crash(self, caplog):
         """Test that print_issues() doesn't crash."""
         queries = [
             (
@@ -372,12 +372,12 @@ class TestValidationReporting:
         pipeline = Pipeline(queries, dialect="bigquery")
 
         # Should not crash
-        pipeline.print_issues()
+        with caplog.at_level("INFO", logger="clgraph.pipeline"):
+            pipeline.print_issues()
 
-        captured = capsys.readouterr()
-        assert "ERROR" in captured.out or "❌" in captured.out
+        assert "ERROR" in caplog.text
 
-    def test_print_issues_severity_filter(self, capsys):
+    def test_print_issues_severity_filter(self, caplog):
         """Test printing issues filtered by severity."""
         queries = [
             ("bad", "CREATE TABLE r AS SELECT * FROM t1, t2"),
@@ -386,11 +386,11 @@ class TestValidationReporting:
         pipeline = Pipeline(queries, dialect="bigquery")
 
         # Print only errors
-        pipeline.print_issues(severity=IssueSeverity.ERROR)
+        with caplog.at_level("INFO", logger="clgraph.pipeline"):
+            pipeline.print_issues(severity=IssueSeverity.ERROR)
 
-        captured = capsys.readouterr()
         # Should show ERROR but not INFO
-        assert "ERROR" in captured.out or "❌" in captured.out
+        assert "ERROR" in caplog.text
 
 
 class TestValidationIntegration:

@@ -5,6 +5,7 @@ These functions translate graph structures into Graphviz DOT format.
 No business logic - just presentation layer.
 """
 
+from collections import deque
 from typing import TYPE_CHECKING, List, Tuple, Union
 
 import graphviz
@@ -622,11 +623,11 @@ def visualize_column_path(
 
     # Traverse backward to find all dependencies using BFS
     visited = set()
-    to_visit = [target_node]
+    to_visit = deque([target_node])
     relevant_nodes = []
 
     while to_visit:
-        node = to_visit.pop(0)
+        node = to_visit.popleft()
         if node.full_name in visited:
             continue
 
@@ -808,7 +809,7 @@ def visualize_table_dependencies_with_levels(
         for level_num, level_queries in enumerate(levels, 1):
             for qid in level_queries:
                 query_to_level[qid] = level_num
-    except Exception:
+    except (RuntimeError, KeyError, AttributeError):
         query_to_level = {}
 
     # Get source and final tables

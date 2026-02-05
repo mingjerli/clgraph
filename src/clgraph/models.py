@@ -9,6 +9,7 @@ Contains all dataclass definitions for:
 """
 
 import logging
+from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
@@ -653,6 +654,10 @@ class ColumnLineageGraph:
     warnings: List[str] = field(default_factory=list)  # Legacy validation warnings (deprecated)
     issues: List[ValidationIssue] = field(default_factory=list)  # Structured validation issues
 
+    # Adjacency indices: full_name -> list of edges
+    _outgoing_index: Dict[str, List[ColumnEdge]] = field(default_factory=dict, repr=False)
+    _incoming_index: Dict[str, List[ColumnEdge]] = field(default_factory=dict, repr=False)
+
     def add_node(self, node: ColumnNode):
         """Add a column node to the graph"""
         self.nodes[node.full_name] = node
@@ -668,6 +673,8 @@ class ColumnLineageGraph:
         # Add edge if not duplicate
         if edge not in self.edges:
             self.edges.append(edge)
+            self._outgoing_index.setdefault(edge.from_node.full_name, []).append(edge)
+            self._incoming_index.setdefault(edge.to_node.full_name, []).append(edge)
 
     def add_warning(self, warning: str):
         """Add a validation warning (deprecated - use add_issue instead)"""
@@ -700,11 +707,11 @@ class ColumnLineageGraph:
 
     def get_edges_from(self, node: ColumnNode) -> List[ColumnEdge]:
         """Get all edges originating from a node"""
-        return [e for e in self.edges if e.from_node == node]
+        return self._outgoing_index.get(node.full_name, [])
 
     def get_edges_to(self, node: ColumnNode) -> List[ColumnEdge]:
         """Get all edges pointing to a node"""
-        return [e for e in self.edges if e.to_node == node]
+        return self._incoming_index.get(node.full_name, [])
 
     def to_simplified(self) -> "ColumnLineageGraph":
         """
@@ -738,10 +745,10 @@ class ColumnLineageGraph:
         for output_node in output_nodes:
             # BFS/DFS backward to find all reachable input nodes
             visited: Set[str] = set()
-            queue = [output_node.full_name]
+            queue = deque([output_node.full_name])
 
             while queue:
-                current = queue.pop(0)
+                current = queue.popleft()
                 if current in visited:
                     continue
                 visited.add(current)

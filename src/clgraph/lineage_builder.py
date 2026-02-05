@@ -5,6 +5,7 @@ Builds complete column lineage graphs by recursively tracing through query units
 Includes SQLColumnTracer wrapper for backward compatibility.
 """
 
+from collections import deque
 from typing import Any, Dict, List, Optional, Set, Tuple, TypedDict
 
 import sqlglot
@@ -558,7 +559,7 @@ def _qualify_sql_with_schema(
         # Return the qualified SQL
         return qualified.sql(dialect=dialect)
 
-    except Exception:
+    except (sqlglot.errors.SqlglotError, KeyError, ValueError, TypeError):
         # If qualification fails, return original SQL
         # The lineage builder will handle unqualified columns as before
         return sql_query
@@ -1505,7 +1506,7 @@ class RecursiveLineageBuilder:
                     )
                 col_name = col.name
                 result.append((table_ref, col_name))
-        except Exception:
+        except (sqlglot.errors.SqlglotError, ValueError, TypeError):
             # If parsing fails, try simple extraction for "table.column" format
             if "." in expr_str:
                 parts = expr_str.split(".")
@@ -3219,10 +3220,10 @@ class SQLColumnTracer:
             # BFS forward from each start node
             for start_node in start_nodes:
                 visited = set()
-                queue = [(start_node, [start_node.full_name], [])]
+                queue = deque([(start_node, [start_node.full_name], [])])
 
                 while queue:
-                    current, path, transformations = queue.pop(0)
+                    current, path, transformations = queue.popleft()
 
                     if current.full_name in visited:
                         continue
@@ -3290,10 +3291,10 @@ class SQLColumnTracer:
             # BFS backward from each start node
             for start_node in start_nodes:
                 visited = set()
-                queue = [(start_node, [start_node.full_name], [])]
+                queue = deque([(start_node, [start_node.full_name], [])])
 
                 while queue:
-                    current, path, transformations = queue.pop(0)
+                    current, path, transformations = queue.popleft()
 
                     if current.full_name in visited:
                         continue

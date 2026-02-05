@@ -5,10 +5,10 @@ A powerful library for tracing data lineage through SQL queries and multi-query 
 """
 
 try:
-    from importlib.metadata import version
+    from importlib.metadata import PackageNotFoundError, version
 
     __version__ = version("clgraph")
-except Exception:
+except PackageNotFoundError:
     # Fallback when package metadata is not available (e.g., mounted as volume)
     __version__ = "dev"
 

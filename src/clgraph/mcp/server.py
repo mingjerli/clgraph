@@ -8,6 +8,7 @@ allowing external LLMs and agents to interact with pipeline lineage.
 import argparse
 import asyncio
 import json
+import logging
 from typing import Any, Dict, List
 
 from ..pipeline import Pipeline
@@ -24,6 +25,8 @@ try:
 except ImportError:
     MCP_AVAILABLE = False
     Server = None  # type: ignore
+
+logger = logging.getLogger(__name__)
 
 
 def _convert_param_type(param_type: ParameterType) -> str:
@@ -146,6 +149,7 @@ def create_mcp_server(
             return [TextContent(type="text", text=json.dumps(content, indent=2, default=str))]
 
         except Exception as e:
+            logger.error("MCP tool execution failed: %s", e, exc_info=True)
             error_content = {
                 "success": False,
                 "error": f"Tool execution failed: {str(e)}",

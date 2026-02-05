@@ -142,7 +142,7 @@ class GenerateSQLTool(LLMTool):
                 return self._generate_two_stage(question, include_explanation)
             else:
                 return self._generate_direct(question, include_explanation)
-        except Exception as e:
+        except (ImportError, ValueError, AttributeError, RuntimeError) as e:
             return ToolResult.error_result(f"SQL generation failed: {e}")
 
     def _generate_direct(self, question: str, include_explanation: bool) -> ToolResult:
@@ -267,7 +267,7 @@ class GenerateSQLTool(LLMTool):
                 valid = [t for t in selected if t in self.pipeline.table_graph.tables]
                 if valid:
                     return valid
-        except Exception:
+        except (ImportError, ValueError, AttributeError, RuntimeError):
             pass
 
         # Fallback to keyword selection
@@ -429,7 +429,7 @@ class ExplainQueryTool(LLMTool):
                 },
                 message=explanation[:200] + "..." if len(explanation) > 200 else explanation,
             )
-        except Exception as e:
+        except (ImportError, ValueError, AttributeError, RuntimeError) as e:
             return ToolResult.error_result(f"Failed to explain query: {e}")
 
     def _extract_tables(self, sql: str) -> List[str]:
