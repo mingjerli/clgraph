@@ -22,54 +22,13 @@ from .models import (
 
 # ============================================================================
 # Table-Valued Functions (TVF) Registry
+# Import from tvf_registry.py and re-export for backward compatibility
 # ============================================================================
-
-# Known TVF expressions mapped to their types
-KNOWN_TVF_EXPRESSIONS: Dict[type, TVFType] = {
-    # Generator TVFs
-    exp.ExplodingGenerateSeries: TVFType.GENERATOR,
-    exp.GenerateSeries: TVFType.GENERATOR,
-    exp.GenerateDateArray: TVFType.GENERATOR,
-    # External data TVFs
-    exp.ReadCSV: TVFType.EXTERNAL,
-}
-
-# Known TVF function names (for Anonymous function calls)
-KNOWN_TVF_NAMES: Dict[str, TVFType] = {
-    # Generator TVFs
-    "generate_series": TVFType.GENERATOR,
-    "generate_date_array": TVFType.GENERATOR,
-    "generate_timestamp_array": TVFType.GENERATOR,
-    "sequence": TVFType.GENERATOR,
-    "generator": TVFType.GENERATOR,
-    "range": TVFType.GENERATOR,
-    # Column-input TVFs (UNNEST/EXPLODE handled separately)
-    "flatten": TVFType.COLUMN_INPUT,
-    "explode": TVFType.COLUMN_INPUT,
-    "posexplode": TVFType.COLUMN_INPUT,
-    # External data TVFs
-    "read_csv": TVFType.EXTERNAL,
-    "read_parquet": TVFType.EXTERNAL,
-    "read_json": TVFType.EXTERNAL,
-    "read_ndjson": TVFType.EXTERNAL,
-    "external_query": TVFType.EXTERNAL,
-    # System TVFs
-    "table": TVFType.SYSTEM,
-    "result_scan": TVFType.SYSTEM,
-}
-
-# Default output column names for known TVFs
-TVF_DEFAULT_COLUMNS: Dict[str, List[str]] = {
-    "generate_series": ["generate_series"],
-    "generate_date_array": ["date"],
-    "generate_timestamp_array": ["timestamp"],
-    "sequence": ["value"],
-    "generator": ["seq4"],
-    "range": ["range"],
-    "flatten": ["value", "index", "key", "path", "this"],
-    "explode": ["col"],
-    "posexplode": ["pos", "col"],
-}
+from .tvf_registry import (  # noqa: F401, E402
+    KNOWN_TVF_EXPRESSIONS,
+    KNOWN_TVF_NAMES,
+    TVF_DEFAULT_COLUMNS,
+)
 
 
 class RecursiveQueryParser:
