@@ -10,7 +10,6 @@ Contains Pipeline class for unified SQL workflow orchestration with:
 """
 
 import logging
-from collections import deque
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
@@ -19,9 +18,6 @@ from sqlglot import exp
 
 from .column import (
     PipelineLineageGraph,
-    generate_description,
-    propagate_metadata,
-    propagate_metadata_backward,
 )
 from .lineage_builder import RecursiveLineageBuilder
 from .models import (
@@ -829,6 +825,12 @@ class Pipeline:
         self.query_graphs: Dict[str, ColumnLineageGraph] = {}
         self.llm: Optional[Any] = None  # LangChain BaseChatModel
 
+        # Lazy-initialized component instances
+        self._tracer: Optional[Any] = None  # LineageTracer (lazy)
+        self._validator: Optional[Any] = None  # PipelineValidator (lazy)
+        self._metadata_mgr: Optional[Any] = None  # MetadataManager (lazy)
+        self._subpipeline_builder: Optional[Any] = None  # SubpipelineBuilder (lazy)
+
         # Convert tuples to plain SQL strings for MultiQueryParser
         sql_list = []
         for user_query_id, sql in queries:
@@ -1304,6 +1306,10 @@ class Pipeline:
         instance.query_graphs = {}
         instance.llm = None
         instance.table_graph = table_graph
+        instance._tracer = None  # Lazy-initialized components
+        instance._validator = None
+        instance._metadata_mgr = None
+        instance._subpipeline_builder = None
         return instance
 
     # === Lineage methods (from PipelineLineageGraph) ===
@@ -1322,6 +1328,46 @@ class Pipeline:
         """Add a lineage edge"""
         self.column_graph.add_edge(edge)
 
+    # === Lazy-initialized components ===
+
+    @property
+    def _lineage_tracer(self):
+        """Lazily initialize and return the LineageTracer component."""
+        if self._tracer is None:
+            from .lineage_tracer import LineageTracer
+
+            self._tracer = LineageTracer(self)
+        return self._tracer
+
+    @property
+    def _pipeline_validator(self):
+        """Lazily initialize and return the PipelineValidator component."""
+        if self._validator is None:
+            from .pipeline_validator import PipelineValidator
+
+            self._validator = PipelineValidator(self)
+        return self._validator
+
+    @property
+    def _metadata_manager(self):
+        """Lazily initialize and return the MetadataManager component."""
+        if self._metadata_mgr is None:
+            from .metadata_manager import MetadataManager
+
+            self._metadata_mgr = MetadataManager(self)
+        return self._metadata_mgr
+
+    @property
+    def _subpipeline_builder_component(self):
+        """Lazily initialize and return the SubpipelineBuilder component."""
+        if self._subpipeline_builder is None:
+            from .subpipeline_builder import SubpipelineBuilder
+
+            self._subpipeline_builder = SubpipelineBuilder(self)
+        return self._subpipeline_builder
+
+    # === Lineage methods (delegate to LineageTracer) ===
+
     def trace_column_backward(self, table_name: str, column_name: str) -> List[ColumnNode]:
         """
         Trace a column backward to its ultimate sources.
@@ -1329,43 +1375,7 @@ class Pipeline:
 
         For full lineage path with all intermediate nodes, use trace_column_backward_full().
         """
-        # Find the target column(s) - there may be multiple with same table.column
-        # from different queries. For output columns, we want the one with layer="output"
-        target_columns = [
-            col
-            for col in self.columns.values()
-            if col.table_name == table_name and col.column_name == column_name
-        ]
-
-        if not target_columns:
-            return []
-
-        # Prefer output layer columns as starting point for backward tracing
-        output_cols = [c for c in target_columns if c.layer == "output"]
-        start_columns = output_cols if output_cols else target_columns
-
-        # BFS backward through edges
-        visited = set()
-        queue = deque(start_columns)
-        sources = []
-
-        while queue:
-            current = queue.popleft()
-            if current.full_name in visited:
-                continue
-            visited.add(current.full_name)
-
-            # Find incoming edges
-            incoming = self._get_incoming_edges(current.full_name)
-
-            if not incoming:
-                # No incoming edges = source column
-                sources.append(current)
-            else:
-                for edge in incoming:
-                    queue.append(edge.from_node)
-
-        return sources
+        return self._lineage_tracer.trace_backward(table_name, column_name)
 
     def trace_column_backward_full(
         self, table_name: str, column_name: str, include_ctes: bool = True
@@ -1397,50 +1407,7 @@ class Pipeline:
                 print(f"{edge.from_node.table_name}.{edge.from_node.column_name} -> "
                       f"{edge.to_node.table_name}.{edge.to_node.column_name}")
         """
-        # Find the target column(s)
-        target_columns = [
-            col
-            for col in self.columns.values()
-            if col.table_name == table_name and col.column_name == column_name
-        ]
-
-        if not target_columns:
-            return [], []
-
-        # Prefer output layer columns as starting point
-        output_cols = [c for c in target_columns if c.layer == "output"]
-        start_columns = output_cols if output_cols else target_columns
-
-        # BFS backward through edges, collecting all nodes and edges
-        visited = set()
-        queue = deque(start_columns)
-        all_nodes = []
-        all_edges = []
-
-        while queue:
-            current = queue.popleft()
-            if current.full_name in visited:
-                continue
-            visited.add(current.full_name)
-
-            # Optionally skip CTE columns
-            if not include_ctes and current.layer == "cte":
-                # Still need to traverse through CTEs to find real tables
-                incoming = self._get_incoming_edges(current.full_name)
-                for edge in incoming:
-                    queue.append(edge.from_node)
-                continue
-
-            all_nodes.append(current)
-
-            # Find incoming edges
-            incoming = self._get_incoming_edges(current.full_name)
-
-            for edge in incoming:
-                all_edges.append(edge)
-                queue.append(edge.from_node)
-
-        return all_nodes, all_edges
+        return self._lineage_tracer.trace_backward_full(table_name, column_name, include_ctes)
 
     def get_table_lineage_path(
         self, table_name: str, column_name: str
@@ -1463,18 +1430,7 @@ class Pipeline:
             #   ("source_orders", "total_amount", "01_raw_orders"),
             # ]
         """
-        nodes, _ = self.trace_column_backward_full(table_name, column_name, include_ctes=False)
-
-        # Deduplicate by table.column (keep first occurrence which is closest to target)
-        seen = set()
-        result = []
-        for node in nodes:
-            key = (node.table_name, node.column_name)
-            if key not in seen:
-                seen.add(key)
-                result.append((node.table_name, node.column_name, node.query_id))
-
-        return result
+        return self._lineage_tracer.get_table_lineage_path(table_name, column_name)
 
     def trace_column_forward(self, table_name: str, column_name: str) -> List[ColumnNode]:
         """
@@ -1483,43 +1439,7 @@ class Pipeline:
 
         For full impact path with all intermediate nodes, use trace_column_forward_full().
         """
-        # Find the source column(s) - there may be multiple with same table.column
-        # from different queries. For input columns, we want the one with layer="input"
-        source_columns = [
-            col
-            for col in self.columns.values()
-            if col.table_name == table_name and col.column_name == column_name
-        ]
-
-        if not source_columns:
-            return []
-
-        # Prefer input layer columns as starting point for forward tracing
-        input_cols = [c for c in source_columns if c.layer == "input"]
-        start_columns = input_cols if input_cols else source_columns
-
-        # BFS forward through edges
-        visited = set()
-        queue = deque(start_columns)
-        descendants = []
-
-        while queue:
-            current = queue.popleft()
-            if current.full_name in visited:
-                continue
-            visited.add(current.full_name)
-
-            # Find outgoing edges
-            outgoing = self._get_outgoing_edges(current.full_name)
-
-            if not outgoing:
-                # No outgoing edges = final column
-                descendants.append(current)
-            else:
-                for edge in outgoing:
-                    queue.append(edge.to_node)
-
-        return descendants
+        return self._lineage_tracer.trace_forward(table_name, column_name)
 
     def trace_column_forward_full(
         self, table_name: str, column_name: str, include_ctes: bool = True
@@ -1546,50 +1466,7 @@ class Pipeline:
             for node in nodes:
                 print(f"{node.table_name}.{node.column_name} (query={node.query_id})")
         """
-        # Find the source column(s)
-        source_columns = [
-            col
-            for col in self.columns.values()
-            if col.table_name == table_name and col.column_name == column_name
-        ]
-
-        if not source_columns:
-            return [], []
-
-        # Prefer input/output layer columns as starting point
-        input_cols = [c for c in source_columns if c.layer in ("input", "output")]
-        start_columns = input_cols if input_cols else source_columns
-
-        # BFS forward through edges, collecting all nodes and edges
-        visited = set()
-        queue = deque(start_columns)
-        all_nodes = []
-        all_edges = []
-
-        while queue:
-            current = queue.popleft()
-            if current.full_name in visited:
-                continue
-            visited.add(current.full_name)
-
-            # Optionally skip CTE columns
-            if not include_ctes and current.layer == "cte":
-                # Still need to traverse through CTEs to find real tables
-                outgoing = self._get_outgoing_edges(current.full_name)
-                for edge in outgoing:
-                    queue.append(edge.to_node)
-                continue
-
-            all_nodes.append(current)
-
-            # Find outgoing edges
-            outgoing = self._get_outgoing_edges(current.full_name)
-
-            for edge in outgoing:
-                all_edges.append(edge)
-                queue.append(edge.to_node)
-
-        return all_nodes, all_edges
+        return self._lineage_tracer.trace_forward_full(table_name, column_name, include_ctes)
 
     def get_table_impact_path(
         self, table_name: str, column_name: str
@@ -1612,18 +1489,7 @@ class Pipeline:
             #   ...
             # ]
         """
-        nodes, _ = self.trace_column_forward_full(table_name, column_name, include_ctes=False)
-
-        # Deduplicate by table.column (keep first occurrence which is closest to source)
-        seen = set()
-        result = []
-        for node in nodes:
-            key = (node.table_name, node.column_name)
-            if key not in seen:
-                seen.add(key)
-                result.append((node.table_name, node.column_name, node.query_id))
-
-        return result
+        return self._lineage_tracer.get_table_impact_path(table_name, column_name)
 
     def get_lineage_path(
         self, from_table: str, from_column: str, to_table: str, to_column: str
@@ -1632,43 +1498,7 @@ class Pipeline:
         Find the lineage path between two columns.
         Returns list of edges connecting them (if path exists).
         """
-        # Find source columns by table and column name
-        from_columns = [
-            col
-            for col in self.columns.values()
-            if col.table_name == from_table and col.column_name == from_column
-        ]
-
-        to_columns = [
-            col
-            for col in self.columns.values()
-            if col.table_name == to_table and col.column_name == to_column
-        ]
-
-        if not from_columns or not to_columns:
-            return []
-
-        # Get target full_names for matching
-        to_full_names = {col.full_name for col in to_columns}
-
-        # BFS with path tracking, starting from all matching source columns
-        queue = deque((col, []) for col in from_columns)
-        visited = set()
-
-        while queue:
-            current, path = queue.popleft()
-            if current.full_name in visited:
-                continue
-            visited.add(current.full_name)
-
-            if current.full_name in to_full_names:
-                return path
-
-            # Find outgoing edges
-            for edge in self._get_outgoing_edges(current.full_name):
-                queue.append((edge.to_node, path + [edge]))
-
-        return []  # No path found
+        return self._lineage_tracer.get_lineage_path(from_table, from_column, to_table, to_column)
 
     def generate_all_descriptions(self, batch_size: int = 10, verbose: bool = True):
         """
@@ -1680,34 +1510,7 @@ class Pipeline:
             batch_size: Number of columns per batch (currently processes sequentially)
             verbose: If True, print progress messages
         """
-        if not self.llm:
-            raise ValueError("LLM not configured. Set pipeline.llm before calling.")
-
-        # Get columns in topological order
-        sorted_query_ids = self.table_graph.topological_sort()
-
-        columns_to_process = []
-        for query_id in sorted_query_ids:
-            query = self.table_graph.queries[query_id]
-            if query.destination_table:
-                for col in self.columns.values():
-                    if (
-                        col.table_name == query.destination_table
-                        and not col.description
-                        and col.is_computed()
-                    ):
-                        columns_to_process.append(col)
-
-        logger.info("Generating descriptions for %d columns...", len(columns_to_process))
-
-        # Process columns
-        for i, col in enumerate(columns_to_process):
-            if (i + 1) % batch_size == 0:
-                logger.info("Processed %d/%d columns...", i + 1, len(columns_to_process))
-
-            generate_description(col, self.llm, self)
-
-        logger.info("Done! Generated %d descriptions", len(columns_to_process))
+        return self._metadata_manager.generate_all_descriptions(batch_size, verbose)
 
     def propagate_all_metadata(self, verbose: bool = True):
         """
@@ -1723,44 +1526,7 @@ class Pipeline:
         Args:
             verbose: If True, print progress messages
         """
-        # Get columns in topological order
-        sorted_query_ids = self.table_graph.topological_sort()
-
-        # Pass 1: Backward propagation from output columns to input columns
-        # This handles metadata set via SQL comments on output columns
-        output_columns = [col for col in self.columns.values() if col.layer == "output"]
-
-        logger.info(
-            "Pass 1: Propagating metadata backward from %d output columns...",
-            len(output_columns),
-        )
-
-        for col in output_columns:
-            propagate_metadata_backward(col, self)
-
-        # Pass 2: Forward propagation through lineage
-        # Process all computed columns (output columns from each query)
-        columns_to_process = []
-        for query_id in sorted_query_ids:
-            query = self.table_graph.queries[query_id]
-            # Get the table name for this query's output
-            # For CREATE TABLE queries, use destination_table
-            # For plain SELECTs, use query_id_result pattern
-            target_table = query.destination_table or f"{query_id}_result"
-            for col in self.columns.values():
-                if col.table_name == target_table and col.is_computed():
-                    columns_to_process.append(col)
-
-        logger.info(
-            "Pass 2: Propagating metadata forward for %d columns...",
-            len(columns_to_process),
-        )
-
-        # Process columns
-        for col in columns_to_process:
-            propagate_metadata(col, self)
-
-        logger.info("Done! Propagated metadata for %d columns", len(columns_to_process))
+        return self._metadata_manager.propagate_all_metadata(verbose)
 
     def get_pii_columns(self) -> List[ColumnNode]:
         """
@@ -1769,7 +1535,7 @@ class Pipeline:
         Returns:
             List of columns where pii == True
         """
-        return [col for col in self.columns.values() if col.pii]
+        return self._metadata_manager.get_pii_columns()
 
     def get_columns_by_owner(self, owner: str) -> List[ColumnNode]:
         """
@@ -1781,7 +1547,7 @@ class Pipeline:
         Returns:
             List of columns with matching owner
         """
-        return [col for col in self.columns.values() if col.owner == owner]
+        return self._metadata_manager.get_columns_by_owner(owner)
 
     def get_columns_by_tag(self, tag: str) -> List[ColumnNode]:
         """
@@ -1793,7 +1559,7 @@ class Pipeline:
         Returns:
             List of columns containing the tag
         """
-        return [col for col in self.columns.values() if tag in col.tags]
+        return self._metadata_manager.get_columns_by_tag(tag)
 
     def diff(self, other: "Pipeline"):
         """
@@ -1968,8 +1734,7 @@ class Pipeline:
             # Run just the subpipeline
             result = subpipeline.run(executor=execute_sql)
         """
-        subpipelines = self.split([target_table])
-        return subpipelines[0]
+        return self._subpipeline_builder_component.build_subpipeline(target_table)
 
     def split(self, sinks: List) -> List["Pipeline"]:
         """
@@ -2001,91 +1766,7 @@ class Pipeline:
             subpipelines[1].run(executor=execute_sql)  # Builds metrics + summary
             subpipelines[2].run(executor=execute_sql)  # Builds aggregated_data
         """
-        # Normalize sinks to list of lists
-        normalized_sinks: List[List[str]] = []
-        for sink in sinks:
-            if isinstance(sink, str):
-                normalized_sinks.append([sink])
-            elif isinstance(sink, list):
-                normalized_sinks.append(sink)
-            else:
-                raise ValueError(f"Invalid sink type: {type(sink)}. Expected str or List[str]")
-
-        # For each sink group, find all required queries
-        subpipeline_queries: List[set] = []
-
-        for sink_group in normalized_sinks:
-            required_queries = set()
-
-            # BFS backward from each sink to find all dependencies
-            for sink_table in sink_group:
-                if sink_table not in self.table_graph.tables:
-                    raise ValueError(
-                        f"Sink table '{sink_table}' not found in pipeline. "
-                        f"Available tables: {list(self.table_graph.tables.keys())}"
-                    )
-
-                # Find all queries needed for this sink
-                visited = set()
-                queue = deque([sink_table])
-
-                while queue:
-                    current_table = queue.popleft()
-                    if current_table in visited:
-                        continue
-                    visited.add(current_table)
-
-                    table_node = self.table_graph.tables.get(current_table)
-                    if not table_node:
-                        continue
-
-                    # Add the query that creates this table
-                    if table_node.created_by:
-                        query_id = table_node.created_by
-                        required_queries.add(query_id)
-
-                        # Add source tables to queue
-                        query = self.table_graph.queries[query_id]
-                        for source_table in query.source_tables:
-                            if source_table not in visited:
-                                queue.append(source_table)
-
-            subpipeline_queries.append(required_queries)
-
-        # Ensure non-overlapping: assign each query to only one subpipeline
-        # Strategy: Assign to the first subpipeline that needs it
-        assigned_queries: dict = {}  # query_id -> subpipeline_index
-
-        for idx, query_set in enumerate(subpipeline_queries):
-            for query_id in query_set:
-                if query_id not in assigned_queries:
-                    assigned_queries[query_id] = idx
-
-        # Build final non-overlapping query sets
-        final_query_sets: List[set] = [set() for _ in normalized_sinks]
-        for query_id, subpipeline_idx in assigned_queries.items():
-            final_query_sets[subpipeline_idx].add(query_id)
-
-        # Create Pipeline instances for each subpipeline
-        subpipelines = []
-
-        for query_ids in final_query_sets:
-            if not query_ids:
-                # Empty subpipeline - skip
-                continue
-
-            # Extract queries in order
-            subpipeline_query_list = []
-            for query_id in self.table_graph.topological_sort():
-                if query_id in query_ids:
-                    query = self.table_graph.queries[query_id]
-                    subpipeline_query_list.append((query_id, query.sql))
-
-            # Create new Pipeline instance
-            subpipeline = Pipeline(subpipeline_query_list, dialect=self.dialect)
-            subpipelines.append(subpipeline)
-
-        return subpipelines
+        return self._subpipeline_builder_component.split(sinks)
 
     def _get_execution_levels(self) -> List[List[str]]:
         """
@@ -2673,7 +2354,7 @@ class Pipeline:
         )
 
     # ========================================================================
-    # Validation Methods
+    # Validation Methods (delegate to PipelineValidator)
     # ========================================================================
 
     def get_all_issues(self) -> List["ValidationIssue"]:
@@ -2687,16 +2368,7 @@ class Pipeline:
         Returns:
             List of ValidationIssue objects
         """
-        all_issues: List[ValidationIssue] = []
-
-        # Collect issues from individual query lineage graphs
-        for _query_id, query_lineage in self.query_graphs.items():
-            all_issues.extend(query_lineage.issues)
-
-        # Add pipeline-level issues
-        all_issues.extend(self.column_graph.issues)
-
-        return all_issues
+        return self._pipeline_validator.get_all_issues()
 
     def get_issues(
         self,
@@ -2728,35 +2400,15 @@ class Pipeline:
             # Get all issues from a specific query
             query_issues = pipeline.get_issues(query_id='query_1')
         """
-        issues = self.get_all_issues()
-
-        # Filter by severity
-        if severity:
-            severity_enum = (
-                severity if isinstance(severity, IssueSeverity) else IssueSeverity(severity)
-            )
-            issues = [i for i in issues if i.severity == severity_enum]
-
-        # Filter by category
-        if category:
-            category_enum = (
-                category if isinstance(category, IssueCategory) else IssueCategory(category)
-            )
-            issues = [i for i in issues if i.category == category_enum]
-
-        # Filter by query_id
-        if query_id:
-            issues = [i for i in issues if i.query_id == query_id]
-
-        return issues
+        return self._pipeline_validator.get_issues(severity, category, query_id)
 
     def has_errors(self) -> bool:
         """Check if pipeline has any ERROR-level issues"""
-        return any(i.severity.value == "error" for i in self.get_all_issues())
+        return self._pipeline_validator.has_errors()
 
     def has_warnings(self) -> bool:
         """Check if pipeline has any WARNING-level issues"""
-        return any(i.severity.value == "warning" for i in self.get_all_issues())
+        return self._pipeline_validator.has_warnings()
 
     def print_issues(self, severity: Optional[str | IssueSeverity] = None):
         """
@@ -2765,28 +2417,7 @@ class Pipeline:
         Args:
             severity: Optional filter by severity ('error', 'warning', 'info' or IssueSeverity enum)
         """
-        issues = self.get_issues(severity=severity) if severity else self.get_all_issues()
-
-        if not issues:
-            logger.info("No validation issues found")
-            return
-
-        # Group by severity
-        from collections import defaultdict
-
-        by_severity = defaultdict(list)
-        for issue in issues:
-            by_severity[issue.severity.value].append(issue)
-
-        # Log by severity (errors first, then warnings, then info)
-        for sev in ["error", "warning", "info"]:
-            if sev not in by_severity:
-                continue
-
-            issues_list = by_severity[sev]
-            logger.info("%s (%d)", sev.upper(), len(issues_list))
-            for issue in issues_list:
-                logger.info("%s", issue)
+        self._pipeline_validator.print_issues(severity)
 
 
 __all__ = [
