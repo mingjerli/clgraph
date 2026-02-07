@@ -5,7 +5,7 @@ Parses SQL queries recursively to identify all query units (CTEs, subqueries, ma
 and builds a QueryUnitGraph representing the query structure.
 """
 
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 import sqlglot
 from sqlglot import exp
@@ -21,8 +21,13 @@ from .models import (
 # Import helper classes for composition-based decomposition
 from .query_parser_helpers import (
     FromClauseParser,
+    GroupingParser,
+    MergeParser,
+    PivotUnpivotParser,
     RecursiveCTEParser,
+    SetOperationsParser,
     SpecialSourcesHandler,
+    SubqueryParser,
     WindowFunctionsParser,
 )
 
@@ -54,6 +59,11 @@ class RecursiveQueryParser:
         self._special_sources = SpecialSourcesHandler(self)
         self._window_functions = WindowFunctionsParser(self)
         self._recursive_cte = RecursiveCTEParser(self)
+        self._set_operations = SetOperationsParser(self)
+        self._pivot_unpivot = PivotUnpivotParser(self)
+        self._merge = MergeParser(self)
+        self._grouping = GroupingParser(self)
+        self._subqueries = SubqueryParser(self)
 
     def parse(self) -> QueryUnitGraph:
         """
@@ -262,138 +272,8 @@ class RecursiveQueryParser:
         parent_unit: Optional[QueryUnit] = None,
         depth: int = 0,
     ) -> QueryUnit:
-        """
-        Parse UNION/INTERSECT/EXCEPT set operations.
-
-        Set operations combine results from multiple SELECT statements.
-        Each branch is parsed as a separate query unit.
-
-        Args:
-            set_node: The set operation node (Union, Intersect, or Except)
-            operation_type: Type of operation ("union", "intersect", "except")
-            name: Name for this set operation unit
-            parent_unit: Parent query unit (if nested)
-            depth: Nesting depth
-
-        Returns:
-            QueryUnit representing the set operation
-
-        sqlglot Structure:
-            - Union.this = left SELECT
-            - Union.expression = right SELECT
-            - Union.distinct = True if UNION (not UNION ALL)
-        """
-        # Determine unit type based on operation
-        unit_type_map = {
-            "union": QueryUnitType.UNION,
-            "intersect": QueryUnitType.INTERSECT,
-            "except": QueryUnitType.EXCEPT,
-        }
-        unit_type = unit_type_map[operation_type]
-
-        # Determine specific operation variant (e.g., UNION vs UNION ALL)
-        if operation_type == "union":
-            # Check if DISTINCT is explicitly set (UNION DISTINCT vs UNION ALL)
-            is_distinct = set_node.args.get("distinct", False)
-            set_op_variant = "union" if is_distinct else "union_all"
-        else:
-            set_op_variant = operation_type
-
-        # Create unit for the set operation itself
-        unit_id = self._generate_unit_id(unit_type, name)
-        unit = QueryUnit(
-            unit_id=unit_id,
-            unit_type=unit_type,
-            name=name,
-            select_node=None,  # Set operations don't have a select_node
-            parent_unit=parent_unit,
-            depth=depth,
-            set_operation_type=set_op_variant,
-            set_operation_branches=[],
-        )
-
-        # Collect all SELECT branches (handles nested set operations)
-        branches = self._collect_set_operation_branches(set_node, operation_type)
-
-        # Parse each branch as a separate query unit
-        for idx, branch_select in enumerate(branches):
-            branch_name = f"{name}_branch_{idx}"
-            branch_unit = self._parse_select_unit(
-                select_node=branch_select,
-                unit_type=QueryUnitType.SUBQUERY_UNION,
-                name=branch_name,
-                parent_unit=unit,
-                depth=depth + 1,
-            )
-
-            # Track branch in set operation
-            unit.set_operation_branches.append(branch_unit.unit_id)
-            unit.depends_on_units.append(branch_unit.unit_id)
-
-        # Add to graph
-        self.unit_graph.add_unit(unit)
-
-        return unit
-
-    def _collect_set_operation_branches(
-        self,
-        set_node: Union[exp.Union, exp.Intersect, exp.Except],
-        operation_type: str,
-    ) -> List[exp.Select]:
-        """
-        Recursively collect all SELECT branches from a set operation.
-
-        Handles nested set operations by flattening them into a list.
-        Example: (A UNION B) UNION C → [A, B, C]
-
-        Args:
-            set_node: The set operation node
-            operation_type: Type of operation ("union", "intersect", "except")
-
-        Returns:
-            List of SELECT statements in the set operation
-        """
-        branches = []
-
-        # Determine the node type we're collecting
-        node_class_map = {
-            "union": exp.Union,
-            "intersect": exp.Intersect,
-            "except": exp.Except,
-        }
-        target_class = node_class_map[operation_type]
-
-        # Process left side (this)
-        left_node = set_node.this
-        # Handle parenthesized expressions wrapped in Subquery
-        if isinstance(left_node, exp.Subquery):
-            left_node = left_node.this
-
-        if isinstance(left_node, target_class):
-            # Nested set operation - recurse
-            branches.extend(self._collect_set_operation_branches(left_node, operation_type))
-        elif isinstance(left_node, exp.Select):
-            # Base case - SELECT statement
-            branches.append(left_node)
-        else:
-            raise ValueError(f"Unexpected node type in set operation: {type(left_node).__name__}")
-
-        # Process right side (expression)
-        right_node = set_node.expression
-        # Handle parenthesized expressions wrapped in Subquery
-        if isinstance(right_node, exp.Subquery):
-            right_node = right_node.this
-
-        if isinstance(right_node, target_class):
-            # Nested set operation - recurse
-            branches.extend(self._collect_set_operation_branches(right_node, operation_type))
-        elif isinstance(right_node, exp.Select):
-            # Base case - SELECT statement
-            branches.append(right_node)
-        else:
-            raise ValueError(f"Unexpected node type in set operation: {type(right_node).__name__}")
-
-        return branches
+        """Parse UNION/INTERSECT/EXCEPT set operations. Delegates to SetOperationsParser."""
+        return self._set_operations.parse(set_node, operation_type, name, parent_unit, depth)
 
     def _parse_pivot(
         self,
@@ -403,99 +283,8 @@ class RecursiveQueryParser:
         depth: int,
         table_node,  # Can be exp.Table or exp.Subquery
     ) -> QueryUnit:
-        """
-        Parse PIVOT operation.
-
-        PIVOT transforms rows into columns based on pivot values.
-        Example: PIVOT(SUM(revenue) FOR quarter IN ('Q1', 'Q2', 'Q3', 'Q4'))
-
-        In sqlglot, PIVOT is stored as part of Table or Subquery nodes.
-        """
-        # Create unit for PIVOT operation
-        unit_id = self._generate_unit_id(QueryUnitType.PIVOT, name)
-        unit = QueryUnit(
-            unit_id=unit_id,
-            unit_type=QueryUnitType.PIVOT,
-            name=name,
-            select_node=None,
-            parent_unit=parent_unit,
-            depth=depth,
-        )
-
-        # Extract PIVOT configuration
-        pivot_config = {}
-
-        # Get aggregation expressions (e.g., SUM(revenue))
-        if hasattr(pivot_node, "expressions") and pivot_node.expressions:
-            pivot_config["aggregations"] = [str(expr) for expr in pivot_node.expressions]
-
-        # Get pivot column (the FOR column)
-        # In sqlglot, the pivot column is in 'fields' which contains an In expression
-        if hasattr(pivot_node, "fields") and pivot_node.fields:
-            for field in pivot_node.fields:
-                if isinstance(field, exp.In):
-                    # The 'this' is the column being pivoted
-                    pivot_config["pivot_column"] = str(field.this)
-
-        # Get pivot values (the IN clause values)
-        # In sqlglot, columns are stored in args, not as a direct attribute
-        if hasattr(pivot_node, "args") and "columns" in pivot_node.args:
-            columns = pivot_node.args["columns"]
-            if columns:
-                pivot_config["value_columns"] = [str(col) for col in columns]
-
-        unit.pivot_config = pivot_config
-
-        # Parse the source
-        # table_node can be either a Table or a Subquery
-        if isinstance(table_node, exp.Subquery):
-            # PIVOT is applied to a subquery: (SELECT ...) PIVOT(...)
-            source_select = table_node.this
-            if isinstance(source_select, exp.Select):
-                source_name = f"{name}_source"
-                source_unit = self._parse_select_unit(
-                    select_node=source_select,
-                    unit_type=QueryUnitType.SUBQUERY_PIVOT_SOURCE,
-                    name=source_name,
-                    parent_unit=unit,
-                    depth=depth + 1,
-                )
-                unit.depends_on_units.append(source_unit.unit_id)
-        elif isinstance(table_node, exp.Table):
-            # PIVOT is applied to a table: table_name PIVOT(...)
-            table_source = table_node.this
-
-            # Check if it's a subquery or table reference
-            if isinstance(table_source, exp.Subquery):
-                # Shouldn't happen, but handle it
-                source_select = table_source.this
-                if isinstance(source_select, exp.Select):
-                    source_name = f"{name}_source"
-                    source_unit = self._parse_select_unit(
-                        select_node=source_select,
-                        unit_type=QueryUnitType.SUBQUERY_PIVOT_SOURCE,
-                        name=source_name,
-                        parent_unit=unit,
-                        depth=depth + 1,
-                    )
-                    unit.depends_on_units.append(source_unit.unit_id)
-            else:
-                # Source is a base table or CTE
-                table_name = (
-                    table_source.name if hasattr(table_source, "name") else str(table_source)
-                )
-
-                # Check if it's a CTE reference
-                cte_unit = self.unit_graph.get_unit_by_name(table_name)
-                if cte_unit:
-                    unit.depends_on_units.append(cte_unit.unit_id)
-                else:
-                    unit.depends_on_tables.append(table_name)
-
-        # Add to graph
-        self.unit_graph.add_unit(unit)
-
-        return unit
+        """Parse PIVOT operation. Delegates to PivotUnpivotParser."""
+        return self._pivot_unpivot.parse_pivot(pivot_node, name, parent_unit, depth, table_node)
 
     def _parse_unpivot(
         self,
@@ -505,75 +294,8 @@ class RecursiveQueryParser:
         depth: int,
         table_node,  # Can be exp.Table or exp.Subquery
     ) -> QueryUnit:
-        """
-        Parse UNPIVOT operation.
-
-        UNPIVOT transforms columns into rows.
-        Example: UNPIVOT(revenue FOR quarter IN (q1_revenue, q2_revenue, q3_revenue, q4_revenue))
-
-        In sqlglot, UNPIVOT is represented as a Pivot node with unpivot=True.
-        """
-        # Create unit for UNPIVOT operation
-        unit_id = self._generate_unit_id(QueryUnitType.UNPIVOT, name)
-        unit = QueryUnit(
-            unit_id=unit_id,
-            unit_type=QueryUnitType.UNPIVOT,
-            name=name,
-            select_node=None,
-            parent_unit=parent_unit,
-            depth=depth,
-        )
-
-        # Extract UNPIVOT configuration
-        unpivot_config = {}
-
-        # For UNPIVOT, we need to extract:
-        # - value_column: The new column for unpivoted values (e.g., "revenue")
-        # - name_column: The new column for column names (e.g., "quarter")
-        # - unpivot_columns: The columns being unpivoted (e.g., [q1_revenue, q2_revenue, ...])
-
-        # Get value column from expressions (e.g., revenue)
-        if hasattr(unpivot_node, "expressions") and unpivot_node.expressions:
-            unpivot_config["value_column"] = str(unpivot_node.expressions[0])
-
-        # Get name column and unpivot columns from fields (the FOR ... IN clause)
-        if hasattr(unpivot_node, "fields") and unpivot_node.fields:
-            for field in unpivot_node.fields:
-                if isinstance(field, exp.In):
-                    # The 'this' is the name column (e.g., quarter)
-                    unpivot_config["name_column"] = str(field.this)
-                    # The 'expressions' are the columns being unpivoted
-                    if hasattr(field, "expressions"):
-                        unpivot_config["unpivot_columns"] = [str(col) for col in field.expressions]
-
-        unit.unpivot_config = unpivot_config
-
-        # Parse the source
-        # table_node can be either a Table or a Subquery
-        if isinstance(table_node, exp.Subquery):
-            # UNPIVOT is applied to a subquery: (SELECT ...) UNPIVOT(...)
-            source_select = table_node.this
-            if isinstance(source_select, exp.Select):
-                source_name = f"{name}_source"
-                source_unit = self._parse_select_unit(
-                    select_node=source_select,
-                    unit_type=QueryUnitType.SUBQUERY_PIVOT_SOURCE,
-                    name=source_name,
-                    parent_unit=unit,
-                    depth=depth + 1,
-                )
-                unit.depends_on_units.append(source_unit.unit_id)
-        elif isinstance(table_node, exp.Table):
-            # UNPIVOT is applied to a base table: table_name UNPIVOT(...)
-            table_name = (
-                table_node.this.name if hasattr(table_node.this, "name") else table_node.name
-            )
-            unit.depends_on_tables.append(table_name)
-
-        # Add to graph
-        self.unit_graph.add_unit(unit)
-
-        return unit
+        """Parse UNPIVOT operation. Delegates to PivotUnpivotParser."""
+        return self._pivot_unpivot.parse_unpivot(unpivot_node, name, parent_unit, depth, table_node)
 
     def _parse_merge_statement(
         self,
@@ -581,162 +303,8 @@ class RecursiveQueryParser:
         name: str,
         depth: int,
     ) -> QueryUnit:
-        """
-        Parse MERGE INTO statement.
-
-        MERGE combines INSERT, UPDATE, and DELETE operations based on match conditions.
-        Example:
-            MERGE INTO target t
-            USING source s ON t.id = s.id
-            WHEN MATCHED THEN UPDATE SET t.value = s.new_value
-            WHEN NOT MATCHED THEN INSERT (id, value) VALUES (s.id, s.new_value)
-        """
-        # Create unit for MERGE operation
-        unit_id = self._generate_unit_id(QueryUnitType.MERGE, name)
-        unit = QueryUnit(
-            unit_id=unit_id,
-            unit_type=QueryUnitType.MERGE,
-            name=name,
-            select_node=None,
-            parent_unit=None,
-            depth=depth,
-        )
-
-        # Extract target table
-        target_table = merge_node.this
-        target_name = None
-        target_alias = None
-        if isinstance(target_table, exp.Table):
-            target_name = target_table.name
-            if hasattr(target_table, "alias") and target_table.alias:
-                target_alias = str(target_table.alias)
-
-        # Extract source table (can be table or subquery)
-        source = merge_node.args.get("using")
-        source_name = None
-        source_alias = None
-        if isinstance(source, exp.Table):
-            source_name = source.name
-            if hasattr(source, "alias") and source.alias:
-                source_alias = str(source.alias)
-            unit.depends_on_tables.append(source_name)
-        elif isinstance(source, exp.Subquery):
-            # Source is a subquery - parse it
-            source_select = source.this
-            if isinstance(source_select, exp.Select):
-                source_alias = (
-                    str(source.alias) if hasattr(source, "alias") and source.alias else "source"
-                )
-                source_unit = self._parse_select_unit(
-                    select_node=source_select,
-                    unit_type=QueryUnitType.MERGE_SOURCE,
-                    name=source_alias,
-                    parent_unit=unit,
-                    depth=depth + 1,
-                )
-                unit.depends_on_units.append(source_unit.unit_id)
-                source_name = source_alias
-
-        # Add target to depends_on_tables (MERGE reads and modifies target)
-        if target_name:
-            unit.depends_on_tables.append(target_name)
-
-        # Store alias mappings
-        if target_alias and target_name:
-            unit.alias_mapping[target_alias] = (target_name, False)
-        if source_alias and source_name:
-            unit.alias_mapping[source_alias] = (source_name, False)
-
-        # Extract match condition
-        match_condition = merge_node.args.get("on")
-        match_condition_sql = match_condition.sql() if match_condition else None
-
-        # Extract match columns from ON condition
-        match_columns: List[Tuple[str, str]] = []
-        match_filter_columns: List[Tuple[str, str]] = []
-        if match_condition:
-            for eq in match_condition.find_all(exp.EQ):
-                left_col = eq.left
-                right_col = eq.right
-                if isinstance(left_col, exp.Column) and isinstance(right_col, exp.Column):
-                    match_columns.append((left_col.name, right_col.name))
-                elif isinstance(left_col, exp.Column) and not isinstance(right_col, exp.Column):
-                    match_filter_columns.append((left_col.name, right_col.sql()))
-                elif isinstance(right_col, exp.Column) and not isinstance(left_col, exp.Column):
-                    match_filter_columns.append((right_col.name, left_col.sql()))
-
-        # Parse WHEN clauses from the 'whens' arg
-        whens = merge_node.args.get("whens")
-        matched_actions: List[Dict[str, Any]] = []
-        not_matched_actions: List[Dict[str, Any]] = []
-
-        if whens and hasattr(whens, "expressions"):
-            for when in whens.expressions:
-                is_matched = when.args.get("matched", False)
-                then_expr = when.args.get("then")
-                condition = when.args.get("condition")
-                condition_sql = condition.sql() if condition else None
-
-                action: Dict[str, Any] = {
-                    "condition": condition_sql,
-                    "column_mappings": {},
-                }
-
-                if isinstance(then_expr, exp.Update):
-                    action["action_type"] = "update"
-                    # Extract SET clause mappings
-                    for set_expr in then_expr.expressions:
-                        if isinstance(set_expr, exp.EQ):
-                            target_col = (
-                                set_expr.left.name
-                                if hasattr(set_expr.left, "name")
-                                else str(set_expr.left)
-                            )
-                            source_expr = set_expr.right.sql()
-                            action["column_mappings"][target_col] = source_expr
-                    if is_matched:
-                        matched_actions.append(action)
-                    else:
-                        not_matched_actions.append(action)
-
-                elif isinstance(then_expr, exp.Insert):
-                    action["action_type"] = "insert"
-                    # Extract target columns and source values
-                    target_cols = []
-                    if then_expr.this and hasattr(then_expr.this, "expressions"):
-                        target_cols = [col.name for col in then_expr.this.expressions]
-                    source_vals = []
-                    if then_expr.expression and hasattr(then_expr.expression, "expressions"):
-                        source_vals = [val.sql() for val in then_expr.expression.expressions]
-                    for i, target_col in enumerate(target_cols):
-                        if i < len(source_vals):
-                            action["column_mappings"][target_col] = source_vals[i]
-                    not_matched_actions.append(action)
-
-                elif isinstance(then_expr, exp.Delete):
-                    action["action_type"] = "delete"
-                    if is_matched:
-                        matched_actions.append(action)
-
-        # Store merge configuration in a custom attribute
-        # Using unpivot_config as a general-purpose config storage
-        unit.unpivot_config = {
-            "merge_type": "merge",
-            "target_table": target_name,
-            "target_alias": target_alias,
-            "source_table": source_name,
-            "source_alias": source_alias,
-            "match_condition": match_condition_sql,
-            "match_columns": match_columns,
-            "match_filter_columns": match_filter_columns,
-            "matched_actions": matched_actions,
-            "not_matched_actions": not_matched_actions,
-        }
-
-        # Add to graph
-        self.unit_graph.add_unit(unit)
-
-        return unit
+        """Parse MERGE INTO statement. Delegates to MergeParser."""
+        return self._merge.parse(merge_node, name, depth)
 
     def _parse_from_sources(self, from_node: exp.Expression, parent_unit: QueryUnit, depth: int):
         """
@@ -846,112 +414,18 @@ class RecursiveQueryParser:
     def _parse_where_subqueries(
         self, where_node: exp.Expression, parent_unit: QueryUnit, depth: int
     ):
-        """Parse subqueries in WHERE clause"""
-        for node in where_node.walk():
-            if isinstance(node, exp.Subquery):
-                subquery_select = node.this
-                if isinstance(subquery_select, exp.Select):
-                    subquery_name = f"where_subq_{self.subquery_counter}"
-                    self.subquery_counter += 1
-
-                    # Recursively parse
-                    subquery_unit = self._parse_select_unit(
-                        select_node=subquery_select,
-                        unit_type=QueryUnitType.SUBQUERY_WHERE,
-                        name=subquery_name,
-                        parent_unit=parent_unit,
-                        depth=depth + 1,
-                    )
-
-                    parent_unit.depends_on_units.append(subquery_unit.unit_id)
+        """Parse subqueries in WHERE clause. Delegates to SubqueryParser."""
+        self._subqueries.parse_where_subqueries(where_node, parent_unit, depth)
 
     def _parse_having_subqueries(
         self, having_node: exp.Expression, parent_unit: QueryUnit, depth: int
     ):
-        """Parse subqueries in HAVING clause"""
-        for node in having_node.walk():
-            if isinstance(node, exp.Subquery):
-                subquery_select = node.this
-                if isinstance(subquery_select, exp.Select):
-                    subquery_name = f"having_subq_{self.subquery_counter}"
-                    self.subquery_counter += 1
-
-                    # Recursively parse
-                    subquery_unit = self._parse_select_unit(
-                        select_node=subquery_select,
-                        unit_type=QueryUnitType.SUBQUERY_HAVING,
-                        name=subquery_name,
-                        parent_unit=parent_unit,
-                        depth=depth + 1,
-                    )
-
-                    parent_unit.depends_on_units.append(subquery_unit.unit_id)
+        """Parse subqueries in HAVING clause. Delegates to SubqueryParser."""
+        self._subqueries.parse_having_subqueries(having_node, parent_unit, depth)
 
     def _parse_qualify_clause(self, qualify_node: exp.Qualify, unit: QueryUnit):
-        """
-        Parse QUALIFY clause to extract window function column dependencies.
-
-        QUALIFY filters rows based on window function results.
-        Example:
-            QUALIFY ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY order_date DESC) = 1
-
-        This extracts:
-        - condition: The full QUALIFY condition as SQL
-        - partition_columns: Columns used in PARTITION BY
-        - order_columns: Columns used in ORDER BY
-        - window_functions: Names of window functions used
-        """
-        condition = qualify_node.this
-        partition_columns: List[str] = []
-        order_columns: List[str] = []
-        window_functions: List[str] = []
-
-        # Walk the condition to find window functions
-        for node in condition.walk():
-            if isinstance(node, exp.Window):
-                # Get function name
-                func = node.this
-                # Try sql_name() first (works for ROW_NUMBER, RANK, etc.), fall back to type name
-                if hasattr(func, "sql_name"):
-                    func_name = func.sql_name()
-                elif hasattr(func, "name") and func.name:
-                    func_name = func.name
-                else:
-                    func_name = type(func).__name__
-                window_functions.append(func_name.upper())
-
-                # Get PARTITION BY columns
-                partition_by = node.args.get("partition_by")
-                if partition_by:
-                    for partition_expr in partition_by:
-                        for col in partition_expr.find_all(exp.Column):
-                            table_ref = str(col.table) if col.table else None
-                            col_name = col.name
-                            full_name = f"{table_ref}.{col_name}" if table_ref else col_name
-                            if full_name not in partition_columns:
-                                partition_columns.append(full_name)
-
-                # Get ORDER BY columns
-                order_by = node.args.get("order")
-                if order_by and hasattr(order_by, "expressions"):
-                    for order_expr in order_by.expressions:
-                        expr_node = (
-                            order_expr.this if isinstance(order_expr, exp.Ordered) else order_expr
-                        )
-                        for col in expr_node.find_all(exp.Column):
-                            table_ref = str(col.table) if col.table else None
-                            col_name = col.name
-                            full_name = f"{table_ref}.{col_name}" if table_ref else col_name
-                            if full_name not in order_columns:
-                                order_columns.append(full_name)
-
-        # Store QUALIFY info on the unit
-        unit.qualify_info = {
-            "condition": condition.sql(),
-            "partition_columns": partition_columns,
-            "order_columns": order_columns,
-            "window_functions": window_functions,
-        }
+        """Parse QUALIFY clause. Delegates to SubqueryParser."""
+        self._subqueries.parse_qualify_clause(qualify_node, unit)
 
     def _promote_dedup_qualify_if_applicable(self, select_node: exp.Select, unit: QueryUnit):
         """
@@ -1001,147 +475,16 @@ class RecursiveQueryParser:
                         return
 
     def _parse_grouping_sets(self, group_clause: exp.Group, unit: QueryUnit):
-        """
-        Parse GROUP BY clause for GROUPING SETS, CUBE, and ROLLUP constructs.
-
-        These constructs generate multiple grouping levels in a single query:
-        - CUBE(a, b): All combinations: (a,b), (a), (b), ()
-        - ROLLUP(a, b): Hierarchical: (a,b), (a), ()
-        - GROUPING SETS(...): Explicit list of grouping combinations
-
-        Args:
-            group_clause: The GROUP BY clause expression
-            unit: The query unit to store grouping config
-        """
-        # Check for CUBE
-        cube_list = group_clause.args.get("cube", [])
-        if cube_list:
-            for cube_node in cube_list:
-                if isinstance(cube_node, exp.Cube):
-                    columns = self._extract_grouping_columns(cube_node.expressions)
-                    # CUBE generates all 2^n combinations
-                    grouping_sets = self._expand_cube(columns)
-                    unit.grouping_config = {
-                        "grouping_type": "cube",
-                        "grouping_columns": columns,
-                        "grouping_sets": grouping_sets,
-                    }
-                    return
-
-        # Check for ROLLUP
-        rollup_list = group_clause.args.get("rollup", [])
-        if rollup_list:
-            for rollup_node in rollup_list:
-                if isinstance(rollup_node, exp.Rollup):
-                    columns = self._extract_grouping_columns(rollup_node.expressions)
-                    # ROLLUP generates n+1 hierarchical combinations
-                    grouping_sets = self._expand_rollup(columns)
-                    unit.grouping_config = {
-                        "grouping_type": "rollup",
-                        "grouping_columns": columns,
-                        "grouping_sets": grouping_sets,
-                    }
-                    return
-
-        # Check for GROUPING SETS
-        gs_list = group_clause.args.get("grouping_sets", [])
-        if gs_list:
-            for gs_node in gs_list:
-                if isinstance(gs_node, exp.GroupingSets):
-                    grouping_sets = []
-                    columns_set: set = set()
-                    for set_expr in gs_node.expressions:
-                        if isinstance(set_expr, exp.Tuple):
-                            # Tuple: (a, b)
-                            cols = self._extract_grouping_columns(set_expr.expressions)
-                            grouping_sets.append(cols)
-                            columns_set.update(cols)
-                        elif isinstance(set_expr, exp.Paren):
-                            # Single column: (a)
-                            cols = self._extract_grouping_columns([set_expr.this])
-                            grouping_sets.append(cols)
-                            columns_set.update(cols)
-                        else:
-                            # Could be empty () for grand total
-                            grouping_sets.append([])
-                    unit.grouping_config = {
-                        "grouping_type": "grouping_sets",
-                        "grouping_columns": list(columns_set),
-                        "grouping_sets": grouping_sets,
-                    }
-                    return
-
-    def _extract_grouping_columns(self, expressions: List[exp.Expression]) -> List[str]:
-        """Extract column names from a list of expressions."""
-        columns = []
-        for expr in expressions:
-            if isinstance(expr, exp.Column):
-                table_ref = str(expr.table) if expr.table else None
-                col_name = expr.name
-                full_name = f"{table_ref}.{col_name}" if table_ref else col_name
-                if full_name not in columns:
-                    columns.append(full_name)
-            else:
-                # Walk nested expressions for columns
-                for col in expr.find_all(exp.Column):
-                    table_ref = str(col.table) if col.table else None
-                    col_name = col.name
-                    full_name = f"{table_ref}.{col_name}" if table_ref else col_name
-                    if full_name not in columns:
-                        columns.append(full_name)
-        return columns
-
-    def _expand_cube(self, columns: List[str]) -> List[List[str]]:
-        """Expand CUBE into all 2^n combinations."""
-        from itertools import combinations
-
-        result = []
-        n = len(columns)
-        # Generate all subsets from full set to empty set
-        for r in range(n, -1, -1):
-            for combo in combinations(columns, r):
-                result.append(list(combo))
-        return result
-
-    def _expand_rollup(self, columns: List[str]) -> List[List[str]]:
-        """Expand ROLLUP into hierarchical combinations."""
-        result = []
-        # From full set down to empty set hierarchically
-        for i in range(len(columns), -1, -1):
-            result.append(columns[:i])
-        return result
+        """Parse GROUP BY clause for GROUPING SETS, CUBE, ROLLUP. Delegates to GroupingParser."""
+        self._grouping.parse_grouping_sets(group_clause, unit)
 
     def _parse_window_functions(self, select_node: exp.Select, unit: QueryUnit):
-        """
-        Parse window functions in SELECT clause.
-
-        Delegates to WindowFunctionsParser for the actual implementation.
-
-        Args:
-            select_node: The SELECT expression
-            unit: The query unit to store window info
-        """
+        """Parse window functions in SELECT clause. Delegates to WindowFunctionsParser."""
         self._window_functions.parse(select_node, unit)
 
     def _parse_select_subqueries(self, expr: exp.Expression, parent_unit: QueryUnit, depth: int):
-        """Parse scalar subqueries in SELECT clause"""
-        for node in expr.walk():
-            if isinstance(node, exp.Subquery):
-                subquery_select = node.this
-                if isinstance(subquery_select, exp.Select):
-                    subquery_name = f"select_subq_{self.subquery_counter}"
-                    self.subquery_counter += 1
-
-                    # Recursively parse
-                    subquery_unit = self._parse_select_unit(
-                        select_node=subquery_select,
-                        unit_type=QueryUnitType.SUBQUERY_SELECT,
-                        name=subquery_name,
-                        parent_unit=parent_unit,
-                        depth=depth + 1,
-                    )
-
-                    parent_unit.depends_on_units.append(subquery_unit.unit_id)
+        """Parse scalar subqueries in SELECT clause. Delegates to SubqueryParser."""
+        self._subqueries.parse_select_subqueries(expr, parent_unit, depth)
 
     def _validate_star_usage(self, unit: QueryUnit, select_node: exp.Select):
         """
