@@ -174,6 +174,54 @@ class TestGenerateQueryId:
         assert isinstance(result, str)
         assert len(result) > 0
 
+    def test_create_view(self):
+        id_counts: dict = {}
+        result = generate_query_id("CREATE VIEW v1 AS SELECT a FROM raw", "bigquery", id_counts)
+        assert "view" in result.lower() or "v1" in result.lower()
+
+    def test_insert_into_select(self):
+        id_counts: dict = {}
+        result = generate_query_id(
+            "INSERT INTO target SELECT a FROM source", "bigquery", id_counts
+        )
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    def test_merge_statement(self):
+        id_counts: dict = {}
+        result = generate_query_id(
+            "MERGE INTO target USING source ON target.id = source.id "
+            "WHEN MATCHED THEN UPDATE SET target.a = source.a",
+            "bigquery",
+            id_counts,
+        )
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    def test_bare_select(self):
+        id_counts: dict = {}
+        result = generate_query_id("SELECT a, b FROM raw_table", "bigquery", id_counts)
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    def test_update_statement(self):
+        id_counts: dict = {}
+        result = generate_query_id("UPDATE users SET name = 'x' WHERE id = 1", "bigquery", id_counts)
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    def test_delete_statement(self):
+        id_counts: dict = {}
+        result = generate_query_id("DELETE FROM users WHERE id = 1", "bigquery", id_counts)
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    def test_duplicate_ids_get_suffix(self):
+        id_counts: dict = {}
+        id1 = generate_query_id("CREATE TABLE t1 AS SELECT a FROM raw", "bigquery", id_counts)
+        id2 = generate_query_id("CREATE TABLE t1 AS SELECT b FROM raw", "bigquery", id_counts)
+        assert id1 != id2
+
 
 class TestCreateFromSqlString:
     """Tests for create_from_sql_string factory function."""
@@ -252,6 +300,35 @@ class TestCreateFromJson:
 
         assert isinstance(pipeline, Pipeline)
 
+    def test_apply_metadata_restores_descriptions(self):
+        """Metadata fields (description, owner, pii, tags) are restored from JSON."""
+        pipeline_orig = create_from_tuples([
+            ("q1", "CREATE TABLE t1 AS SELECT a FROM raw"),
+        ])
+        # Manually set metadata on a column
+        for col in pipeline_orig.columns.values():
+            if col.column_name == "a" and "t1" in col.full_name:
+                col.description = "Test description"
+                col.owner = "data-team"
+                col.pii = True
+                col.tags = {"sensitive", "test"}
+                break
+
+        data = pipeline_orig.to_json()
+        pipeline = create_from_json(data, apply_metadata=True)
+
+        # Find the restored column
+        restored = None
+        for col in pipeline.columns.values():
+            if col.column_name == "a" and "t1" in col.full_name:
+                restored = col
+                break
+        assert restored is not None
+        assert restored.description == "Test description"
+        assert restored.owner == "data-team"
+        assert restored.pii is True
+        assert "sensitive" in restored.tags
+
 
 class TestCreateFromJsonFile:
     """Tests for create_from_json_file factory function."""
@@ -307,6 +384,35 @@ class TestCreateFromSqlFiles:
         with tempfile.TemporaryDirectory() as tmpdir:
             with pytest.raises(ValueError, match="No SQL files"):
                 create_from_sql_files(tmpdir)
+
+    def test_query_id_from_comment(self):
+        """query_id_from='comment' extracts ID from '-- query_id: name' comment."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "q1.sql").write_text(
+                "-- query_id: my_custom_id\nCREATE TABLE t1 AS SELECT a FROM raw"
+            )
+            pipeline = create_from_sql_files(tmpdir, query_id_from="comment")
+
+        assert "my_custom_id" in pipeline.table_graph.queries
+
+    def test_query_id_from_comment_fallback_to_filename(self):
+        """Falls back to filename when no query_id comment found."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "fallback_name.sql").write_text(
+                "-- just a regular comment\nCREATE TABLE t1 AS SELECT a FROM raw"
+            )
+            pipeline = create_from_sql_files(tmpdir, query_id_from="comment")
+
+        assert "fallback_name" in pipeline.table_graph.queries
+
+    def test_invalid_query_id_from_raises(self):
+        """Invalid query_id_from value raises ValueError."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "q1.sql").write_text(
+                "CREATE TABLE t1 AS SELECT a FROM raw"
+            )
+            with pytest.raises(ValueError, match="query_id_from"):
+                create_from_sql_files(tmpdir, query_id_from="invalid_option")
 
 
 class TestCreateEmpty:
