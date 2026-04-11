@@ -55,10 +55,18 @@ from .models import (
     IssueSeverity,
     QueryUnit,
     QueryUnitType,
-    TVFInfo,
-    TVFType,
     ValidationIssue,
-    ValuesInfo,
+)
+from .node_factory import (
+    create_column_node,
+    create_tvf_edge,
+    create_unnest_edge,
+    create_values_edge,
+    find_or_create_star_node,
+    find_or_create_table_column_node,
+    find_or_create_table_star_node,
+    get_node_key,
+    resolve_external_table_name,
 )
 from .query_parser import RecursiveQueryParser
 
@@ -136,7 +144,7 @@ class RecursiveLineageBuilder:
         # 3. For each output column, trace to its sources
         for col_info in output_cols:
             # Create output node
-            output_node = self._create_column_node(unit=unit, col_info=col_info, is_output=True)
+            output_node = create_column_node(unit=unit, col_info=col_info, metadata_extractor=self.metadata_extractor, is_output=True)
             self.lineage_graph.add_node(output_node)
 
             # 4. Trace dependencies recursively
@@ -144,7 +152,7 @@ class RecursiveLineageBuilder:
 
         # Cache this unit's columns for parent units to reference
         self.unit_columns_cache[unit.unit_id] = [
-            self.lineage_graph.nodes[self._get_node_key(unit, col_info)] for col_info in output_cols
+            self.lineage_graph.nodes[get_node_key(unit, col_info)] for col_info in output_cols
         ]
 
         # 5. Create lateral correlation edges if this is a LATERAL subquery
@@ -197,7 +205,7 @@ class RecursiveLineageBuilder:
             for col_info in output_cols:
                 col_name = col_info.get("name") or col_info.get("alias")
                 if col_name == output_column:
-                    node_key = self._get_node_key(unit, col_info)
+                    node_key = get_node_key(unit, col_info)
                     if node_key in self.lineage_graph.nodes:
                         output_node = self.lineage_graph.nodes[node_key]
                         break
@@ -317,7 +325,7 @@ class RecursiveLineageBuilder:
         output_node = None
         for col_info in output_cols:
             if col_info.get("is_aggregate") or col_info.get("type") == "aggregate":
-                node_key = self._get_node_key(unit, col_info)
+                node_key = get_node_key(unit, col_info)
                 if node_key in self.lineage_graph.nodes:
                     output_node = self.lineage_graph.nodes[node_key]
                     break
@@ -326,7 +334,7 @@ class RecursiveLineageBuilder:
         if not output_node:
             for col_info in output_cols:
                 if not col_info.get("is_star"):
-                    node_key = self._get_node_key(unit, col_info)
+                    node_key = get_node_key(unit, col_info)
                     if node_key in self.lineage_graph.nodes:
                         output_node = self.lineage_graph.nodes[node_key]
                         break
@@ -389,7 +397,7 @@ class RecursiveLineageBuilder:
         output_node = None
         for col_info in output_cols:
             if not col_info.get("is_star"):
-                node_key = self._get_node_key(unit, col_info)
+                node_key = get_node_key(unit, col_info)
                 if node_key in self.lineage_graph.nodes:
                     output_node = self.lineage_graph.nodes[node_key]
                     break
@@ -458,18 +466,18 @@ class RecursiveLineageBuilder:
         # Try as base table
         base_table = self._resolve_base_table_name(unit, table_ref) if table_ref else None
         if base_table:
-            return self._find_or_create_table_column_node(base_table, col_name)
+            return find_or_create_table_column_node(self.lineage_graph, base_table, col_name)
 
         # Try without table qualifier - infer from dependencies
         if not table_ref and unit.depends_on_tables:
             for table in unit.depends_on_tables:
-                node = self._find_or_create_table_column_node(table, col_name)
+                node = find_or_create_table_column_node(self.lineage_graph, table, col_name)
                 if node:
                     return node
 
         # Fallback: use table_ref directly if provided
         if table_ref:
-            return self._find_or_create_table_column_node(table_ref, col_name)
+            return find_or_create_table_column_node(self.lineage_graph, table_ref, col_name)
 
         return None
 
@@ -489,7 +497,7 @@ class RecursiveLineageBuilder:
                 table_name, col_name = parts
 
                 # Create source node for the correlated column
-                source_node = self._find_or_create_table_column_node(table_name, col_name)
+                source_node = find_or_create_table_column_node(self.lineage_graph, table_name, col_name)
 
                 # Create a correlation context node for the LATERAL subquery
                 # This represents the fact that the LATERAL uses this column for correlation
@@ -1023,8 +1031,8 @@ class RecursiveLineageBuilder:
             if source_unit_id:
                 # Star from another query unit (CTE or subquery)
                 source_unit = self.unit_graph.units[source_unit_id]
-                source_star_node = self._find_or_create_star_node(
-                    source_unit, source_table or source_unit.name or source_unit.unit_id
+                source_star_node = find_or_create_star_node(
+                    self.lineage_graph, source_unit, source_table or source_unit.name or source_unit.unit_id
                 )
 
                 # Create edge
@@ -1040,7 +1048,7 @@ class RecursiveLineageBuilder:
 
             elif source_table:
                 # Star from base table
-                table_star_node = self._find_or_create_table_star_node(source_table)
+                table_star_node = find_or_create_table_star_node(self.lineage_graph, source_table)
 
                 edge = ColumnEdge(
                     from_node=table_star_node,
@@ -1075,14 +1083,14 @@ class RecursiveLineageBuilder:
                 for table_name in unit.depends_on_tables:
                     # Check if we know the schema for this table from upstream queries
                     # Use resolver to match short names (e.g., 'events') to full names (e.g., 'staging.events')
-                    resolved_table = self._resolve_external_table_name(table_name)
+                    resolved_table = resolve_external_table_name(self.external_table_columns, table_name)
                     if resolved_table:
                         # Schema is known - link to individual columns
                         column_names = self.external_table_columns[resolved_table]
                         for col_name in column_names:
                             # Use the resolved full table name for the node
-                            source_node = self._find_or_create_table_column_node(
-                                resolved_table, col_name
+                            source_node = find_or_create_table_column_node(
+                                self.lineage_graph, resolved_table, col_name
                             )
                             edge = ColumnEdge(
                                 from_node=source_node,
@@ -1095,7 +1103,7 @@ class RecursiveLineageBuilder:
                             self.lineage_graph.add_edge(edge)
                     else:
                         # Schema unknown - use star node
-                        table_star_node = self._find_or_create_table_star_node(table_name)
+                        table_star_node = find_or_create_table_star_node(self.lineage_graph, table_name)
                         edge = ColumnEdge(
                             from_node=table_star_node,
                             to_node=output_node,
@@ -1127,8 +1135,8 @@ class RecursiveLineageBuilder:
                                     self.lineage_graph.add_edge(edge)
                     else:
                         # Unit has unresolved columns (has * in SELECT), use * node
-                        unit_star_node = self._find_or_create_star_node(
-                            dep_unit, dep_unit.name or dep_unit.unit_id
+                        unit_star_node = find_or_create_star_node(
+                            self.lineage_graph, dep_unit, dep_unit.name or dep_unit.unit_id
                         )
                         edge = ColumnEdge(
                             from_node=unit_star_node,
@@ -1189,13 +1197,13 @@ class RecursiveLineageBuilder:
                             self._resolve_base_table_name(unit, table_ref) if table_ref else None
                         )
                         if base_table:
-                            source_node = self._find_or_create_table_column_node(
-                                base_table, col_name
+                            source_node = find_or_create_table_column_node(
+                                self.lineage_graph, base_table, col_name
                             )
                         elif table_ref:
                             # Fallback: use table_ref directly
-                            source_node = self._find_or_create_table_column_node(
-                                table_ref, col_name
+                            source_node = find_or_create_table_column_node(
+                                self.lineage_graph, table_ref, col_name
                             )
 
                     if source_node:
@@ -1252,7 +1260,8 @@ class RecursiveLineageBuilder:
 
                 if unnest_info:
                     # This is a reference to an UNNEST result
-                    self._create_unnest_edge(
+                    create_unnest_edge(
+                        self.lineage_graph,
                         unit=unit,
                         output_node=output_node,
                         col_info=col_info,
@@ -1277,7 +1286,8 @@ class RecursiveLineageBuilder:
 
                 if tvf_info:
                     # This is a reference to a TVF output - create synthetic edge
-                    self._create_tvf_edge(
+                    create_tvf_edge(
+                        self.lineage_graph,
                         unit=unit,
                         output_node=output_node,
                         col_info=col_info,
@@ -1299,7 +1309,8 @@ class RecursiveLineageBuilder:
 
                 if values_info:
                     # This is a reference to a VALUES output - create literal edge
-                    self._create_values_edge(
+                    create_values_edge(
+                        self.lineage_graph,
                         unit=unit,
                         output_node=output_node,
                         col_info=col_info,
@@ -1347,7 +1358,7 @@ class RecursiveLineageBuilder:
                         else None
                     )
                     if base_table:
-                        source_node = self._find_or_create_table_column_node(base_table, col_name)
+                        source_node = find_or_create_table_column_node(self.lineage_graph, base_table, col_name)
 
                         edge = ColumnEdge(
                             from_node=source_node,
@@ -1490,393 +1501,6 @@ class RecursiveLineageBuilder:
             if unit.name == name:
                 return unit
         return None
-
-    def _find_or_create_star_node(self, unit: QueryUnit, source_table: str) -> ColumnNode:
-        """Find or create star node for a query unit"""
-        node_key = f"{unit.name}.*"
-
-        if node_key in self.lineage_graph.nodes:
-            return self.lineage_graph.nodes[node_key]
-
-        # Create new star node
-        node = ColumnNode(
-            layer=self._get_layer_for_unit(unit),
-            table_name=unit.name or unit.unit_id,
-            column_name="*",
-            full_name=node_key,
-            expression="*",
-            node_type="star",
-            source_expression=None,
-            unit_id=unit.unit_id,  # IMPORTANT: Set the unit_id so it's grouped correctly
-            is_star=True,
-            star_source_table=source_table,
-        )
-        self.lineage_graph.add_node(node)
-
-        return node
-
-    def _resolve_external_table_name(self, table_name: str) -> Optional[str]:
-        """
-        Resolve a table name to its full qualified version in external_table_columns.
-
-        The parser may return just 'events' while external_table_columns has 'staging.events'.
-        This method finds the matching full qualified name.
-
-        Args:
-            table_name: Short or full table name (e.g., 'events' or 'staging.events')
-
-        Returns:
-            The full qualified table name if found in external_table_columns, None otherwise
-        """
-        # Direct match
-        if table_name in self.external_table_columns:
-            return table_name
-
-        # Check if any key ends with .{table_name}
-        for full_name in self.external_table_columns:
-            if full_name.endswith(f".{table_name}"):
-                return full_name
-
-        return None
-
-    def _find_or_create_table_star_node(self, table_name: str) -> ColumnNode:
-        """Find or create star node for a base table"""
-        node_key = f"{table_name}.*"
-
-        if node_key in self.lineage_graph.nodes:
-            return self.lineage_graph.nodes[node_key]
-
-        node = ColumnNode(
-            layer="input",
-            table_name=table_name,
-            column_name="*",
-            full_name=node_key,
-            expression="*",
-            node_type="star",
-            source_expression=None,
-            unit_id=None,  # External table, not part of any QueryUnit
-            is_star=True,
-            star_source_table=table_name,
-        )
-        self.lineage_graph.add_node(node)
-
-        return node
-
-    def _find_or_create_table_column_node(self, table_name: str, col_name: str) -> ColumnNode:
-        """Find or create column node for a base table"""
-        node_key = f"{table_name}.{col_name}"
-
-        if node_key in self.lineage_graph.nodes:
-            return self.lineage_graph.nodes[node_key]
-
-        node = ColumnNode(
-            layer="input",
-            table_name=table_name,
-            column_name=col_name,
-            full_name=node_key,
-            expression=col_name,
-            node_type="base_column",
-            source_expression=None,
-            unit_id=None,  # External table, not part of any QueryUnit
-        )
-        self.lineage_graph.add_node(node)
-
-        return node
-
-    def _create_unnest_edge(
-        self,
-        unit: QueryUnit,
-        output_node: ColumnNode,
-        col_info: Dict,
-        unnest_info: Dict[str, Any],
-        col_name: str,
-    ):
-        """
-        Create an array expansion edge from UNNEST source to output column.
-
-        Args:
-            unit: The current query unit
-            output_node: The output column node
-            col_info: Column info dictionary
-            unnest_info: UNNEST metadata from query parser
-            col_name: The column name being referenced (may be field of struct)
-        """
-        source_table = unnest_info.get("source_table")
-        source_column = unnest_info.get("source_column")
-        expansion_type = unnest_info.get("expansion_type", "unnest")
-        offset_alias = unnest_info.get("offset_alias")
-
-        # Handle offset reference (WITH OFFSET)
-        if unnest_info.get("is_offset"):
-            # This is a reference to the offset/position column
-            # The source is still the array column
-            actual_unnest_alias = unnest_info.get("unnest_alias")
-            if actual_unnest_alias and actual_unnest_alias in unit.unnest_sources:
-                actual_unnest_info = unit.unnest_sources[actual_unnest_alias]
-                source_table = actual_unnest_info.get("source_table")
-                source_column = actual_unnest_info.get("source_column")
-
-        if not source_column:
-            # Can't create edge without source column info
-            return
-
-        # Determine the source table (resolve alias if needed)
-        actual_source_table = source_table
-        if source_table and source_table in unit.alias_mapping:
-            actual_source_table, _ = unit.alias_mapping[source_table]
-        elif source_table is None:
-            # Try to get from depends_on_tables
-            if unit.depends_on_tables:
-                actual_source_table = unit.depends_on_tables[0]
-
-        if not actual_source_table:
-            return
-
-        # Create or find the source array column node
-        source_node = self._find_or_create_table_column_node(actual_source_table, source_column)
-
-        # Create edge with array expansion metadata
-        edge = ColumnEdge(
-            from_node=source_node,
-            to_node=output_node,
-            edge_type="array_expansion",
-            transformation="array_expansion",
-            context=unit.unit_type.value,
-            expression=col_info["expression"],
-            is_array_expansion=True,
-            expansion_type=expansion_type,
-            offset_column=offset_alias if unnest_info.get("is_offset") else None,
-        )
-        self.lineage_graph.add_edge(edge)
-
-    def _create_tvf_edge(
-        self,
-        unit: QueryUnit,
-        output_node: ColumnNode,
-        col_info: Dict,
-        tvf_info: "TVFInfo",
-        col_name: str,
-    ):
-        """
-        Create an edge from TVF synthetic column to output column.
-
-        Args:
-            unit: The current query unit
-            output_node: The output column node
-            col_info: Column info dictionary
-            tvf_info: TVFInfo metadata from query parser
-            col_name: The column name being referenced
-        """
-        # Create or find the synthetic source node for this TVF column
-        source_node = self._find_or_create_tvf_column_node(tvf_info, col_name)
-
-        # For COLUMN_INPUT TVFs, we might have input column lineage
-        if tvf_info.tvf_type == TVFType.COLUMN_INPUT and tvf_info.input_columns:
-            # Create edges from input columns to the TVF output
-            for input_col in tvf_info.input_columns:
-                parts = input_col.split(".", 1)
-                if len(parts) == 2:
-                    input_table, input_col_name = parts
-                    input_node = self._find_or_create_table_column_node(input_table, input_col_name)
-                else:
-                    input_node = self._find_or_create_table_column_node("_input", input_col)
-
-                # Create edge from input to synthetic TVF column
-                input_edge = ColumnEdge(
-                    from_node=input_node,
-                    to_node=source_node,
-                    edge_type="tvf_input",
-                    transformation="tvf_input",
-                    context=unit.unit_type.value,
-                    expression=f"{tvf_info.function_name}({input_col})",
-                    tvf_info=tvf_info,
-                    is_tvf_output=True,
-                )
-                self.lineage_graph.add_edge(input_edge)
-
-        # Create edge from synthetic TVF column to output
-        edge = ColumnEdge(
-            from_node=source_node,
-            to_node=output_node,
-            edge_type="tvf_output",
-            transformation="tvf_output",
-            context=unit.unit_type.value,
-            expression=col_info["expression"],
-            tvf_info=tvf_info,
-            is_tvf_output=True,
-        )
-        self.lineage_graph.add_edge(edge)
-
-    def _find_or_create_tvf_column_node(self, tvf_info: "TVFInfo", col_name: str) -> ColumnNode:
-        """Find or create a synthetic column node for TVF output."""
-        node_key = f"{tvf_info.alias}.{col_name}"
-
-        if node_key in self.lineage_graph.nodes:
-            return self.lineage_graph.nodes[node_key]
-
-        # Create synthetic column node
-        node = ColumnNode(
-            layer="input",
-            table_name=tvf_info.alias,
-            column_name=col_name,
-            full_name=node_key,
-            expression=f"{tvf_info.function_name}(...)",
-            node_type="tvf_synthetic",
-            source_expression=None,
-            unit_id=None,
-            is_synthetic=True,
-            synthetic_source=tvf_info.function_name,
-            tvf_parameters=tvf_info.parameters,
-        )
-        self.lineage_graph.add_node(node)
-
-        return node
-
-    # ============================================================================
-    # VALUES (Literal Table) Lineage
-    # ============================================================================
-
-    def _create_values_edge(
-        self,
-        unit: QueryUnit,
-        output_node: ColumnNode,
-        col_info: Dict,
-        values_info: "ValuesInfo",
-        col_name: str,
-    ):
-        """
-        Create an edge from VALUES literal column to output column.
-
-        Args:
-            unit: The current query unit
-            output_node: The output column node
-            col_info: Column info dictionary
-            values_info: ValuesInfo metadata from query parser
-            col_name: The column name being referenced
-        """
-        # Create or find the literal source node for this VALUES column
-        source_node = self._find_or_create_values_column_node(values_info, col_name)
-
-        # Create edge from literal VALUES column to output
-        edge = ColumnEdge(
-            from_node=source_node,
-            to_node=output_node,
-            edge_type="literal_source",
-            transformation="literal_source",
-            context=unit.unit_type.value,
-            expression=col_info["expression"],
-        )
-        self.lineage_graph.add_edge(edge)
-
-    def _find_or_create_values_column_node(
-        self, values_info: "ValuesInfo", col_name: str
-    ) -> ColumnNode:
-        """Find or create a literal column node for VALUES output."""
-        node_key = f"{values_info.alias}.{col_name}"
-
-        if node_key in self.lineage_graph.nodes:
-            return self.lineage_graph.nodes[node_key]
-
-        # Get column index to extract sample values and type
-        col_idx = (
-            values_info.column_names.index(col_name) if col_name in values_info.column_names else -1
-        )
-
-        sample_values = None
-        literal_type = None
-        if col_idx >= 0:
-            sample_values = [
-                row[col_idx] for row in values_info.sample_values if col_idx < len(row)
-            ]
-            if col_idx < len(values_info.column_types):
-                literal_type = values_info.column_types[col_idx]
-
-        # Create literal column node
-        node = ColumnNode(
-            layer="input",
-            table_name=values_info.alias,
-            column_name=col_name,
-            full_name=node_key,
-            expression="VALUES(...)",
-            node_type="literal",
-            source_expression=None,
-            unit_id=None,
-            is_literal=True,
-            literal_values=sample_values,
-            literal_type=literal_type,
-        )
-        self.lineage_graph.add_node(node)
-
-        return node
-
-    def _create_column_node(
-        self, unit: QueryUnit, col_info: Dict, is_output: bool = False
-    ) -> ColumnNode:
-        """Create a ColumnNode from column info"""
-        layer = (
-            "output"
-            if is_output and unit.unit_type == QueryUnitType.MAIN_QUERY
-            else self._get_layer_for_unit(unit)
-        )
-        table_name = unit.name if unit.name else "__output__"
-        col_name = col_info["name"]
-
-        full_name = f"{table_name}.{col_name}"
-        if is_output and unit.unit_type == QueryUnitType.MAIN_QUERY:
-            full_name = f"output.{col_name}"
-
-        # Extract metadata from SQL comments if ast_node is available
-        sql_metadata = None
-        ast_node = col_info.get("ast_node")
-        if ast_node is not None:
-            sql_metadata = self.metadata_extractor.extract_from_expression(ast_node)
-            # Only keep if metadata has any content
-            if not (
-                sql_metadata.description
-                or sql_metadata.pii is not None
-                or sql_metadata.owner
-                or sql_metadata.tags
-                or sql_metadata.custom_metadata
-            ):
-                sql_metadata = None
-
-        node = ColumnNode(
-            layer=layer,
-            table_name=table_name,
-            column_name=col_name,
-            full_name=full_name,
-            expression=col_info["expression"],
-            node_type=col_info["type"],
-            source_expression=ast_node,
-            unit_id=unit.unit_id,
-            is_star=col_info.get("is_star", False),
-            star_source_table=col_info.get("source_table"),
-            except_columns=col_info.get("except_columns", set()),
-            replace_columns=col_info.get("replace_columns", {}),
-            sql_metadata=sql_metadata,
-        )
-
-        return node
-
-    def _get_layer_for_unit(self, unit: QueryUnit) -> str:
-        """Determine layer name for a query unit"""
-        if unit.unit_type == QueryUnitType.MAIN_QUERY:
-            return "output"
-        elif unit.unit_type == QueryUnitType.CTE:
-            return "cte"
-        else:
-            return "subquery"
-
-    def _get_node_key(self, unit: QueryUnit, col_info: Dict) -> str:
-        """Get cache key for a column node"""
-        is_main = unit.unit_type == QueryUnitType.MAIN_QUERY
-        table_name = unit.name if unit.name else "__output__"
-        col_name = col_info["name"]
-
-        if is_main:
-            return f"output.{col_name}"
-        else:
-            return f"{table_name}.{col_name}"
 
     def _extract_source_column_refs(
         self, expr: exp.Expression
