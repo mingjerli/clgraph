@@ -518,7 +518,14 @@ class Pipeline:
 
         For full lineage path with all intermediate nodes, use trace_column_backward_full().
         """
-        return self._lineage_tracer.trace_backward(table_name, column_name)
+        from .lineage_tracer import trace_backward
+
+        return trace_backward(
+            self.columns,
+            self.column_graph._incoming_index,
+            table_name,
+            column_name,
+        )
 
     def trace_column_backward_full(
         self, table_name: str, column_name: str, include_ctes: bool = True
@@ -550,7 +557,15 @@ class Pipeline:
                 print(f"{edge.from_node.table_name}.{edge.from_node.column_name} -> "
                       f"{edge.to_node.table_name}.{edge.to_node.column_name}")
         """
-        return self._lineage_tracer.trace_backward_full(table_name, column_name, include_ctes)
+        from .lineage_tracer import trace_backward_full
+
+        return trace_backward_full(
+            self.columns,
+            self.column_graph._incoming_index,
+            table_name,
+            column_name,
+            include_ctes,
+        )
 
     def get_table_lineage_path(
         self, table_name: str, column_name: str
@@ -573,7 +588,15 @@ class Pipeline:
             #   ("source_orders", "total_amount", "01_raw_orders"),
             # ]
         """
-        return self._lineage_tracer.get_table_lineage_path(table_name, column_name)
+        from .lineage_tracer import get_table_lineage_path
+
+        return get_table_lineage_path(
+            self.columns,
+            self.column_graph._incoming_index,
+            table_name,
+            column_name,
+            self.table_graph.tables,
+        )
 
     def trace_column_forward(self, table_name: str, column_name: str) -> List[ColumnNode]:
         """
@@ -582,7 +605,14 @@ class Pipeline:
 
         For full impact path with all intermediate nodes, use trace_column_forward_full().
         """
-        return self._lineage_tracer.trace_forward(table_name, column_name)
+        from .lineage_tracer import trace_forward
+
+        return trace_forward(
+            self.columns,
+            self.column_graph._outgoing_index,
+            table_name,
+            column_name,
+        )
 
     def trace_column_forward_full(
         self, table_name: str, column_name: str, include_ctes: bool = True
@@ -609,7 +639,15 @@ class Pipeline:
             for node in nodes:
                 print(f"{node.table_name}.{node.column_name} (query={node.query_id})")
         """
-        return self._lineage_tracer.trace_forward_full(table_name, column_name, include_ctes)
+        from .lineage_tracer import trace_forward_full
+
+        return trace_forward_full(
+            self.columns,
+            self.column_graph._outgoing_index,
+            table_name,
+            column_name,
+            include_ctes,
+        )
 
     def get_table_impact_path(
         self, table_name: str, column_name: str
@@ -632,7 +670,15 @@ class Pipeline:
             #   ...
             # ]
         """
-        return self._lineage_tracer.get_table_impact_path(table_name, column_name)
+        from .lineage_tracer import get_table_impact_path
+
+        return get_table_impact_path(
+            self.columns,
+            self.column_graph._outgoing_index,
+            table_name,
+            column_name,
+            self.table_graph.tables,
+        )
 
     def get_lineage_path(
         self, from_table: str, from_column: str, to_table: str, to_column: str
@@ -641,7 +687,16 @@ class Pipeline:
         Find the lineage path between two columns.
         Returns list of edges connecting them (if path exists).
         """
-        return self._lineage_tracer.get_lineage_path(from_table, from_column, to_table, to_column)
+        from .lineage_tracer import get_lineage_path
+
+        return get_lineage_path(
+            self.columns,
+            self.column_graph._outgoing_index,
+            from_table,
+            from_column,
+            to_table,
+            to_column,
+        )
 
     def generate_all_descriptions(self, batch_size: int = 10, verbose: bool = True):
         """
