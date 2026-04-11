@@ -20,7 +20,6 @@ from .models import (
     ColumnEdge,
     ColumnLineageGraph,
     ColumnNode,
-    DescriptionSource,
     IssueCategory,
     IssueSeverity,
     ValidationIssue,
@@ -241,7 +240,9 @@ class Pipeline:
                 ("staging", "CREATE TABLE {{env}}_staging.orders AS SELECT * FROM {{env}}_raw.orders"),
             ], template_context={"env": "prod"})
         """
-        return cls(queries, dialect=dialect, template_context=template_context)
+        from .pipeline_factory import create_from_tuples
+
+        return create_from_tuples(queries, dialect=dialect, template_context=template_context)
 
     @classmethod
     def from_dict(
@@ -272,8 +273,9 @@ class Pipeline:
                 "staging": "CREATE TABLE {{env}}_staging.orders AS SELECT * FROM raw.orders"
             }, template_context={"env": "prod"})
         """
-        query_list = list(queries.items())
-        return cls(query_list, dialect=dialect, template_context=template_context)
+        from .pipeline_factory import create_from_dict
+
+        return create_from_dict(queries, dialect=dialect, template_context=template_context)
 
     @classmethod
     def from_sql_list(
@@ -309,14 +311,9 @@ class Pipeline:
                 "CREATE TABLE {{env}}_staging.orders AS SELECT * FROM raw.orders"
             ], template_context={"env": "prod"})
         """
-        query_list = []
-        id_counts: Dict[str, int] = {}
+        from .pipeline_factory import create_from_sql_list
 
-        for sql in queries:
-            query_id = cls._generate_query_id(sql, dialect, id_counts)
-            query_list.append((query_id, sql))
-
-        return cls(query_list, dialect=dialect, template_context=template_context)
+        return create_from_sql_list(queries, dialect=dialect, template_context=template_context)
 
     @staticmethod
     def _generate_query_id(sql: str, dialect: str, id_counts: Dict[str, int]) -> str:
@@ -336,90 +333,9 @@ class Pipeline:
         Returns:
             Generated query ID
         """
-        import sqlglot
-        from sqlglot import exp
+        from .pipeline_factory import generate_query_id
 
-        try:
-            parsed = sqlglot.parse_one(sql, dialect=dialect)
-
-            # Determine operation
-            if isinstance(parsed, exp.Create):
-                if parsed.kind == "VIEW":
-                    operation = "create_view"
-                else:
-                    operation = "create"
-            elif isinstance(parsed, exp.Insert):
-                operation = "insert"
-            elif isinstance(parsed, exp.Merge):
-                operation = "merge"
-            elif isinstance(parsed, exp.Update):
-                operation = "update"
-            elif isinstance(parsed, exp.Delete):
-                operation = "delete"
-            elif isinstance(parsed, exp.Select):
-                operation = "select"
-            else:
-                operation = "query"
-
-            # Determine destination table name
-            dest_table = None
-            if isinstance(parsed, exp.Create):
-                table_expr = parsed.this
-                if table_expr:
-                    dest_table = table_expr.name
-            elif isinstance(parsed, (exp.Insert, exp.Merge)):
-                table_expr = parsed.this
-                if table_expr:
-                    dest_table = table_expr.name
-            elif isinstance(parsed, (exp.Update, exp.Delete)):
-                table_expr = parsed.this
-                if table_expr:
-                    dest_table = table_expr.name
-
-            # Determine source tables
-            source_tables = []
-            for table in parsed.find_all(exp.Table):
-                # Skip the destination table
-                table_name = table.name
-                if table_name and table_name != dest_table:
-                    source_tables.append(table_name)
-
-            # Build base ID
-            if dest_table:
-                base_id = f"{operation}_{dest_table}"
-            else:
-                base_id = operation
-
-            # Try base_id first
-            if base_id not in id_counts:
-                id_counts[base_id] = 1
-                return base_id
-
-            # Try with source table
-            if source_tables:
-                # Use first source table
-                id_with_source = f"{base_id}_from_{source_tables[0]}"
-                if id_with_source not in id_counts:
-                    id_counts[id_with_source] = 1
-                    return id_with_source
-                else:
-                    # Still duplicate, use number
-                    id_counts[id_with_source] += 1
-                    return f"{id_with_source}_{id_counts[id_with_source]}"
-            else:
-                # No source table, use number
-                id_counts[base_id] += 1
-                return f"{base_id}_{id_counts[base_id]}"
-
-        except (sqlglot.errors.SqlglotError, KeyError, AttributeError):
-            # Fallback if parsing fails
-            base_id = "query"
-            if base_id not in id_counts:
-                id_counts[base_id] = 1
-                return base_id
-            else:
-                id_counts[base_id] += 1
-                return f"{base_id}_{id_counts[base_id]}"
+        return generate_query_id(sql, dialect, id_counts)
 
     @classmethod
     def from_sql_string(
@@ -455,9 +371,9 @@ class Pipeline:
                 template_context={"env": "prod"}
             )
         """
-        # Split by semicolon and filter empty strings
-        queries = [q.strip() for q in sql.split(";") if q.strip()]
-        return cls.from_sql_list(queries, dialect=dialect, template_context=template_context)
+        from .pipeline_factory import create_from_sql_string
+
+        return create_from_sql_string(sql, dialect=dialect, template_context=template_context)
 
     @classmethod
     def from_json(
@@ -494,48 +410,9 @@ class Pipeline:
             assert len(pipeline.columns) > 0
             assert len(pipeline.edges) > 0
         """
-        # Validate required fields for round-trip
-        if "queries" not in data:
-            raise ValueError(
-                "JSON data missing 'queries' field. "
-                "Ensure JSONExporter.export() was called with include_queries=True"
-            )
+        from .pipeline_factory import create_from_json
 
-        if "dialect" not in data:
-            raise ValueError("JSON data missing 'dialect' field")
-
-        # Extract pipeline construction data
-        dialect = data["dialect"]
-        template_context = data.get("template_context")
-
-        # Reconstruct queries list
-        queries = [(q["query_id"], q["sql"]) for q in data["queries"]]
-
-        # Create pipeline from queries
-        pipeline = cls.from_tuples(queries, dialect=dialect, template_context=template_context)
-
-        # Apply metadata if requested
-        if apply_metadata and "columns" in data:
-            for col_data in data["columns"]:
-                full_name = col_data.get("full_name")
-                if full_name and full_name in pipeline.columns:
-                    col = pipeline.columns[full_name]
-
-                    # Apply metadata fields
-                    if col_data.get("description"):
-                        col.description = col_data["description"]
-                    if col_data.get("description_source"):
-                        col.description_source = DescriptionSource(col_data["description_source"])
-                    if col_data.get("owner"):
-                        col.owner = col_data["owner"]
-                    if col_data.get("pii"):
-                        col.pii = col_data["pii"]
-                    if col_data.get("tags"):
-                        col.tags = set(col_data["tags"])
-                    if col_data.get("custom_metadata"):
-                        col.custom_metadata = col_data["custom_metadata"]
-
-        return pipeline
+        return create_from_json(data, apply_metadata=apply_metadata)
 
     @classmethod
     def from_json_file(cls, file_path: str, apply_metadata: bool = True) -> "Pipeline":
@@ -556,17 +433,9 @@ class Pipeline:
             # Later, reload it
             pipeline = Pipeline.from_json_file("pipeline.json")
         """
-        import json
-        from pathlib import Path
+        from .pipeline_factory import create_from_json_file
 
-        path = Path(file_path)
-        if not path.exists():
-            raise FileNotFoundError(f"JSON file not found: {file_path}")
-
-        with open(path) as f:
-            data = json.load(f)
-
-        return cls.from_json(data, apply_metadata=apply_metadata)
+        return create_from_json_file(file_path, apply_metadata=apply_metadata)
 
     @classmethod
     def _create_empty(cls, table_graph: "TableDependencyGraph") -> "Pipeline":
@@ -582,19 +451,9 @@ class Pipeline:
         Returns:
             Empty Pipeline instance
         """
-        # Create instance without calling __init__
-        instance = cls.__new__(cls)
-        instance.dialect = "bigquery"
-        instance.query_mapping = {}
-        instance.column_graph = PipelineLineageGraph()
-        instance.query_graphs = {}
-        instance.llm = None
-        instance.table_graph = table_graph
-        instance._tracer = None  # Lazy-initialized components
-        instance._validator = None
-        instance._metadata_mgr = None
-        instance._subpipeline_builder = None
-        return instance
+        from .pipeline_factory import create_empty
+
+        return create_empty(table_graph)
 
     # === Lineage methods (from PipelineLineageGraph) ===
 
@@ -920,35 +779,15 @@ class Pipeline:
                 template_context={"env": "prod", "project": "my_project"}
             )
         """
-        import re
-        from pathlib import Path
+        from .pipeline_factory import create_from_sql_files
 
-        sql_path = Path(sql_dir)
-        sql_files = sorted(sql_path.glob(pattern))
-
-        if not sql_files:
-            raise ValueError(f"No SQL files found in {sql_dir} matching {pattern}")
-
-        queries = []
-        for sql_file in sql_files:
-            sql_content = sql_file.read_text()
-
-            if query_id_from == "filename":
-                query_id = sql_file.stem  # Filename without extension
-            elif query_id_from == "comment":
-                # Extract from first line comment: -- query_id: name
-                match = re.match(r"--\s*query_id:\s*(\w+)", sql_content)
-                if match:
-                    query_id = match.group(1)
-                else:
-                    # Fallback to filename if no comment found
-                    query_id = sql_file.stem
-            else:
-                raise ValueError(f"Invalid query_id_from: {query_id_from}")
-
-            queries.append((query_id, sql_content))
-
-        return cls(queries, dialect=dialect, template_context=template_context)
+        return create_from_sql_files(
+            sql_dir,
+            dialect=dialect,
+            pattern=pattern,
+            query_id_from=query_id_from,
+            template_context=template_context,
+        )
 
     def _remap_query_ids(self):
         """Remap auto-generated query IDs to user-provided IDs"""
