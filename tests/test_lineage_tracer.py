@@ -1,364 +1,711 @@
 """
-Tests for LineageTracer component extracted from Pipeline.
+Tests for the lineage_tracer module.
 
-Tests the delegation pattern from Pipeline to LineageTracer.
-All existing Pipeline lineage tests should continue to pass.
+Verifies that:
+- Module-level functions in clgraph.lineage_tracer work correctly
+- Backward tracing returns source columns
+- Forward tracing returns dependent columns
+- Full variants return nodes + edges
+- Backward compatibility: Pipeline tracing methods still work via delegation
 """
-
-import pytest
 
 from clgraph import Pipeline
 
+# ---------------------------------------------------------------------------
+# Helpers / Fixtures
+# ---------------------------------------------------------------------------
 
-class TestLineageTracerDelegation:
-    """Test that Pipeline properly delegates to LineageTracer."""
 
-    @pytest.fixture
-    def simple_pipeline(self):
-        """Create a simple two-query pipeline for testing."""
-        queries = [
-            (
-                "staging",
-                """
-                CREATE TABLE staging.orders AS
-                SELECT
-                    order_id,
-                    customer_id,
-                    amount
-                FROM raw.orders
-                """,
-            ),
-            (
-                "analytics",
-                """
-                CREATE TABLE analytics.revenue AS
-                SELECT
-                    customer_id,
-                    SUM(amount) AS total_revenue
-                FROM staging.orders
-                GROUP BY customer_id
-                """,
-            ),
-        ]
-        return Pipeline(queries, dialect="bigquery")
+def _simple_pipeline():
+    """Two-query pipeline: raw.orders -> staging.orders -> analytics.metrics"""
+    queries = [
+        (
+            "q1",
+            """
+            CREATE TABLE staging.orders AS
+            SELECT
+                order_id,
+                amount,
+                user_id
+            FROM raw.orders
+            """,
+        ),
+        (
+            "q2",
+            """
+            CREATE TABLE analytics.metrics AS
+            SELECT
+                user_id,
+                SUM(amount) AS total_revenue
+            FROM staging.orders
+            GROUP BY user_id
+            """,
+        ),
+    ]
+    return Pipeline(queries, dialect="bigquery")
 
-    @pytest.fixture
-    def three_query_pipeline(self):
-        """Create a three-query pipeline for testing lineage paths."""
-        queries = [
-            (
-                "raw",
-                """
-                CREATE TABLE staging.raw_data AS
-                SELECT
-                    id,
-                    value,
-                    category
-                FROM source.data
-                """,
-            ),
-            (
-                "intermediate",
-                """
-                CREATE TABLE staging.processed AS
-                SELECT
-                    id,
-                    value * 2 AS doubled_value,
-                    category
-                FROM staging.raw_data
-                """,
-            ),
-            (
-                "final",
-                """
-                CREATE TABLE analytics.summary AS
-                SELECT
-                    category,
-                    SUM(doubled_value) AS total_value
-                FROM staging.processed
-                GROUP BY category
-                """,
-            ),
-        ]
-        return Pipeline(queries, dialect="bigquery")
 
-    def test_trace_column_backward_returns_sources(self, simple_pipeline):
-        """Test that trace_column_backward returns source columns."""
-        sources = simple_pipeline.trace_column_backward("analytics.revenue", "total_revenue")
+def _three_hop_pipeline():
+    """Three-query linear pipeline with CTEs."""
+    queries = [
+        (
+            "q1",
+            """
+            CREATE TABLE raw.sales AS
+            SELECT id, revenue FROM source.transactions
+            """,
+        ),
+        (
+            "q2",
+            """
+            CREATE TABLE staging.sales AS
+            SELECT id, revenue FROM raw.sales
+            """,
+        ),
+        (
+            "q3",
+            """
+            CREATE TABLE mart.totals AS
+            SELECT SUM(revenue) AS total FROM staging.sales
+            """,
+        ),
+    ]
+    return Pipeline(queries, dialect="bigquery")
 
-        # Should find the amount column from staging.orders
-        assert len(sources) > 0
-        source_names = [s.column_name for s in sources]
-        # The source could be either amount from staging.orders or from raw.orders
-        assert "amount" in source_names
 
-    def test_trace_column_backward_empty_for_source_column(self, simple_pipeline):
-        """Test that trace_column_backward returns the column itself for source tables."""
-        # For a source table column, backward trace should return the column itself
-        sources = simple_pipeline.trace_column_backward("raw.orders", "order_id")
+# ---------------------------------------------------------------------------
+# Import the module-level functions
+# ---------------------------------------------------------------------------
 
-        # Should return the source column itself (no incoming edges)
-        assert len(sources) > 0
-        source_names = [s.column_name for s in sources]
-        assert "order_id" in source_names
 
-    def test_trace_column_forward_returns_descendants(self, simple_pipeline):
-        """Test that trace_column_forward returns downstream columns."""
-        descendants = simple_pipeline.trace_column_forward("staging.orders", "amount")
+class TestLinageTracerImport:
+    """Smoke-tests: the module must be importable with the expected symbols."""
 
-        # Should find total_revenue in analytics.revenue
-        assert len(descendants) > 0
-        desc_names = [d.column_name for d in descendants]
-        assert "total_revenue" in desc_names
+    def test_import_trace_backward(self):
+        from clgraph.lineage_tracer import trace_backward  # noqa: F401
 
-    def test_trace_column_forward_empty_for_final_column(self, simple_pipeline):
-        """Test that trace_column_forward returns empty for final columns."""
-        descendants = simple_pipeline.trace_column_forward("analytics.revenue", "total_revenue")
+    def test_import_trace_backward_full(self):
+        from clgraph.lineage_tracer import trace_backward_full  # noqa: F401
 
-        # Should return the column itself as final (no outgoing edges)
-        assert len(descendants) > 0
-        desc_names = [d.column_name for d in descendants]
-        assert "total_revenue" in desc_names
+    def test_import_trace_forward(self):
+        from clgraph.lineage_tracer import trace_forward  # noqa: F401
 
-    def test_trace_column_backward_full_returns_nodes_and_edges(self, three_query_pipeline):
-        """Test that trace_column_backward_full returns all nodes and edges."""
-        nodes, edges = three_query_pipeline.trace_column_backward_full(
-            "analytics.summary", "total_value"
-        )
+    def test_import_trace_forward_full(self):
+        from clgraph.lineage_tracer import trace_forward_full  # noqa: F401
 
-        # Should have multiple nodes in the path
-        assert len(nodes) > 0
-        assert len(edges) > 0
+    def test_import_get_table_lineage_path(self):
+        from clgraph.lineage_tracer import get_table_lineage_path  # noqa: F401
 
-        # Check that nodes include intermediate steps
-        node_tables = [n.table_name for n in nodes]
-        assert "analytics.summary" in node_tables
-        assert "staging.processed" in node_tables
+    def test_import_get_table_impact_path(self):
+        from clgraph.lineage_tracer import get_table_impact_path  # noqa: F401
 
-    def test_trace_column_forward_full_returns_nodes_and_edges(self, three_query_pipeline):
-        """Test that trace_column_forward_full returns all nodes and edges."""
-        nodes, edges = three_query_pipeline.trace_column_forward_full("staging.raw_data", "value")
+    def test_import_get_lineage_path(self):
+        from clgraph.lineage_tracer import get_lineage_path  # noqa: F401
 
-        # Should have multiple nodes in the path
-        assert len(nodes) > 0
-        assert len(edges) > 0
+    def test_import_get_incoming(self):
+        from clgraph.lineage_tracer import _get_incoming  # noqa: F401
 
-        # Check that nodes include downstream steps
-        node_tables = [n.table_name for n in nodes]
-        assert "staging.raw_data" in node_tables
-        assert "staging.processed" in node_tables
+    def test_import_get_outgoing(self):
+        from clgraph.lineage_tracer import _get_outgoing  # noqa: F401
 
-    def test_get_lineage_path_returns_edges(self, three_query_pipeline):
-        """Test that get_lineage_path returns edges between two columns."""
-        path = three_query_pipeline.get_lineage_path(
-            "staging.raw_data",
-            "value",
-            "staging.processed",
-            "doubled_value",
-        )
 
-        # Should find a path with at least one edge
-        assert len(path) > 0
+# ---------------------------------------------------------------------------
+# trace_backward
+# ---------------------------------------------------------------------------
 
-    def test_get_lineage_path_empty_for_unconnected(self, simple_pipeline):
-        """Test that get_lineage_path returns empty for unconnected columns."""
-        path = simple_pipeline.get_lineage_path(
-            "raw.orders",
-            "order_id",
-            "analytics.revenue",
+
+class TestTraceBackward:
+    """Tests for trace_backward()."""
+
+    def test_returns_source_columns(self):
+        from clgraph.lineage_tracer import trace_backward
+
+        pipeline = _simple_pipeline()
+        sources = trace_backward(
+            pipeline.columns,
+            pipeline.column_graph._incoming_index,
+            "analytics.metrics",
             "total_revenue",
         )
-
-        # order_id doesn't flow to total_revenue, so path should be empty
-        assert len(path) == 0
-
-    def test_get_table_lineage_path_returns_tuples(self, three_query_pipeline):
-        """Test that get_table_lineage_path returns list of tuples."""
-        path = three_query_pipeline.get_table_lineage_path("analytics.summary", "total_value")
-
-        # Should return list of (table_name, column_name, query_id) tuples
-        assert len(path) > 0
-        assert all(len(item) == 3 for item in path)
-
-        # First item should be the target
-        assert path[0][0] == "analytics.summary"
-        assert path[0][1] == "total_value"
-
-    def test_get_table_impact_path_returns_tuples(self, three_query_pipeline):
-        """Test that get_table_impact_path returns list of tuples."""
-        path = three_query_pipeline.get_table_impact_path("staging.raw_data", "value")
-
-        # Should return list of (table_name, column_name, query_id) tuples
-        assert len(path) > 0
-        assert all(len(item) == 3 for item in path)
-
-        # First item should be the source
-        assert path[0][0] == "staging.raw_data"
-        assert path[0][1] == "value"
-
-    def test_trace_backward_includes_ctes_by_default(self, three_query_pipeline):
-        """Test that trace_column_backward_full includes CTEs by default."""
-        # Create a pipeline with CTEs
-        queries = [
-            (
-                "with_cte",
-                """
-                CREATE TABLE output.result AS
-                WITH cte_step AS (
-                    SELECT id, value * 2 AS doubled
-                    FROM input.data
-                )
-                SELECT id, doubled AS final_value
-                FROM cte_step
-                """,
-            ),
-        ]
-        pipeline = Pipeline(queries, dialect="bigquery")
-
-        nodes, edges = pipeline.trace_column_backward_full("output.result", "final_value")
-
-        # Should include CTE nodes
-        node_names = [n.full_name for n in nodes]
-        # CTE columns should be present
-        assert any("cte_step" in name for name in node_names) or len(nodes) > 1
-
-    def test_trace_backward_excludes_ctes_when_requested(self):
-        """Test that trace_column_backward_full can exclude CTEs."""
-        queries = [
-            (
-                "with_cte",
-                """
-                CREATE TABLE output.result AS
-                WITH cte_step AS (
-                    SELECT id, value * 2 AS doubled
-                    FROM input.data
-                )
-                SELECT id, doubled AS final_value
-                FROM cte_step
-                """,
-            ),
-        ]
-        pipeline = Pipeline(queries, dialect="bigquery")
-
-        nodes, edges = pipeline.trace_column_backward_full(
-            "output.result", "final_value", include_ctes=False
-        )
-
-        # Should not include CTE layer nodes (nodes with layer="cte")
-        cte_nodes = [n for n in nodes if n.layer == "cte"]
-        assert len(cte_nodes) == 0
-
-
-class TestLineageTracerLazyInitialization:
-    """Test that LineageTracer is lazily initialized."""
-
-    def test_tracer_not_created_on_pipeline_init(self):
-        """Test that tracer is not created when Pipeline is initialized."""
-        queries = [
-            ("q1", "CREATE TABLE t1 AS SELECT a FROM source"),
-        ]
-        pipeline = Pipeline(queries, dialect="bigquery")
-
-        # The _tracer attribute should be None or not exist
-        assert pipeline._tracer is None
-
-    def test_tracer_created_on_first_trace_call(self):
-        """Test that tracer is created on first trace method call."""
-        queries = [
-            ("q1", "CREATE TABLE t1 AS SELECT a FROM source"),
-        ]
-        pipeline = Pipeline(queries, dialect="bigquery")
-
-        # Call a trace method
-        pipeline.trace_column_backward("t1", "a")
-
-        # Now tracer should be initialized
-        assert pipeline._tracer is not None
-
-    def test_tracer_reused_across_calls(self):
-        """Test that the same tracer instance is reused."""
-        queries = [
-            ("q1", "CREATE TABLE t1 AS SELECT a FROM source"),
-        ]
-        pipeline = Pipeline(queries, dialect="bigquery")
-
-        # Call multiple trace methods
-        pipeline.trace_column_backward("t1", "a")
-        tracer1 = pipeline._tracer
-
-        pipeline.trace_column_forward("t1", "a")
-        tracer2 = pipeline._tracer
-
-        # Should be the same instance
-        assert tracer1 is tracer2
-
-
-class TestLineageTracerDirectAccess:
-    """Test that LineageTracer can be used directly (advanced usage)."""
-
-    def test_lineage_tracer_can_be_imported(self):
-        """Test that LineageTracer can be imported directly."""
-        from clgraph.lineage_tracer import LineageTracer
-
-        assert LineageTracer is not None
-
-    def test_lineage_tracer_initialization(self):
-        """Test that LineageTracer can be initialized with a pipeline."""
-        from clgraph.lineage_tracer import LineageTracer
-
-        queries = [
-            ("q1", "CREATE TABLE t1 AS SELECT a FROM source"),
-        ]
-        pipeline = Pipeline(queries, dialect="bigquery")
-
-        tracer = LineageTracer(pipeline)
-        assert tracer._pipeline is pipeline
-
-    def test_lineage_tracer_trace_backward(self):
-        """Test LineageTracer.trace_backward() directly."""
-        from clgraph.lineage_tracer import LineageTracer
-
-        queries = [
-            (
-                "staging",
-                """
-                CREATE TABLE staging.orders AS
-                SELECT order_id, amount FROM raw.orders
-                """,
-            ),
-        ]
-        pipeline = Pipeline(queries, dialect="bigquery")
-
-        tracer = LineageTracer(pipeline)
-        sources = tracer.trace_backward("staging.orders", "amount")
-
         assert len(sources) > 0
-        assert any(s.column_name == "amount" for s in sources)
+        # The ultimate source must be in raw.orders
+        table_names = [s.table_name for s in sources]
+        assert "raw.orders" in table_names
 
-    def test_lineage_tracer_trace_forward(self):
-        """Test LineageTracer.trace_forward() directly."""
-        from clgraph.lineage_tracer import LineageTracer
+    def test_returns_list_of_column_nodes(self):
+        from clgraph.lineage_tracer import trace_backward
+        from clgraph.models import ColumnNode
 
+        pipeline = _simple_pipeline()
+        sources = trace_backward(
+            pipeline.columns,
+            pipeline.column_graph._incoming_index,
+            "staging.orders",
+            "amount",
+        )
+        for s in sources:
+            assert isinstance(s, ColumnNode)
+
+    def test_unknown_column_returns_empty(self):
+        from clgraph.lineage_tracer import trace_backward
+
+        pipeline = _simple_pipeline()
+        sources = trace_backward(
+            pipeline.columns,
+            pipeline.column_graph._incoming_index,
+            "nonexistent.table",
+            "nonexistent_col",
+        )
+        assert sources == []
+
+    def test_source_column_returns_itself(self):
+        """A column that is itself a source has no incoming edges → returns itself."""
+        from clgraph.lineage_tracer import trace_backward
+
+        pipeline = _simple_pipeline()
+        # raw.orders.order_id is an ultimate source
+        sources = trace_backward(
+            pipeline.columns,
+            pipeline.column_graph._incoming_index,
+            "raw.orders",
+            "order_id",
+        )
+        assert any(s.column_name == "order_id" for s in sources)
+
+    def test_three_hop_traces_all_the_way_back(self):
+        from clgraph.lineage_tracer import trace_backward
+
+        pipeline = _three_hop_pipeline()
+        sources = trace_backward(
+            pipeline.columns,
+            pipeline.column_graph._incoming_index,
+            "mart.totals",
+            "total",
+        )
+        table_names = [s.table_name for s in sources]
+        # Should reach source.transactions
+        assert "source.transactions" in table_names
+
+
+# ---------------------------------------------------------------------------
+# trace_backward_full
+# ---------------------------------------------------------------------------
+
+
+class TestTraceBackwardFull:
+    """Tests for trace_backward_full()."""
+
+    def test_returns_tuple_of_nodes_and_edges(self):
+        from clgraph.lineage_tracer import trace_backward_full
+
+        pipeline = _simple_pipeline()
+        result = trace_backward_full(
+            pipeline.columns,
+            pipeline.column_graph._incoming_index,
+            "analytics.metrics",
+            "total_revenue",
+        )
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+
+    def test_returns_non_empty_nodes_and_edges(self):
+        from clgraph.lineage_tracer import trace_backward_full
+
+        pipeline = _simple_pipeline()
+        nodes, edges = trace_backward_full(
+            pipeline.columns,
+            pipeline.column_graph._incoming_index,
+            "analytics.metrics",
+            "total_revenue",
+        )
+        assert len(nodes) > 0
+        assert len(edges) > 0
+
+    def test_nodes_include_target(self):
+        from clgraph.lineage_tracer import trace_backward_full
+
+        pipeline = _simple_pipeline()
+        nodes, _ = trace_backward_full(
+            pipeline.columns,
+            pipeline.column_graph._incoming_index,
+            "analytics.metrics",
+            "total_revenue",
+        )
+        target_tables = {n.table_name for n in nodes}
+        assert "analytics.metrics" in target_tables
+
+    def test_edges_are_column_edges(self):
+        from clgraph.lineage_tracer import trace_backward_full
+        from clgraph.models import ColumnEdge
+
+        pipeline = _simple_pipeline()
+        _, edges = trace_backward_full(
+            pipeline.columns,
+            pipeline.column_graph._incoming_index,
+            "analytics.metrics",
+            "total_revenue",
+        )
+        for e in edges:
+            assert isinstance(e, ColumnEdge)
+
+    def test_include_ctes_false_skips_cte_nodes(self):
+        """When include_ctes=False, CTE-layer nodes should not appear in result."""
+        from clgraph.lineage_tracer import trace_backward_full
+
+        # Build a pipeline with a CTE
         queries = [
             (
-                "staging",
+                "q1",
                 """
-                CREATE TABLE staging.orders AS
-                SELECT order_id, amount FROM raw.orders
-                """,
-            ),
-            (
-                "analytics",
-                """
-                CREATE TABLE analytics.totals AS
-                SELECT SUM(amount) AS total FROM staging.orders
+                CREATE TABLE mart.output AS
+                WITH cte AS (
+                    SELECT amount FROM raw.data
+                )
+                SELECT amount FROM cte
                 """,
             ),
         ]
         pipeline = Pipeline(queries, dialect="bigquery")
+        nodes, _ = trace_backward_full(
+            pipeline.columns,
+            pipeline.column_graph._incoming_index,
+            "mart.output",
+            "amount",
+            include_ctes=False,
+        )
+        layers = {n.layer for n in nodes}
+        assert "cte" not in layers
 
-        tracer = LineageTracer(pipeline)
-        descendants = tracer.trace_forward("staging.orders", "amount")
+    def test_unknown_column_returns_empty(self):
+        from clgraph.lineage_tracer import trace_backward_full
 
+        pipeline = _simple_pipeline()
+        nodes, edges = trace_backward_full(
+            pipeline.columns,
+            pipeline.column_graph._incoming_index,
+            "no.table",
+            "no_col",
+        )
+        assert nodes == []
+        assert edges == []
+
+
+# ---------------------------------------------------------------------------
+# trace_forward
+# ---------------------------------------------------------------------------
+
+
+class TestTraceForward:
+    """Tests for trace_forward()."""
+
+    def test_returns_dependent_columns(self):
+        from clgraph.lineage_tracer import trace_forward
+
+        pipeline = _simple_pipeline()
+        descendants = trace_forward(
+            pipeline.columns,
+            pipeline.column_graph._outgoing_index,
+            "raw.orders",
+            "amount",
+        )
         assert len(descendants) > 0
-        assert any(d.column_name == "total" for d in descendants)
+        table_names = [d.table_name for d in descendants]
+        assert "analytics.metrics" in table_names
+
+    def test_returns_list_of_column_nodes(self):
+        from clgraph.lineage_tracer import trace_forward
+        from clgraph.models import ColumnNode
+
+        pipeline = _simple_pipeline()
+        descendants = trace_forward(
+            pipeline.columns,
+            pipeline.column_graph._outgoing_index,
+            "raw.orders",
+            "amount",
+        )
+        for d in descendants:
+            assert isinstance(d, ColumnNode)
+
+    def test_unknown_column_returns_empty(self):
+        from clgraph.lineage_tracer import trace_forward
+
+        pipeline = _simple_pipeline()
+        result = trace_forward(
+            pipeline.columns,
+            pipeline.column_graph._outgoing_index,
+            "nonexistent.table",
+            "nonexistent_col",
+        )
+        assert result == []
+
+    def test_three_hop_reaches_final_table(self):
+        from clgraph.lineage_tracer import trace_forward
+
+        pipeline = _three_hop_pipeline()
+        descendants = trace_forward(
+            pipeline.columns,
+            pipeline.column_graph._outgoing_index,
+            "source.transactions",
+            "revenue",
+        )
+        table_names = [d.table_name for d in descendants]
+        assert "mart.totals" in table_names
+
+
+# ---------------------------------------------------------------------------
+# trace_forward_full
+# ---------------------------------------------------------------------------
+
+
+class TestTraceForwardFull:
+    """Tests for trace_forward_full()."""
+
+    def test_returns_tuple_of_nodes_and_edges(self):
+        from clgraph.lineage_tracer import trace_forward_full
+
+        pipeline = _simple_pipeline()
+        result = trace_forward_full(
+            pipeline.columns,
+            pipeline.column_graph._outgoing_index,
+            "raw.orders",
+            "amount",
+        )
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+
+    def test_returns_non_empty_nodes_and_edges(self):
+        from clgraph.lineage_tracer import trace_forward_full
+
+        pipeline = _simple_pipeline()
+        nodes, edges = trace_forward_full(
+            pipeline.columns,
+            pipeline.column_graph._outgoing_index,
+            "raw.orders",
+            "amount",
+        )
+        assert len(nodes) > 0
+        assert len(edges) > 0
+
+    def test_nodes_include_source(self):
+        from clgraph.lineage_tracer import trace_forward_full
+
+        pipeline = _simple_pipeline()
+        nodes, _ = trace_forward_full(
+            pipeline.columns,
+            pipeline.column_graph._outgoing_index,
+            "raw.orders",
+            "amount",
+        )
+        source_tables = {n.table_name for n in nodes}
+        assert "raw.orders" in source_tables
+
+    def test_unknown_column_returns_empty(self):
+        from clgraph.lineage_tracer import trace_forward_full
+
+        pipeline = _simple_pipeline()
+        nodes, edges = trace_forward_full(
+            pipeline.columns,
+            pipeline.column_graph._outgoing_index,
+            "no.table",
+            "no_col",
+        )
+        assert nodes == []
+        assert edges == []
+
+    def test_include_ctes_false_skips_cte_nodes(self):
+        """When include_ctes=False, CTE-layer nodes should not appear in result."""
+        from clgraph.lineage_tracer import trace_forward_full
+
+        queries = [
+            (
+                "q1",
+                """
+                CREATE TABLE mart.output AS
+                WITH cte AS (
+                    SELECT amount FROM raw.data
+                )
+                SELECT amount FROM cte
+                """,
+            ),
+        ]
+        pipeline = Pipeline(queries, dialect="bigquery")
+        nodes, _ = trace_forward_full(
+            pipeline.columns,
+            pipeline.column_graph._outgoing_index,
+            "raw.data",
+            "amount",
+            include_ctes=False,
+        )
+        layers = {n.layer for n in nodes}
+        assert "cte" not in layers
+
+
+# ---------------------------------------------------------------------------
+# get_table_lineage_path
+# ---------------------------------------------------------------------------
+
+
+class TestGetTableLineagePath:
+    """Tests for get_table_lineage_path()."""
+
+    def test_returns_list_of_tuples(self):
+        from clgraph.lineage_tracer import get_table_lineage_path
+
+        pipeline = _simple_pipeline()
+        path = get_table_lineage_path(
+            pipeline.columns,
+            pipeline.column_graph._incoming_index,
+            "analytics.metrics",
+            "total_revenue",
+            pipeline.table_graph.tables,
+        )
+        assert isinstance(path, list)
+        for item in path:
+            assert isinstance(item, tuple)
+            assert len(item) == 3  # (table_name, column_name, query_id)
+
+    def test_path_includes_target_table(self):
+        from clgraph.lineage_tracer import get_table_lineage_path
+
+        pipeline = _simple_pipeline()
+        path = get_table_lineage_path(
+            pipeline.columns,
+            pipeline.column_graph._incoming_index,
+            "analytics.metrics",
+            "total_revenue",
+            pipeline.table_graph.tables,
+        )
+        table_names = [p[0] for p in path]
+        assert "analytics.metrics" in table_names
+
+    def test_path_no_duplicates(self):
+        from clgraph.lineage_tracer import get_table_lineage_path
+
+        pipeline = _simple_pipeline()
+        path = get_table_lineage_path(
+            pipeline.columns,
+            pipeline.column_graph._incoming_index,
+            "analytics.metrics",
+            "total_revenue",
+            pipeline.table_graph.tables,
+        )
+        keys = [(p[0], p[1]) for p in path]
+        assert len(keys) == len(set(keys)), "Duplicate table.column found in path"
+
+    def test_unknown_column_returns_empty(self):
+        from clgraph.lineage_tracer import get_table_lineage_path
+
+        pipeline = _simple_pipeline()
+        path = get_table_lineage_path(
+            pipeline.columns,
+            pipeline.column_graph._incoming_index,
+            "no.table",
+            "no_col",
+            pipeline.table_graph.tables,
+        )
+        assert path == []
+
+
+# ---------------------------------------------------------------------------
+# get_table_impact_path
+# ---------------------------------------------------------------------------
+
+
+class TestGetTableImpactPath:
+    """Tests for get_table_impact_path()."""
+
+    def test_returns_list_of_tuples(self):
+        from clgraph.lineage_tracer import get_table_impact_path
+
+        pipeline = _simple_pipeline()
+        path = get_table_impact_path(
+            pipeline.columns,
+            pipeline.column_graph._outgoing_index,
+            "raw.orders",
+            "amount",
+            pipeline.table_graph.tables,
+        )
+        assert isinstance(path, list)
+        for item in path:
+            assert isinstance(item, tuple)
+            assert len(item) == 3  # (table_name, column_name, query_id)
+
+    def test_path_includes_final_table(self):
+        from clgraph.lineage_tracer import get_table_impact_path
+
+        pipeline = _simple_pipeline()
+        path = get_table_impact_path(
+            pipeline.columns,
+            pipeline.column_graph._outgoing_index,
+            "raw.orders",
+            "amount",
+            pipeline.table_graph.tables,
+        )
+        table_names = [p[0] for p in path]
+        assert "analytics.metrics" in table_names
+
+    def test_path_no_duplicates(self):
+        from clgraph.lineage_tracer import get_table_impact_path
+
+        pipeline = _simple_pipeline()
+        path = get_table_impact_path(
+            pipeline.columns,
+            pipeline.column_graph._outgoing_index,
+            "raw.orders",
+            "amount",
+            pipeline.table_graph.tables,
+        )
+        keys = [(p[0], p[1]) for p in path]
+        assert len(keys) == len(set(keys)), "Duplicate table.column found in impact path"
+
+    def test_unknown_column_returns_empty(self):
+        from clgraph.lineage_tracer import get_table_impact_path
+
+        pipeline = _simple_pipeline()
+        path = get_table_impact_path(
+            pipeline.columns,
+            pipeline.column_graph._outgoing_index,
+            "no.table",
+            "no_col",
+            pipeline.table_graph.tables,
+        )
+        assert path == []
+
+
+# ---------------------------------------------------------------------------
+# get_lineage_path
+# ---------------------------------------------------------------------------
+
+
+class TestGetLineagePath:
+    """Tests for get_lineage_path()."""
+
+    def test_returns_list_of_edges_when_path_exists(self):
+        from clgraph.lineage_tracer import get_lineage_path
+        from clgraph.models import ColumnEdge
+
+        pipeline = _simple_pipeline()
+        path = get_lineage_path(
+            pipeline.columns,
+            pipeline.column_graph._outgoing_index,
+            "raw.orders",
+            "amount",
+            "analytics.metrics",
+            "total_revenue",
+        )
+        assert isinstance(path, list)
+        assert len(path) > 0
+        for e in path:
+            assert isinstance(e, ColumnEdge)
+
+    def test_returns_empty_when_no_path(self):
+        from clgraph.lineage_tracer import get_lineage_path
+
+        pipeline = _simple_pipeline()
+        path = get_lineage_path(
+            pipeline.columns,
+            pipeline.column_graph._outgoing_index,
+            "analytics.metrics",
+            "total_revenue",
+            "raw.orders",
+            "amount",
+        )
+        assert path == []
+
+    def test_returns_empty_when_from_column_not_found(self):
+        from clgraph.lineage_tracer import get_lineage_path
+
+        pipeline = _simple_pipeline()
+        path = get_lineage_path(
+            pipeline.columns,
+            pipeline.column_graph._outgoing_index,
+            "no.table",
+            "no_col",
+            "analytics.metrics",
+            "total_revenue",
+        )
+        assert path == []
+
+    def test_returns_empty_when_to_column_not_found(self):
+        from clgraph.lineage_tracer import get_lineage_path
+
+        pipeline = _simple_pipeline()
+        path = get_lineage_path(
+            pipeline.columns,
+            pipeline.column_graph._outgoing_index,
+            "raw.orders",
+            "amount",
+            "no.table",
+            "no_col",
+        )
+        assert path == []
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatibility: Pipeline methods still work
+# ---------------------------------------------------------------------------
+
+
+class TestPipelineBackwardCompatibility:
+    """Pipeline.trace_* methods must still work after delegation."""
+
+    def test_trace_column_backward_still_works(self):
+        pipeline = _simple_pipeline()
+        sources = pipeline.trace_column_backward("analytics.metrics", "total_revenue")
+        assert len(sources) > 0
+        assert any(s.table_name == "raw.orders" for s in sources)
+
+    def test_trace_column_backward_full_still_works(self):
+        pipeline = _simple_pipeline()
+        nodes, edges = pipeline.trace_column_backward_full("analytics.metrics", "total_revenue")
+        assert len(nodes) > 0
+        assert len(edges) > 0
+
+    def test_trace_column_forward_still_works(self):
+        pipeline = _simple_pipeline()
+        descendants = pipeline.trace_column_forward("raw.orders", "amount")
+        assert len(descendants) > 0
+        assert any(d.table_name == "analytics.metrics" for d in descendants)
+
+    def test_trace_column_forward_full_still_works(self):
+        pipeline = _simple_pipeline()
+        nodes, edges = pipeline.trace_column_forward_full("raw.orders", "amount")
+        assert len(nodes) > 0
+        assert len(edges) > 0
+
+    def test_get_table_lineage_path_still_works(self):
+        pipeline = _simple_pipeline()
+        path = pipeline.get_table_lineage_path("analytics.metrics", "total_revenue")
+        assert isinstance(path, list)
+        assert len(path) > 0
+
+    def test_get_table_impact_path_still_works(self):
+        pipeline = _simple_pipeline()
+        path = pipeline.get_table_impact_path("raw.orders", "amount")
+        assert isinstance(path, list)
+        assert len(path) > 0
+
+    def test_get_lineage_path_still_works(self):
+        pipeline = _simple_pipeline()
+        path = pipeline.get_lineage_path(
+            "raw.orders", "amount", "analytics.metrics", "total_revenue"
+        )
+        assert isinstance(path, list)
+        assert len(path) > 0
+
+    def test_get_incoming_edges_still_works(self):
+        """_get_incoming_edges must remain on Pipeline."""
+        pipeline = _simple_pipeline()
+        # Pick any column that has an incoming edge
+        for full_name, _col in pipeline.columns.items():
+            incoming = pipeline._get_incoming_edges(full_name)
+            assert isinstance(incoming, list)
+            break  # Just test one
+
+    def test_get_outgoing_edges_still_works(self):
+        """_get_outgoing_edges must remain on Pipeline."""
+        pipeline = _simple_pipeline()
+        for full_name, _col in pipeline.columns.items():
+            outgoing = pipeline._get_outgoing_edges(full_name)
+            assert isinstance(outgoing, list)
+            break
