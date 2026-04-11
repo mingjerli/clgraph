@@ -919,63 +919,7 @@ class Pipeline:
         airflow_version: Optional[str] = None,
         **dag_kwargs,
     ):
-        """
-        Create Airflow DAG from this pipeline using TaskFlow API.
-
-        Supports both Airflow 2.x and 3.x. The TaskFlow API (@dag and @task decorators)
-        is fully compatible across both versions.
-
-        Args:
-            executor: Function that executes SQL (takes sql string)
-            dag_id: Airflow DAG ID
-            schedule: Schedule interval (default: "@daily")
-            start_date: DAG start date (default: datetime(2024, 1, 1))
-            default_args: Airflow default_args (default: owner='data_team', retries=2)
-            airflow_version: Optional Airflow version ("2" or "3").
-                            Auto-detected from installed Airflow if not provided.
-            **dag_kwargs: Additional DAG parameters (catchup, tags, max_active_runs,
-                         description, max_active_tasks, dagrun_timeout, etc.)
-                         See Airflow DAG documentation for all available parameters.
-
-        Returns:
-            Airflow DAG instance
-
-        Examples:
-            # Basic usage (auto-detects Airflow version)
-            def execute_sql(sql: str):
-                from google.cloud import bigquery
-                client = bigquery.Client()
-                client.query(sql).result()
-
-            dag = pipeline.to_airflow_dag(
-                executor=execute_sql,
-                dag_id="my_pipeline"
-            )
-
-            # Explicit version specification (for testing)
-            dag = pipeline.to_airflow_dag(
-                executor=execute_sql,
-                dag_id="my_pipeline",
-                airflow_version="3"
-            )
-
-            # Advanced usage with all DAG parameters
-            dag = pipeline.to_airflow_dag(
-                executor=execute_sql,
-                dag_id="my_pipeline",
-                schedule="0 0 * * *",  # Daily at midnight
-                description="Customer analytics pipeline",
-                catchup=False,
-                max_active_runs=3,
-                max_active_tasks=10,
-                tags=["analytics", "daily"],
-            )
-
-        Note:
-            - Airflow 2.x: Fully supported (2.7.0+)
-            - Airflow 3.x: Fully supported (3.0.0+)
-            - TaskFlow API is compatible across both versions
-        """
+        """Create Airflow DAG from this pipeline. See AirflowOrchestrator for full documentation."""
         from .orchestrators import AirflowOrchestrator
 
         return AirflowOrchestrator(self).to_dag(
@@ -994,31 +938,7 @@ class Pipeline:
         max_workers: int = 4,
         verbose: bool = True,
     ) -> dict:
-        """
-        Execute pipeline synchronously with concurrent execution.
-
-        Args:
-            executor: Function that executes SQL (takes sql string)
-            max_workers: Max concurrent workers (default: 4)
-            verbose: Print progress (default: True)
-
-        Returns:
-            dict with execution results: {
-                "completed": list of completed query IDs,
-                "failed": list of (query_id, error) tuples,
-                "elapsed_seconds": total execution time,
-                "total_queries": total number of queries
-            }
-
-        Example:
-            def execute_sql(sql: str):
-                import duckdb
-                conn = duckdb.connect()
-                conn.execute(sql)
-
-            result = pipeline.run(executor=execute_sql, max_workers=4)
-            print(f"Completed {len(result['completed'])} queries")
-        """
+        """Execute pipeline synchronously with concurrent execution. See PipelineExecutor for full documentation."""
         from .execution import PipelineExecutor
 
         return PipelineExecutor(self).run(
@@ -1033,30 +953,7 @@ class Pipeline:
         max_workers: int = 4,
         verbose: bool = True,
     ) -> dict:
-        """
-        Execute pipeline asynchronously with concurrent execution.
-
-        Args:
-            executor: Async function that executes SQL (takes sql string)
-            max_workers: Max concurrent workers (controls semaphore, default: 4)
-            verbose: Print progress (default: True)
-
-        Returns:
-            dict with execution results: {
-                "completed": list of completed query IDs,
-                "failed": list of (query_id, error) tuples,
-                "elapsed_seconds": total execution time,
-                "total_queries": total number of queries
-            }
-
-        Example:
-            async def execute_sql(sql: str):
-                # Your async database connection
-                await async_conn.execute(sql)
-
-            result = await pipeline.async_run(executor=execute_sql, max_workers=4)
-            print(f"Completed {len(result['completed'])} queries")
-        """
+        """Execute pipeline asynchronously with concurrent execution. See PipelineExecutor for full documentation."""
         from .execution import PipelineExecutor
 
         return await PipelineExecutor(self).async_run(
@@ -1077,55 +974,7 @@ class Pipeline:
         compute_kind: str = "sql",
         **asset_kwargs,
     ) -> List:
-        """
-        Create Dagster Assets from this pipeline.
-
-        Converts the pipeline's table dependency graph into Dagster assets
-        where each target table becomes an asset with proper dependencies.
-        This is the recommended approach for Dagster as it provides better
-        lineage tracking and observability.
-
-        Args:
-            executor: Function that executes SQL (takes sql string)
-            group_name: Optional asset group name for organization in Dagster UI
-            key_prefix: Optional prefix for asset keys (e.g., ["warehouse", "analytics"])
-            compute_kind: Compute kind tag for assets (default: "sql")
-            **asset_kwargs: Additional asset parameters (owners, tags, etc.)
-
-        Returns:
-            List of Dagster Asset definitions
-
-        Examples:
-            # Basic usage
-            def execute_sql(sql: str):
-                from clickhouse_driver import Client
-                Client('localhost').execute(sql)
-
-            assets = pipeline.to_dagster_assets(
-                executor=execute_sql,
-                group_name="analytics"
-            )
-
-            # Create Dagster Definitions
-            from dagster import Definitions
-            defs = Definitions(assets=assets)
-
-            # Advanced usage with prefixes and metadata
-            assets = pipeline.to_dagster_assets(
-                executor=execute_sql,
-                group_name="warehouse",
-                key_prefix=["prod", "analytics"],
-                compute_kind="clickhouse",
-                owners=["team:data-eng"],
-                tags={"domain": "finance"},
-            )
-
-        Note:
-            - Requires Dagster 1.x: pip install 'dagster>=1.5.0'
-            - Each target table becomes a Dagster asset
-            - Dependencies are automatically inferred from table lineage
-            - Deployment: Drop the definitions.py file in your Dagster workspace
-        """
+        """Create Dagster Assets from this pipeline. See DagsterOrchestrator for full documentation."""
         from .orchestrators import DagsterOrchestrator
 
         return DagsterOrchestrator(self).to_assets(
@@ -1144,44 +993,7 @@ class Pipeline:
         tags: Optional[Dict[str, str]] = None,
         **job_kwargs,
     ):
-        """
-        Create Dagster Job from this pipeline using ops.
-
-        Converts the pipeline's table dependency graph into a Dagster job
-        where each SQL query becomes an op with proper dependencies.
-
-        Note: For new pipelines, consider using to_dagster_assets() instead,
-        which provides better lineage tracking and observability in Dagster.
-
-        Args:
-            executor: Function that executes SQL (takes sql string)
-            job_name: Name for the Dagster job
-            description: Optional job description (auto-generated if not provided)
-            tags: Optional job tags for filtering in Dagster UI
-            **job_kwargs: Additional job parameters
-
-        Returns:
-            Dagster Job definition
-
-        Examples:
-            # Basic usage
-            job = pipeline.to_dagster_job(
-                executor=execute_sql,
-                job_name="analytics_pipeline"
-            )
-
-            # Create Dagster Definitions
-            from dagster import Definitions
-            defs = Definitions(jobs=[job])
-
-            # Execute the job locally
-            result = job.execute_in_process()
-
-        Note:
-            - Requires Dagster 1.x: pip install 'dagster>=1.5.0'
-            - Consider using to_dagster_assets() for better Dagster integration
-            - Deployment: Drop the definitions.py file in your Dagster workspace
-        """
+        """Create Dagster Job from this pipeline using ops. See DagsterOrchestrator for full documentation."""
         from .orchestrators import DagsterOrchestrator
 
         return DagsterOrchestrator(self).to_job(
@@ -1207,54 +1019,7 @@ class Pipeline:
         tags: Optional[List[str]] = None,
         **flow_kwargs,
     ):
-        """
-        Create Prefect Flow from this pipeline.
-
-        Converts the pipeline's table dependency graph into a Prefect flow
-        where each SQL query becomes a task with proper dependencies.
-
-        Args:
-            executor: Function that executes SQL (takes sql string)
-            flow_name: Name for the Prefect flow
-            description: Optional flow description (auto-generated if not provided)
-            retries: Number of retries for failed tasks (default: 2)
-            retry_delay_seconds: Delay between retries in seconds (default: 60)
-            timeout_seconds: Optional task timeout in seconds
-            tags: Optional list of tags for filtering
-            **flow_kwargs: Additional flow parameters (version, task_runner, etc.)
-
-        Returns:
-            Prefect Flow function
-
-        Examples:
-            # Basic usage
-            def execute_sql(sql: str):
-                from clickhouse_driver import Client
-                Client('localhost').execute(sql)
-
-            flow_fn = pipeline.to_prefect_flow(
-                executor=execute_sql,
-                flow_name="my_pipeline"
-            )
-
-            # Run the flow
-            flow_fn()
-
-            # Advanced usage with all parameters
-            flow_fn = pipeline.to_prefect_flow(
-                executor=execute_sql,
-                flow_name="my_pipeline",
-                description="Daily analytics pipeline",
-                retries=3,
-                retry_delay_seconds=120,
-                tags=["analytics", "daily"],
-            )
-
-        Note:
-            - Requires Prefect 2.x or 3.x: pip install 'prefect>=2.0'
-            - Tasks are automatically wired based on table dependencies
-            - Use to_prefect_deployment() for scheduled execution
-        """
+        """Create Prefect Flow from this pipeline. See PrefectOrchestrator for full documentation."""
         from .orchestrators import PrefectOrchestrator
 
         return PrefectOrchestrator(self).to_flow(
@@ -1278,38 +1043,7 @@ class Pipeline:
         work_pool_name: Optional[str] = None,
         **kwargs,
     ):
-        """
-        Create Prefect Deployment from this pipeline for scheduled execution.
-
-        Args:
-            executor: Function that executes SQL (takes sql string)
-            flow_name: Name for the Prefect flow
-            deployment_name: Name for the deployment
-            cron: Cron schedule (e.g., "0 0 * * *" for daily at midnight)
-            interval_seconds: Interval schedule in seconds (alternative to cron)
-            work_pool_name: Work pool to use for execution
-            **kwargs: Additional parameters passed to to_prefect_flow()
-
-        Returns:
-            Prefect Deployment instance
-
-        Examples:
-            # Create deployment with cron schedule
-            deployment = pipeline.to_prefect_deployment(
-                executor=execute_sql,
-                flow_name="my_pipeline",
-                deployment_name="daily_run",
-                cron="0 0 * * *",  # Daily at midnight
-            )
-
-            # Apply the deployment
-            deployment.apply()
-
-        Note:
-            - Requires Prefect 2.x or 3.x: pip install 'prefect>=2.0'
-            - Deployment must be applied to register with Prefect server
-            - Use work_pool_name to specify execution environment
-        """
+        """Create Prefect Deployment from this pipeline for scheduled execution. See PrefectOrchestrator for full documentation."""
         from .orchestrators import PrefectOrchestrator
 
         return PrefectOrchestrator(self).to_deployment(
@@ -1337,59 +1071,7 @@ class Pipeline:
         labels: Optional[Dict[str, str]] = None,
         **kwargs,
     ) -> str:
-        """
-        Generate Kestra flow YAML from this pipeline.
-
-        Kestra is a declarative orchestration platform using YAML-based
-        workflow definitions. This method generates a complete flow file.
-
-        Args:
-            flow_id: Unique identifier for the flow
-            namespace: Kestra namespace (e.g., "clgraph.production")
-            description: Optional flow description (auto-generated if not provided)
-            connection_config: Database connection config dict:
-                {
-                    "url": "jdbc:clickhouse://host:port/db",
-                    "username": "default",
-                    "password": "",
-                }
-            cron: Optional cron expression for scheduling (e.g., "0 0 * * *")
-            retry_attempts: Number of retry attempts (default: 3)
-            labels: Optional key-value labels for the flow
-            **kwargs: Additional flow configuration
-
-        Returns:
-            YAML string representing Kestra flow
-
-        Examples:
-            # Basic usage
-            yaml_content = pipeline.to_kestra_flow(
-                flow_id="enterprise_pipeline",
-                namespace="clgraph.production"
-            )
-
-            # Save to file
-            with open("flows/enterprise_pipeline.yml", "w") as f:
-                f.write(yaml_content)
-
-            # With schedule and custom connection
-            yaml_content = pipeline.to_kestra_flow(
-                flow_id="daily_analytics",
-                namespace="clgraph.analytics",
-                cron="0 0 * * *",  # Daily at midnight
-                connection_config={
-                    "url": "jdbc:clickhouse://localhost:8123/default",
-                    "username": "default",
-                    "password": "",
-                },
-                labels={"env": "production", "team": "analytics"},
-            )
-
-        Note:
-            - Kestra uses io.kestra.plugin.jdbc.clickhouse.Query task type
-            - Dependencies are managed via dependsOn field
-            - Install Kestra ClickHouse plugin for database connectivity
-        """
+        """Generate Kestra flow YAML from this pipeline. See KestraOrchestrator for full documentation."""
         from .orchestrators import KestraOrchestrator
 
         orchestrator = KestraOrchestrator(self)
@@ -1427,46 +1109,7 @@ class Pipeline:
         connection_name: str = "clickhouse_default",
         db_connector: str = "clickhouse",
     ) -> Dict[str, Any]:
-        """
-        Generate Mage pipeline files from this pipeline.
-
-        Mage is a modern data pipeline tool with a notebook-style UI and
-        block-based architecture. Each SQL query becomes a block (either
-        data_loader or transformer).
-
-        Args:
-            pipeline_name: Name for the Mage pipeline
-            description: Optional pipeline description (auto-generated if not provided)
-            connection_name: Database connection name in Mage io_config.yaml
-            db_connector: Database connector type (clickhouse, postgres, bigquery, snowflake)
-
-        Returns:
-            Dictionary with pipeline file structure:
-            {
-                "metadata.yaml": <dict>,
-                "blocks": {"block_name": <code>, ...}
-            }
-
-        Examples:
-            # Generate Mage pipeline files
-            files = pipeline.to_mage_pipeline(
-                pipeline_name="enterprise_pipeline",
-            )
-
-            # Write files to Mage project
-            import yaml
-            with open("pipelines/enterprise_pipeline/metadata.yaml", "w") as f:
-                yaml.dump(files["metadata.yaml"], f)
-            for name, code in files["blocks"].items():
-                with open(f"pipelines/enterprise_pipeline/{name}.py", "w") as f:
-                    f.write(code)
-
-        Note:
-            - First query (no dependencies) becomes data_loader block
-            - Subsequent queries become transformer blocks
-            - Dependencies are managed via upstream_blocks/downstream_blocks
-            - Requires mage-ai package and database connection in io_config.yaml
-        """
+        """Generate Mage pipeline files from this pipeline. See MageOrchestrator for full documentation."""
         from .orchestrators import MageOrchestrator
 
         return MageOrchestrator(self).to_pipeline_files(
