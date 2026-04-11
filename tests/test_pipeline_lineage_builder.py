@@ -8,7 +8,6 @@ Covers:
 - Functional tests for PipelineLineageBuilder
 """
 
-import pytest
 
 from clgraph.pipeline import Pipeline
 
@@ -76,7 +75,6 @@ class TestPipelineLineageBuilderFunctional:
 
     def test_build_returns_pipeline(self):
         """build() should return a Pipeline instance."""
-        from clgraph.pipeline_lineage_builder import PipelineLineageBuilder
 
         queries = [
             ("q1", "CREATE TABLE staging AS SELECT a, b FROM raw"),
@@ -108,8 +106,8 @@ class TestPipelineLineageBuilderFunctional:
 
     def test_pipeline_lineage_builder_can_be_instantiated_directly(self):
         """PipelineLineageBuilder can be instantiated and used directly."""
-        from clgraph.pipeline_lineage_builder import PipelineLineageBuilder
         from clgraph.multi_query import MultiQueryParser
+        from clgraph.pipeline_lineage_builder import PipelineLineageBuilder
         from clgraph.table import TableDependencyGraph
 
         # Build a simple pipeline via the builder directly using TableDependencyGraph
