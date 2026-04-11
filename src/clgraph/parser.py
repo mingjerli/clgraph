@@ -30,7 +30,8 @@ from .models import (
 
 # Multi-query pipeline
 from .multi_query import MultiQueryParser, TemplateTokenizer
-from .pipeline import Pipeline, PipelineLineageBuilder
+from .pipeline import Pipeline
+from .pipeline_lineage_builder import PipelineLineageBuilder
 
 # Query parsing and lineage building
 from .query_parser import RecursiveQueryParser
