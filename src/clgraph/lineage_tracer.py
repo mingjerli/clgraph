@@ -1,400 +1,446 @@
 """
-Lineage tracing algorithms for column lineage analysis.
+Lineage tracing module for column-level BFS traversals.
 
-This module provides the LineageTracer class which contains all lineage
-traversal algorithms extracted from the Pipeline class.
+Provides pure functions that operate on column/edge graph data structures
+without depending on the Pipeline class.  The Pipeline delegates to these
+functions for all lineage/impact queries.
 
-The LineageTracer operates on a Pipeline's column graph to perform:
-- Backward lineage tracing (finding sources)
-- Forward lineage tracing (finding descendants/impact)
-- Lineage path finding between columns
-- Table-level lineage views
+Public API
+----------
+trace_backward            - BFS backward to ultimate source columns
+trace_backward_full       - BFS backward with all intermediate nodes + edges
+trace_forward             - BFS forward to final descendant columns
+trace_forward_full        - BFS forward with all intermediate nodes + edges
+get_table_lineage_path    - Table-level backward path (real tables only)
+get_table_impact_path     - Table-level forward path (real tables only)
+get_lineage_path          - Shortest edge-path between two specific columns
+
+Internal helpers
+----------------
+_get_incoming  - Look up incoming edges from the adjacency index
+_get_outgoing  - Look up outgoing edges from the adjacency index
 """
 
 from collections import deque
-from typing import TYPE_CHECKING, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .models import ColumnEdge, ColumnNode
 
-if TYPE_CHECKING:
-    from .pipeline import Pipeline
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
 
 
-class LineageTracer:
+def _get_incoming(
+    incoming_index: Dict[str, List[ColumnEdge]],
+    full_name: str,
+) -> List[ColumnEdge]:
+    """Return all incoming edges for *full_name* (empty list if none)."""
+    return incoming_index.get(full_name, [])
+
+
+def _get_outgoing(
+    outgoing_index: Dict[str, List[ColumnEdge]],
+    full_name: str,
+) -> List[ColumnEdge]:
+    """Return all outgoing edges for *full_name* (empty list if none)."""
+    return outgoing_index.get(full_name, [])
+
+
+# ---------------------------------------------------------------------------
+# Backward tracing
+# ---------------------------------------------------------------------------
+
+
+def trace_backward(
+    columns: Dict[str, ColumnNode],
+    incoming_index: Dict[str, List[ColumnEdge]],
+    table_name: str,
+    column_name: str,
+) -> List[ColumnNode]:
     """
-    Lineage traversal algorithms for Pipeline column graphs.
+    BFS backward from *table_name.column_name* to its ultimate source columns.
 
-    This class is extracted from Pipeline to follow the Single Responsibility
-    Principle. It contains all lineage tracing algorithms that operate on
-    the Pipeline's column graph.
+    Returns only leaf columns (those with no incoming edges).  Use
+    :func:`trace_backward_full` when you need all intermediate nodes and edges.
 
-    The tracer is lazily initialized by Pipeline when first needed.
+    Args:
+        columns:        Mapping of full_name -> ColumnNode for the pipeline.
+        incoming_index: Adjacency dict mapping full_name -> [ColumnEdge].
+        table_name:     Table containing the column to trace.
+        column_name:    Column name to trace.
 
-    Example (via Pipeline - recommended):
-        pipeline = Pipeline(queries, dialect="bigquery")
-        sources = pipeline.trace_column_backward("output.table", "column")
-
-    Example (direct usage - advanced):
-        from clgraph.lineage_tracer import LineageTracer
-
-        tracer = LineageTracer(pipeline)
-        sources = tracer.trace_backward("output.table", "column")
+    Returns:
+        List of source :class:`~clgraph.models.ColumnNode` objects.
     """
+    target_columns = [
+        col
+        for col in columns.values()
+        if col.table_name == table_name and col.column_name == column_name
+    ]
 
-    def __init__(self, pipeline: "Pipeline"):
-        """
-        Initialize LineageTracer with a Pipeline reference.
+    if not target_columns:
+        return []
 
-        Args:
-            pipeline: The Pipeline instance to trace lineage in.
-        """
-        self._pipeline = pipeline
+    # Prefer output-layer columns as the starting point
+    output_cols = [c for c in target_columns if c.layer == "output"]
+    start_columns = output_cols if output_cols else target_columns
 
-    def trace_backward(self, table_name: str, column_name: str) -> List[ColumnNode]:
-        """
-        Trace a column backward to its ultimate sources.
-        Returns list of source columns across all queries.
+    visited: set = set()
+    queue: deque = deque(start_columns)
+    sources: List[ColumnNode] = []
 
-        For full lineage path with all intermediate nodes, use trace_backward_full().
+    while queue:
+        current = queue.popleft()
+        if current.full_name in visited:
+            continue
+        visited.add(current.full_name)
 
-        Args:
-            table_name: The table containing the column to trace
-            column_name: The column name to trace
+        incoming = _get_incoming(incoming_index, current.full_name)
 
-        Returns:
-            List of source ColumnNodes (columns with no incoming edges)
-        """
-        # Find the target column(s) - there may be multiple with same table.column
-        # from different queries. For output columns, we want the one with layer="output"
-        target_columns = [
-            col
-            for col in self._pipeline.columns.values()
-            if col.table_name == table_name and col.column_name == column_name
-        ]
-
-        if not target_columns:
-            return []
-
-        # Prefer output layer columns as starting point for backward tracing
-        output_cols = [c for c in target_columns if c.layer == "output"]
-        start_columns = output_cols if output_cols else target_columns
-
-        # BFS backward through edges
-        visited = set()
-        queue = deque(start_columns)
-        sources = []
-
-        while queue:
-            current = queue.popleft()
-            if current.full_name in visited:
-                continue
-            visited.add(current.full_name)
-
-            # Find incoming edges
-            incoming = self._pipeline._get_incoming_edges(current.full_name)
-
-            if not incoming:
-                # No incoming edges = source column
-                sources.append(current)
-            else:
-                for edge in incoming:
-                    queue.append(edge.from_node)
-
-        return sources
-
-    def trace_backward_full(
-        self, table_name: str, column_name: str, include_ctes: bool = True
-    ) -> Tuple[List[ColumnNode], List[ColumnEdge]]:
-        """
-        Trace a column backward with full transparency.
-
-        Returns complete lineage path including all intermediate tables and CTEs.
-
-        Args:
-            table_name: The table containing the column to trace
-            column_name: The column name to trace
-            include_ctes: If True, include CTE columns; if False, only real tables
-
-        Returns:
-            Tuple of (nodes, edges) representing the complete lineage path.
-            - nodes: All columns in the lineage, in BFS order from target to sources
-            - edges: All edges connecting the columns
-        """
-        # Find the target column(s)
-        target_columns = [
-            col
-            for col in self._pipeline.columns.values()
-            if col.table_name == table_name and col.column_name == column_name
-        ]
-
-        if not target_columns:
-            return [], []
-
-        # Prefer output layer columns as starting point
-        output_cols = [c for c in target_columns if c.layer == "output"]
-        start_columns = output_cols if output_cols else target_columns
-
-        # BFS backward through edges, collecting all nodes and edges
-        visited = set()
-        queue = deque(start_columns)
-        all_nodes = []
-        all_edges = []
-
-        while queue:
-            current = queue.popleft()
-            if current.full_name in visited:
-                continue
-            visited.add(current.full_name)
-
-            # Optionally skip CTE columns
-            if not include_ctes and current.layer == "cte":
-                # Still need to traverse through CTEs to find real tables
-                incoming = self._pipeline._get_incoming_edges(current.full_name)
-                for edge in incoming:
-                    queue.append(edge.from_node)
-                continue
-
-            all_nodes.append(current)
-
-            # Find incoming edges
-            incoming = self._pipeline._get_incoming_edges(current.full_name)
-
+        if not incoming:
+            sources.append(current)
+        else:
             for edge in incoming:
-                all_edges.append(edge)
                 queue.append(edge.from_node)
 
-        return all_nodes, all_edges
+    return sources
 
-    def trace_forward(self, table_name: str, column_name: str) -> List[ColumnNode]:
-        """
-        Trace a column forward to see what depends on it.
-        Returns list of final downstream columns across all queries.
 
-        For full impact path with all intermediate nodes, use trace_forward_full().
+def trace_backward_full(
+    columns: Dict[str, ColumnNode],
+    incoming_index: Dict[str, List[ColumnEdge]],
+    table_name: str,
+    column_name: str,
+    include_ctes: bool = True,
+) -> Tuple[List[ColumnNode], List[ColumnEdge]]:
+    """
+    BFS backward with full lineage transparency.
 
-        Args:
-            table_name: The table containing the column to trace
-            column_name: The column name to trace
+    Collects every node and edge encountered while traversing backward from
+    *table_name.column_name*.
 
-        Returns:
-            List of final ColumnNodes (columns with no outgoing edges)
-        """
-        # Find the source column(s) - there may be multiple with same table.column
-        # from different queries. For input columns, we want the one with layer="input"
-        source_columns = [
-            col
-            for col in self._pipeline.columns.values()
-            if col.table_name == table_name and col.column_name == column_name
-        ]
+    Args:
+        columns:        Mapping of full_name -> ColumnNode for the pipeline.
+        incoming_index: Adjacency dict mapping full_name -> [ColumnEdge].
+        table_name:     Table containing the column to trace.
+        column_name:    Column name to trace.
+        include_ctes:   When False, CTE nodes are skipped in the result (but
+                        the traversal still passes through them).
 
-        if not source_columns:
-            return []
+    Returns:
+        ``(nodes, edges)`` — lists of nodes and edges in BFS order.
+    """
+    target_columns = [
+        col
+        for col in columns.values()
+        if col.table_name == table_name and col.column_name == column_name
+    ]
 
-        # Prefer input layer columns as starting point for forward tracing
-        input_cols = [c for c in source_columns if c.layer == "input"]
-        start_columns = input_cols if input_cols else source_columns
+    if not target_columns:
+        return [], []
 
-        # BFS forward through edges
-        visited = set()
-        queue = deque(start_columns)
-        descendants = []
+    output_cols = [c for c in target_columns if c.layer == "output"]
+    start_columns = output_cols if output_cols else target_columns
 
-        while queue:
-            current = queue.popleft()
-            if current.full_name in visited:
-                continue
-            visited.add(current.full_name)
+    visited: set = set()
+    queue: deque = deque(start_columns)
+    all_nodes: List[ColumnNode] = []
+    all_edges: List[ColumnEdge] = []
 
-            # Find outgoing edges
-            outgoing = self._pipeline._get_outgoing_edges(current.full_name)
+    while queue:
+        current = queue.popleft()
+        if current.full_name in visited:
+            continue
+        visited.add(current.full_name)
 
-            if not outgoing:
-                # No outgoing edges = final column
-                descendants.append(current)
-            else:
-                for edge in outgoing:
-                    queue.append(edge.to_node)
+        if not include_ctes and current.layer == "cte":
+            # Traverse through CTEs but don't include them
+            for edge in _get_incoming(incoming_index, current.full_name):
+                queue.append(edge.from_node)
+            continue
 
-        return descendants
+        all_nodes.append(current)
 
-    def trace_forward_full(
-        self, table_name: str, column_name: str, include_ctes: bool = True
-    ) -> Tuple[List[ColumnNode], List[ColumnEdge]]:
-        """
-        Trace a column forward with full transparency.
+        for edge in _get_incoming(incoming_index, current.full_name):
+            all_edges.append(edge)
+            queue.append(edge.from_node)
 
-        Returns complete impact path including all intermediate tables and CTEs.
+    return all_nodes, all_edges
 
-        Args:
-            table_name: The table containing the column to trace
-            column_name: The column name to trace
-            include_ctes: If True, include CTE columns; if False, only real tables
 
-        Returns:
-            Tuple of (nodes, edges) representing the complete impact path.
-            - nodes: All columns impacted, in BFS order from source to finals
-            - edges: All edges connecting the columns
-        """
-        # Find the source column(s)
-        source_columns = [
-            col
-            for col in self._pipeline.columns.values()
-            if col.table_name == table_name and col.column_name == column_name
-        ]
+# ---------------------------------------------------------------------------
+# Forward tracing
+# ---------------------------------------------------------------------------
 
-        if not source_columns:
-            return [], []
 
-        # Prefer input/output layer columns as starting point
-        input_cols = [c for c in source_columns if c.layer in ("input", "output")]
-        start_columns = input_cols if input_cols else source_columns
+def trace_forward(
+    columns: Dict[str, ColumnNode],
+    outgoing_index: Dict[str, List[ColumnEdge]],
+    table_name: str,
+    column_name: str,
+) -> List[ColumnNode]:
+    """
+    BFS forward from *table_name.column_name* to its final descendant columns.
 
-        # BFS forward through edges, collecting all nodes and edges
-        visited = set()
-        queue = deque(start_columns)
-        all_nodes = []
-        all_edges = []
+    Returns only leaf columns (those with no outgoing edges).  Use
+    :func:`trace_forward_full` when you need all intermediate nodes and edges.
 
-        while queue:
-            current = queue.popleft()
-            if current.full_name in visited:
-                continue
-            visited.add(current.full_name)
+    Args:
+        columns:        Mapping of full_name -> ColumnNode for the pipeline.
+        outgoing_index: Adjacency dict mapping full_name -> [ColumnEdge].
+        table_name:     Table containing the column to trace.
+        column_name:    Column name to trace.
 
-            # Optionally skip CTE columns
-            if not include_ctes and current.layer == "cte":
-                # Still need to traverse through CTEs to find real tables
-                outgoing = self._pipeline._get_outgoing_edges(current.full_name)
-                for edge in outgoing:
-                    queue.append(edge.to_node)
-                continue
+    Returns:
+        List of descendant :class:`~clgraph.models.ColumnNode` objects.
+    """
+    source_columns = [
+        col
+        for col in columns.values()
+        if col.table_name == table_name and col.column_name == column_name
+    ]
 
-            all_nodes.append(current)
+    if not source_columns:
+        return []
 
-            # Find outgoing edges
-            outgoing = self._pipeline._get_outgoing_edges(current.full_name)
+    # Prefer input-layer columns as the starting point
+    input_cols = [c for c in source_columns if c.layer == "input"]
+    start_columns = input_cols if input_cols else source_columns
 
+    visited: set = set()
+    queue: deque = deque(start_columns)
+    descendants: List[ColumnNode] = []
+
+    while queue:
+        current = queue.popleft()
+        if current.full_name in visited:
+            continue
+        visited.add(current.full_name)
+
+        outgoing = _get_outgoing(outgoing_index, current.full_name)
+
+        if not outgoing:
+            descendants.append(current)
+        else:
             for edge in outgoing:
-                all_edges.append(edge)
                 queue.append(edge.to_node)
 
-        return all_nodes, all_edges
-
-    def get_lineage_path(
-        self, from_table: str, from_column: str, to_table: str, to_column: str
-    ) -> List[ColumnEdge]:
-        """
-        Find the lineage path between two columns.
-        Returns list of edges connecting them (if path exists).
-
-        Args:
-            from_table: Source table name
-            from_column: Source column name
-            to_table: Destination table name
-            to_column: Destination column name
-
-        Returns:
-            List of ColumnEdges forming the path, or empty list if no path exists
-        """
-        # Find source columns by table and column name
-        from_columns = [
-            col
-            for col in self._pipeline.columns.values()
-            if col.table_name == from_table and col.column_name == from_column
-        ]
-
-        to_columns = [
-            col
-            for col in self._pipeline.columns.values()
-            if col.table_name == to_table and col.column_name == to_column
-        ]
-
-        if not from_columns or not to_columns:
-            return []
-
-        # Get target full_names for matching
-        to_full_names = {col.full_name for col in to_columns}
-
-        # BFS with path tracking, starting from all matching source columns
-        queue = deque((col, []) for col in from_columns)
-        visited = set()
-
-        while queue:
-            current, path = queue.popleft()
-            if current.full_name in visited:
-                continue
-            visited.add(current.full_name)
-
-            if current.full_name in to_full_names:
-                return path
-
-            # Find outgoing edges
-            for edge in self._pipeline._get_outgoing_edges(current.full_name):
-                queue.append((edge.to_node, path + [edge]))
-
-        return []  # No path found
-
-    def get_table_lineage_path(
-        self, table_name: str, column_name: str
-    ) -> List[Tuple[str, str, Optional[str]]]:
-        """
-        Get simplified table-level lineage path for a column.
-
-        Returns list of (table_name, column_name, query_id) tuples representing
-        the lineage through real tables only (skipping CTEs).
-
-        This provides a clear view of how data flows between tables in your pipeline.
-
-        Args:
-            table_name: The table containing the column to trace
-            column_name: The column name to trace
-
-        Returns:
-            List of tuples: (table_name, column_name, query_id)
-        """
-        nodes, _ = self.trace_backward_full(table_name, column_name, include_ctes=False)
-
-        # Deduplicate by table.column (keep first occurrence which is closest to target)
-        seen = set()
-        result = []
-        for node in nodes:
-            key = (node.table_name, node.column_name)
-            if key not in seen:
-                seen.add(key)
-                result.append((node.table_name, node.column_name, node.query_id))
-
-        return result
-
-    def get_table_impact_path(
-        self, table_name: str, column_name: str
-    ) -> List[Tuple[str, str, Optional[str]]]:
-        """
-        Get simplified table-level impact path for a column.
-
-        Returns list of (table_name, column_name, query_id) tuples representing
-        the downstream impact through real tables only (skipping CTEs).
-
-        This provides a clear view of how a source column impacts downstream tables.
-
-        Args:
-            table_name: The table containing the column to trace
-            column_name: The column name to trace
-
-        Returns:
-            List of tuples: (table_name, column_name, query_id)
-        """
-        nodes, _ = self.trace_forward_full(table_name, column_name, include_ctes=False)
-
-        # Deduplicate by table.column (keep first occurrence which is closest to source)
-        seen = set()
-        result = []
-        for node in nodes:
-            key = (node.table_name, node.column_name)
-            if key not in seen:
-                seen.add(key)
-                result.append((node.table_name, node.column_name, node.query_id))
-
-        return result
+    return descendants
 
 
-__all__ = ["LineageTracer"]
+def trace_forward_full(
+    columns: Dict[str, ColumnNode],
+    outgoing_index: Dict[str, List[ColumnEdge]],
+    table_name: str,
+    column_name: str,
+    include_ctes: bool = True,
+) -> Tuple[List[ColumnNode], List[ColumnEdge]]:
+    """
+    BFS forward with full impact transparency.
+
+    Collects every node and edge encountered while traversing forward from
+    *table_name.column_name*.
+
+    Args:
+        columns:        Mapping of full_name -> ColumnNode for the pipeline.
+        outgoing_index: Adjacency dict mapping full_name -> [ColumnEdge].
+        table_name:     Table containing the column to trace.
+        column_name:    Column name to trace.
+        include_ctes:   When False, CTE nodes are skipped in the result (but
+                        the traversal still passes through them).
+
+    Returns:
+        ``(nodes, edges)`` — lists of nodes and edges in BFS order.
+    """
+    source_columns = [
+        col
+        for col in columns.values()
+        if col.table_name == table_name and col.column_name == column_name
+    ]
+
+    if not source_columns:
+        return [], []
+
+    # Prefer input/output layer columns as starting point
+    input_cols = [c for c in source_columns if c.layer in ("input", "output")]
+    start_columns = input_cols if input_cols else source_columns
+
+    visited: set = set()
+    queue: deque = deque(start_columns)
+    all_nodes: List[ColumnNode] = []
+    all_edges: List[ColumnEdge] = []
+
+    while queue:
+        current = queue.popleft()
+        if current.full_name in visited:
+            continue
+        visited.add(current.full_name)
+
+        if not include_ctes and current.layer == "cte":
+            for edge in _get_outgoing(outgoing_index, current.full_name):
+                queue.append(edge.to_node)
+            continue
+
+        all_nodes.append(current)
+
+        for edge in _get_outgoing(outgoing_index, current.full_name):
+            all_edges.append(edge)
+            queue.append(edge.to_node)
+
+    return all_nodes, all_edges
+
+
+# ---------------------------------------------------------------------------
+# Table-level path helpers
+# ---------------------------------------------------------------------------
+
+
+def get_table_lineage_path(
+    columns: Dict[str, ColumnNode],
+    incoming_index: Dict[str, List[ColumnEdge]],
+    table_name: str,
+    column_name: str,
+    tables: Optional[Dict] = None,
+) -> List[Tuple[str, str, str]]:
+    """
+    Simplified table-level lineage path (backward direction, real tables only).
+
+    Internally calls :func:`trace_backward_full` with ``include_ctes=False``
+    and returns deduplicated ``(table_name, column_name, query_id)`` tuples.
+
+    Args:
+        columns:        Mapping of full_name -> ColumnNode.
+        incoming_index: Adjacency dict mapping full_name -> [ColumnEdge].
+        table_name:     Table containing the column to trace.
+        column_name:    Column name to trace.
+        tables:         Optional table registry (currently reserved for future
+                        filtering; pass ``pipeline.table_graph.tables``).
+
+    Returns:
+        Deduplicated list of ``(table_name, column_name, query_id)`` tuples
+        ordered from target back to ultimate sources.
+    """
+    nodes, _ = trace_backward_full(
+        columns,
+        incoming_index,
+        table_name,
+        column_name,
+        include_ctes=False,
+    )
+
+    seen: set = set()
+    result: List[Tuple[str, str, str]] = []
+    for node in nodes:
+        key = (node.table_name, node.column_name)
+        if key not in seen:
+            seen.add(key)
+            result.append((node.table_name, node.column_name, node.query_id))
+
+    return result
+
+
+def get_table_impact_path(
+    columns: Dict[str, ColumnNode],
+    outgoing_index: Dict[str, List[ColumnEdge]],
+    table_name: str,
+    column_name: str,
+    tables: Optional[Dict] = None,
+) -> List[Tuple[str, str, str]]:
+    """
+    Simplified table-level impact path (forward direction, real tables only).
+
+    Internally calls :func:`trace_forward_full` with ``include_ctes=False``
+    and returns deduplicated ``(table_name, column_name, query_id)`` tuples.
+
+    Args:
+        columns:        Mapping of full_name -> ColumnNode.
+        outgoing_index: Adjacency dict mapping full_name -> [ColumnEdge].
+        table_name:     Table containing the column to trace.
+        column_name:    Column name to trace.
+        tables:         Optional table registry (currently reserved for future
+                        filtering; pass ``pipeline.table_graph.tables``).
+
+    Returns:
+        Deduplicated list of ``(table_name, column_name, query_id)`` tuples
+        ordered from source forward to final impact.
+    """
+    nodes, _ = trace_forward_full(
+        columns,
+        outgoing_index,
+        table_name,
+        column_name,
+        include_ctes=False,
+    )
+
+    seen: set = set()
+    result: List[Tuple[str, str, str]] = []
+    for node in nodes:
+        key = (node.table_name, node.column_name)
+        if key not in seen:
+            seen.add(key)
+            result.append((node.table_name, node.column_name, node.query_id))
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Point-to-point path
+# ---------------------------------------------------------------------------
+
+
+def get_lineage_path(
+    columns: Dict[str, ColumnNode],
+    outgoing_index: Dict[str, List[ColumnEdge]],
+    from_table: str,
+    from_column: str,
+    to_table: str,
+    to_column: str,
+) -> List[ColumnEdge]:
+    """
+    BFS to find the shortest edge-path between two columns.
+
+    Args:
+        columns:        Mapping of full_name -> ColumnNode.
+        outgoing_index: Adjacency dict mapping full_name -> [ColumnEdge].
+        from_table:     Source table name.
+        from_column:    Source column name.
+        to_table:       Target table name.
+        to_column:      Target column name.
+
+    Returns:
+        Ordered list of :class:`~clgraph.models.ColumnEdge` objects forming
+        the path, or an empty list if no path exists.
+    """
+    from_columns = [
+        col
+        for col in columns.values()
+        if col.table_name == from_table and col.column_name == from_column
+    ]
+    to_columns = [
+        col
+        for col in columns.values()
+        if col.table_name == to_table and col.column_name == to_column
+    ]
+
+    if not from_columns or not to_columns:
+        return []
+
+    to_full_names = {col.full_name for col in to_columns}
+
+    queue: deque = deque((col, []) for col in from_columns)
+    visited: set = set()
+
+    while queue:
+        current, path = queue.popleft()
+        if current.full_name in visited:
+            continue
+        visited.add(current.full_name)
+
+        if current.full_name in to_full_names:
+            return path
+
+        for edge in _get_outgoing(outgoing_index, current.full_name):
+            queue.append((edge.to_node, path + [edge]))
+
+    return []
