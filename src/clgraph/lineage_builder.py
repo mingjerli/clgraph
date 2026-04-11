@@ -12,8 +12,13 @@ from sqlglot import exp
 
 from .aggregate_parser import (
     has_star_in_aggregate,
-    parse_aggregate_spec,
-    unit_has_fully_resolved_columns,
+)
+from .column_extractor import (
+    ExtractionContext,
+    extract_merge_columns,
+    extract_pivot_columns,
+    extract_union_columns,
+    extract_unpivot_columns,
 )
 
 # ============================================================================
@@ -59,14 +64,8 @@ from .models import (
 )
 from .node_factory import (
     create_column_node,
-    create_tvf_edge,
-    create_unnest_edge,
-    create_values_edge,
-    find_or_create_star_node,
     find_or_create_table_column_node,
-    find_or_create_table_star_node,
     get_node_key,
-    resolve_external_table_name,
 )
 from .query_parser import RecursiveQueryParser
 
@@ -532,14 +531,20 @@ class RecursiveLineageBuilder:
         Also handles special query types: UNION, PIVOT, UNPIVOT.
         """
         # Handle special query types that don't have a select_node
+        ctx = ExtractionContext(
+            unit_graph=self.unit_graph,
+            unit_columns_cache=self.unit_columns_cache,
+            external_table_columns=self.external_table_columns,
+            lineage_graph=self.lineage_graph,
+        )
         if unit.unit_type in (QueryUnitType.UNION, QueryUnitType.INTERSECT, QueryUnitType.EXCEPT):
-            return self._extract_union_columns(unit)
+            return extract_union_columns(ctx, unit)
         elif unit.unit_type == QueryUnitType.PIVOT:
-            return self._extract_pivot_columns(unit)
+            return extract_pivot_columns(ctx, unit)
         elif unit.unit_type == QueryUnitType.UNPIVOT:
-            return self._extract_unpivot_columns(unit)
+            return extract_unpivot_columns(ctx, unit)
         elif unit.unit_type == QueryUnitType.MERGE:
-            return self._extract_merge_columns(unit)
+            return extract_merge_columns(ctx, unit)
 
         select_node = unit.select_node
         output_cols = []
@@ -672,708 +677,58 @@ class RecursiveLineageBuilder:
 
         return output_cols
 
-    def _extract_union_columns(self, unit: QueryUnit) -> List[Dict]:
-        """
-        Extract output columns from a UNION/INTERSECT/EXCEPT operation.
-
-        For set operations, all branches must have the same column structure.
-        We use the first branch's columns as the output schema.
-        """
-        output_cols = []
-
-        if not unit.set_operation_branches:
-            # No branches - return empty
-            return output_cols
-
-        # Get the first branch unit
-        first_branch_id = unit.set_operation_branches[0]
-        if first_branch_id not in self.unit_columns_cache:
-            # Branch not yet processed - this shouldn't happen in topological order
-            # Return empty for now
-            return output_cols
-
-        # Use first branch's columns as the output schema
-        first_branch_cols = self.unit_columns_cache[first_branch_id]
-
-        for i, branch_col_node in enumerate(first_branch_cols):
-            col_info = {
-                "index": i,
-                "name": branch_col_node.column_name,
-                "is_star": branch_col_node.is_star,
-                "type": "union_column",
-                "expression": f"{unit.set_operation_type}({branch_col_node.column_name})",
-                "source_branches": unit.set_operation_branches,
-                "ast_node": None,  # No AST node for UNION columns
-            }
-            output_cols.append(col_info)
-
-        return output_cols
-
-    def _extract_pivot_columns(self, unit: QueryUnit) -> List[Dict]:
-        """
-        Extract output columns from a PIVOT operation.
-
-        PIVOT transforms rows into columns. The output has:
-        - All columns from the source except the pivot column and aggregated column
-        - New columns for each pivot value (e.g., Q1, Q2, Q3, Q4)
-        """
-        output_cols = []
-
-        if not unit.pivot_config:
-            return output_cols
-
-        # Get aggregated column names (e.g., "revenue" from "SUM(revenue)")
-        # These are needed for both passthrough and pivot value columns
-        aggregations = unit.pivot_config.get("aggregations", [])
-        aggregated_cols = set()
-        for agg in aggregations:
-            # Extract column name from aggregation (e.g., "revenue" from "SUM(revenue)")
-            # Simple extraction - assumes format like SUM(col_name)
-            if "(" in agg and ")" in agg:
-                col_part = agg.split("(")[1].split(")")[0].strip()
-                aggregated_cols.add(col_part)
-
-        # Get source unit columns if available
-        if unit.depends_on_units:
-            source_unit_id = unit.depends_on_units[0]
-            source_unit = self.unit_graph.units[source_unit_id]
-            source_unit_name = source_unit.name  # Use name, not ID
-
-            if source_unit_id in self.unit_columns_cache:
-                source_cols = self.unit_columns_cache[source_unit_id]
-
-                # Add non-pivoted columns (columns that aren't the pivot column or aggregated columns)
-                pivot_column = unit.pivot_config.get("pivot_column", "")
-
-                for i, source_col in enumerate(source_cols):
-                    if (
-                        source_col.column_name != pivot_column
-                        and source_col.column_name not in aggregated_cols
-                        and not source_col.is_star
-                    ):
-                        col_info = {
-                            "index": i,
-                            "name": source_col.column_name,
-                            "is_star": False,
-                            "type": "pivot_passthrough",
-                            "expression": source_col.column_name,
-                            "ast_node": None,
-                            "source_columns": [
-                                (source_unit_name, source_col.column_name)
-                            ],  # Use name, not ID
-                        }
-                        output_cols.append(col_info)
-
-        # Add pivot value columns (the new columns created by PIVOT)
-        value_columns = unit.pivot_config.get("value_columns", [])
-        base_idx = len(output_cols)
-
-        # Get aggregated columns as source (e.g., "revenue" from "SUM(revenue)")
-        # These pivot value columns derive from the aggregated column
-        pivot_source_cols = []
-        if unit.depends_on_units:
-            source_unit_id = unit.depends_on_units[0]
-            source_unit = self.unit_graph.units[source_unit_id]
-            source_unit_name = source_unit.name  # Use name, not ID
-            for agg_col in aggregated_cols:
-                pivot_source_cols.append((source_unit_name, agg_col))  # Use name, not ID
-
-        for i, value_col in enumerate(value_columns):
-            col_info = {
-                "index": base_idx + i,
-                "name": value_col,
-                "is_star": False,
-                "type": "pivot_value",
-                "expression": f"PIVOT({value_col})",
-                "ast_node": None,
-                "source_columns": pivot_source_cols,
-            }
-            output_cols.append(col_info)
-
-        return output_cols
-
-    def _extract_unpivot_columns(self, unit: QueryUnit) -> List[Dict]:
-        """
-        Extract output columns from an UNPIVOT operation.
-
-        UNPIVOT transforms columns into rows. The output has:
-        - All columns from the source except the unpivoted columns
-        - A new value column (containing the values)
-        - A new name column (containing the original column names)
-        """
-        output_cols = []
-
-        if not unit.unpivot_config:
-            return output_cols
-
-        # Get source unit columns if available
-        if unit.depends_on_units:
-            source_unit_id = unit.depends_on_units[0]
-            source_unit = self.unit_graph.units[source_unit_id]
-            source_unit_name = source_unit.name  # Use name, not ID
-
-            if source_unit_id in self.unit_columns_cache:
-                source_cols = self.unit_columns_cache[source_unit_id]
-                unpivot_columns = set(unit.unpivot_config.get("unpivot_columns", []))
-
-                # Add non-unpivoted columns (passthrough columns)
-                for i, source_col in enumerate(source_cols):
-                    if source_col.column_name not in unpivot_columns and not source_col.is_star:
-                        col_info = {
-                            "index": i,
-                            "name": source_col.column_name,
-                            "is_star": False,
-                            "type": "unpivot_passthrough",
-                            "expression": source_col.column_name,
-                            "ast_node": None,
-                            "source_columns": [
-                                (source_unit_name, source_col.column_name)
-                            ],  # Add source
-                        }
-                        output_cols.append(col_info)
-        elif unit.depends_on_tables:
-            # UNPIVOT on a table - use external_table_columns to infer passthrough columns
-            table_name = unit.depends_on_tables[0]
-            unpivot_columns = set(unit.unpivot_config.get("unpivot_columns", []))
-
-            if table_name in self.external_table_columns:
-                table_cols = self.external_table_columns[table_name]
-                for i, col_name in enumerate(table_cols):
-                    if col_name not in unpivot_columns:
-                        col_info = {
-                            "index": i,
-                            "name": col_name,
-                            "is_star": False,
-                            "type": "unpivot_passthrough",
-                            "expression": col_name,
-                            "ast_node": None,
-                            "source_columns": [(table_name, col_name)],
-                        }
-                        output_cols.append(col_info)
-
-        # Add the value column
-        # The value column derives from all the unpivoted columns
-        value_column = unit.unpivot_config.get("value_column", "value")
-        unpivot_columns = unit.unpivot_config.get("unpivot_columns", [])
-
-        # Build source_columns for the value column
-        value_source_cols = []
-        if unit.depends_on_units:
-            # UNPIVOT on a subquery - reference the source unit
-            source_unit_id = unit.depends_on_units[0]
-            source_unit = self.unit_graph.units[source_unit_id]
-            source_unit_name = source_unit.name
-            for unpivot_col in unpivot_columns:
-                value_source_cols.append((source_unit_name, unpivot_col))
-        elif unit.depends_on_tables:
-            # UNPIVOT on a table - reference the table columns
-            table_name = unit.depends_on_tables[0]
-            for unpivot_col in unpivot_columns:
-                value_source_cols.append((table_name, unpivot_col))
-
-        col_info = {
-            "index": len(output_cols),
-            "name": value_column,
-            "is_star": False,
-            "type": "unpivot_value",
-            "expression": f"UNPIVOT({value_column})",
-            "ast_node": None,
-            "source_columns": value_source_cols,
-        }
-        output_cols.append(col_info)
-
-        # Add the name column
-        # The name column is generated (doesn't have direct source columns)
-        name_column = unit.unpivot_config.get("name_column", "name")
-        col_info = {
-            "index": len(output_cols),
-            "name": name_column,
-            "is_star": False,
-            "type": "unpivot_name",
-            "expression": f"UNPIVOT({name_column})",
-            "ast_node": None,
-            "source_columns": [],  # Generated column, no direct source
-        }
-        output_cols.append(col_info)
-
-        return output_cols
-
-    def _extract_merge_columns(self, unit: QueryUnit) -> List[Dict]:
-        """
-        Extract output columns from a MERGE operation.
-
-        MERGE operations modify the target table. The output represents:
-        - Match condition columns (join columns)
-        - Updated columns (from WHEN MATCHED THEN UPDATE)
-        - Inserted columns (from WHEN NOT MATCHED THEN INSERT)
-
-        We create separate column infos for each action type to track lineage paths.
-        """
-        output_cols = []
-
-        if not unit.unpivot_config or unit.unpivot_config.get("merge_type") != "merge":
-            return output_cols
-
-        config = unit.unpivot_config
-        target_table = config.get("target_table", "target")
-        target_alias = config.get("target_alias") or target_table
-        source_table = config.get("source_table", "source")
-        source_alias = config.get("source_alias") or source_table
-        match_columns = config.get("match_columns", [])
-        matched_actions = config.get("matched_actions", [])
-        not_matched_actions = config.get("not_matched_actions", [])
-
-        idx = 0
-
-        # 1. Match condition columns (edges for ON clause)
-        for target_col, source_col in match_columns:
-            col_info = {
-                "index": idx,
-                "name": target_col,
-                "is_star": False,
-                "type": "merge_match",
-                "expression": f"{target_alias}.{target_col} = {source_alias}.{source_col}",
-                "ast_node": None,
-                "source_columns": [(source_alias, source_col)],
-                "merge_action": "match",
-            }
-            output_cols.append(col_info)
-            idx += 1
-
-        # 2. WHEN MATCHED -> UPDATE columns
-        for action in matched_actions:
-            if action.get("action_type") == "update":
-                condition = action.get("condition")
-                for target_col, source_expr in action.get("column_mappings", {}).items():
-                    col_info = {
-                        "index": idx,
-                        "name": target_col,
-                        "is_star": False,
-                        "type": "merge_update",
-                        "expression": source_expr,
-                        "ast_node": None,
-                        "source_columns": self._extract_columns_from_expr(
-                            source_expr, source_alias
-                        ),
-                        "merge_action": "update",
-                        "merge_condition": condition,
-                    }
-                    output_cols.append(col_info)
-                    idx += 1
-
-        # 3. WHEN NOT MATCHED -> INSERT columns
-        for action in not_matched_actions:
-            if action.get("action_type") == "insert":
-                condition = action.get("condition")
-                for target_col, source_expr in action.get("column_mappings", {}).items():
-                    col_info = {
-                        "index": idx,
-                        "name": target_col,
-                        "is_star": False,
-                        "type": "merge_insert",
-                        "expression": source_expr,
-                        "ast_node": None,
-                        "source_columns": self._extract_columns_from_expr(
-                            source_expr, source_alias
-                        ),
-                        "merge_action": "insert",
-                        "merge_condition": condition,
-                    }
-                    output_cols.append(col_info)
-                    idx += 1
-
-        return output_cols
-
-    def _extract_columns_from_expr(
-        self, expr_str: str, default_table: str
-    ) -> List[Tuple[str, str]]:
-        """
-        Extract column references from a SQL expression string.
-
-        Args:
-            expr_str: SQL expression like "s.new_value" or "COALESCE(s.a, s.b)"
-            default_table: Default table to use for unqualified columns
-
-        Returns:
-            List of (table, column) tuples
-        """
-        from sqlglot import exp
-
-        result = []
-        try:
-            parsed = sqlglot.parse_one(expr_str, into=exp.Expression)
-            for col in parsed.find_all(exp.Column):
-                table_ref = default_table
-                if hasattr(col, "table") and col.table:
-                    table_ref = (
-                        str(col.table.name) if hasattr(col.table, "name") else str(col.table)
-                    )
-                col_name = col.name
-                result.append((table_ref, col_name))
-        except (sqlglot.errors.SqlglotError, ValueError, TypeError):
-            # If parsing fails, try simple extraction for "table.column" format
-            if "." in expr_str:
-                parts = expr_str.split(".")
-                if len(parts) == 2 and parts[0].isidentifier() and parts[1].isidentifier():
-                    result.append((parts[0], parts[1]))
-        return result
-
     def _trace_column_dependencies(self, unit: QueryUnit, output_node: ColumnNode, col_info: Dict):
-        """
-        Recursively trace where an output column's data comes from.
-        This creates edges from source nodes to the output node.
-        """
+        """Dispatch column dependency tracing to the appropriate strategy."""
+        from .trace_strategies import (
+            trace_aggregate_star,
+            trace_merge_columns,
+            trace_regular_columns,
+            trace_set_operation,
+            trace_star_passthrough,
+        )
+
+        source_columns = col_info.get("source_columns", [])
+
+        # Branch 1: Star passthrough
         if col_info.get("is_star"):
-            # Star column - trace to source star or table
-            source_unit_id = col_info.get("source_unit")
-            source_table = col_info.get("source_table")
+            trace_star_passthrough(
+                self.lineage_graph, unit, output_node, col_info,
+                self.unit_graph,
+            )
+            return
 
-            if source_unit_id:
-                # Star from another query unit (CTE or subquery)
-                source_unit = self.unit_graph.units[source_unit_id]
-                source_star_node = find_or_create_star_node(
-                    self.lineage_graph, source_unit, source_table or source_unit.name or source_unit.unit_id
-                )
+        # Branch 2: COUNT(*) / aggregate with star
+        if has_star_in_aggregate(col_info.get("ast_node")):
+            trace_aggregate_star(
+                self.lineage_graph, unit, output_node, col_info,
+                self.unit_columns_cache, self.external_table_columns,
+                self.unit_graph,
+            )
+            return
 
-                # Create edge
-                edge = ColumnEdge(
-                    from_node=source_star_node,
-                    to_node=output_node,
-                    edge_type="star_passthrough",
-                    transformation="star_passthrough",
-                    context=unit.unit_type.value,
-                    expression=col_info["expression"],
-                )
-                self.lineage_graph.add_edge(edge)
+        # Branch 3: UNION/INTERSECT/EXCEPT
+        if col_info.get("type") == "union_column" and "source_branches" in col_info:
+            trace_set_operation(
+                self.lineage_graph, unit, output_node, col_info,
+                self.unit_columns_cache,
+            )
+            return
 
-            elif source_table:
-                # Star from base table
-                table_star_node = find_or_create_table_star_node(self.lineage_graph, source_table)
+        # Branch 4: MERGE
+        if col_info.get("type") in ("merge_match", "merge_update", "merge_insert"):
+            trace_merge_columns(
+                self.lineage_graph, unit, output_node, col_info,
+                self._resolve_source_unit, self._resolve_base_table_name,
+                self._find_column_in_unit,
+            )
+            return
 
-                edge = ColumnEdge(
-                    from_node=table_star_node,
-                    to_node=output_node,
-                    edge_type="star_passthrough",
-                    transformation="star_passthrough",
-                    context=unit.unit_type.value,
-                    expression=col_info["expression"],
-                )
-                self.lineage_graph.add_edge(edge)
-
-        else:
-            # Regular column - trace each source column reference
-            source_refs = col_info.get("source_columns", [])
-
-            # Special case: Check for COUNT(*) or other aggregates with *
-            # These need special handling because they depend on ALL rows/columns from source
-            col_has_star_in_aggregate = has_star_in_aggregate(col_info.get("ast_node"))
-
-            if col_has_star_in_aggregate:
-                # Aggregate with * (e.g., COUNT(*)) - link to all source columns/rows
-                # Add warning only if multiple tables are involved (ambiguous case)
-                has_multiple_sources = len(unit.depends_on_tables) + len(unit.depends_on_units) > 1
-                if has_multiple_sources:
-                    warning = (
-                        f"Ambiguous lineage: {col_info['expression']} uses * with multiple sources."
-                    )
-                    output_node.warnings.append(warning)
-
-                # Link to ALL tables involved
-                # For base tables: use individual columns if schema is known, else use *
-                for table_name in unit.depends_on_tables:
-                    # Check if we know the schema for this table from upstream queries
-                    # Use resolver to match short names (e.g., 'events') to full names (e.g., 'staging.events')
-                    resolved_table = resolve_external_table_name(self.external_table_columns, table_name)
-                    if resolved_table:
-                        # Schema is known - link to individual columns
-                        column_names = self.external_table_columns[resolved_table]
-                        for col_name in column_names:
-                            # Use the resolved full table name for the node
-                            source_node = find_or_create_table_column_node(
-                                self.lineage_graph, resolved_table, col_name
-                            )
-                            edge = ColumnEdge(
-                                from_node=source_node,
-                                to_node=output_node,
-                                edge_type="aggregate",
-                                transformation="ambiguous_aggregate",
-                                context=unit.unit_type.value,
-                                expression=col_info["expression"],
-                            )
-                            self.lineage_graph.add_edge(edge)
-                    else:
-                        # Schema unknown - use star node
-                        table_star_node = find_or_create_table_star_node(self.lineage_graph, table_name)
-                        edge = ColumnEdge(
-                            from_node=table_star_node,
-                            to_node=output_node,
-                            edge_type="aggregate",
-                            transformation="ambiguous_aggregate",
-                            context=unit.unit_type.value,
-                            expression=col_info["expression"],
-                        )
-                        self.lineage_graph.add_edge(edge)
-
-                # For query units: link to all explicit columns if fully resolved, else use *
-                for unit_id in unit.depends_on_units:
-                    dep_unit = self.unit_graph.units[unit_id]
-
-                    # Check if this unit has fully resolved columns (no stars in its SELECT)
-                    if unit_has_fully_resolved_columns(dep_unit):
-                        # Link to ALL explicit columns from this unit
-                        if unit_id in self.unit_columns_cache:
-                            for col_node in self.unit_columns_cache[unit_id]:
-                                if not col_node.is_star:  # Skip any * nodes
-                                    edge = ColumnEdge(
-                                        from_node=col_node,
-                                        to_node=output_node,
-                                        edge_type="aggregate",
-                                        transformation="ambiguous_aggregate",
-                                        context=unit.unit_type.value,
-                                        expression=col_info["expression"],
-                                    )
-                                    self.lineage_graph.add_edge(edge)
-                    else:
-                        # Unit has unresolved columns (has * in SELECT), use * node
-                        unit_star_node = find_or_create_star_node(
-                            self.lineage_graph, dep_unit, dep_unit.name or dep_unit.unit_id
-                        )
-                        edge = ColumnEdge(
-                            from_node=unit_star_node,
-                            to_node=output_node,
-                            edge_type="aggregate",
-                            transformation="ambiguous_aggregate",
-                            context=unit.unit_type.value,
-                            expression=col_info["expression"],
-                        )
-                        self.lineage_graph.add_edge(edge)
-
-                # Don't process normal source_refs for this column
-                return
-
-            # Special case: UNION/INTERSECT/EXCEPT columns
-            # These need edges from all branch columns with the same position
-            if col_info.get("type") == "union_column" and "source_branches" in col_info:
-                source_branches = col_info["source_branches"]
-                col_index = col_info.get("index", 0)
-
-                # Create edges from each branch's corresponding column
-                for branch_id in source_branches:
-                    if branch_id in self.unit_columns_cache:
-                        branch_cols = self.unit_columns_cache[branch_id]
-                        # Get the column at the same position in the branch
-                        if col_index < len(branch_cols):
-                            branch_col_node = branch_cols[col_index]
-                            edge = ColumnEdge(
-                                from_node=branch_col_node,
-                                to_node=output_node,
-                                edge_type="union",
-                                transformation=unit.set_operation_type or "union",
-                                context=unit.unit_type.value,
-                                expression=col_info["expression"],
-                            )
-                            self.lineage_graph.add_edge(edge)
-
-                # Don't process normal source_refs for this column
-                return
-
-            # Special case: MERGE columns
-            # These need edges with merge_action metadata
-            if col_info.get("type") in ("merge_match", "merge_update", "merge_insert"):
-                merge_action = col_info.get("merge_action", col_info.get("type"))
-                merge_condition = col_info.get("merge_condition")
-
-                for source_ref in source_refs:
-                    table_ref, col_name = source_ref[:2]
-
-                    # Try to resolve as a source unit or base table
-                    source_node = None
-                    source_unit = self._resolve_source_unit(unit, table_ref) if table_ref else None
-                    if source_unit:
-                        source_node = self._find_column_in_unit(source_unit, col_name)
-                    if not source_node:
-                        # Try as base table
-                        base_table = (
-                            self._resolve_base_table_name(unit, table_ref) if table_ref else None
-                        )
-                        if base_table:
-                            source_node = find_or_create_table_column_node(
-                                self.lineage_graph, base_table, col_name
-                            )
-                        elif table_ref:
-                            # Fallback: use table_ref directly
-                            source_node = find_or_create_table_column_node(
-                                self.lineage_graph, table_ref, col_name
-                            )
-
-                    if source_node:
-                        edge = ColumnEdge(
-                            from_node=source_node,
-                            to_node=output_node,
-                            edge_type=col_info["type"],
-                            transformation=col_info["type"],
-                            context=unit.unit_type.value,
-                            expression=col_info["expression"],
-                            is_merge_operation=True,
-                            merge_action=merge_action,
-                            merge_condition=merge_condition,
-                        )
-                        self.lineage_graph.add_edge(edge)
-
-                # Don't process normal source_refs for this column
-                return
-
-            for source_ref in source_refs:
-                # Unpack source reference (now includes JSON and nested access metadata)
-                # Handle different tuple formats for backward compatibility
-                if len(source_ref) >= 6:
-                    table_ref, col_name, json_path, json_function, nested_path, access_type = (
-                        source_ref
-                    )
-                elif len(source_ref) == 4:
-                    table_ref, col_name, json_path, json_function = source_ref
-                    nested_path, access_type = None, None
-                else:
-                    table_ref, col_name = source_ref[:2]
-                    json_path, json_function = None, None
-                    nested_path, access_type = None, None
-
-                # Resolve table_ref to either a query unit or base table
-                # If table_ref is None, try to infer the default source
-                effective_table_ref = table_ref
-
-                # Check if this is an UNNEST alias (check both table_ref and col_name)
-                # Case 1: Qualified reference like unnest_alias.field (table_ref = unnest_alias)
-                # Case 2: Unqualified reference where column name is the UNNEST alias itself
-                unnest_info = None
-                if table_ref and table_ref in unit.unnest_sources:
-                    unnest_info = unit.unnest_sources[table_ref]
-                elif not table_ref and col_name in unit.unnest_sources:
-                    # Unqualified column name matches UNNEST alias
-                    unnest_info = unit.unnest_sources[col_name]
-
-                if not table_ref:
-                    # No explicit table reference - infer from FROM clause
-                    default_table = self._get_default_from_table(unit)
-                    if default_table:
-                        effective_table_ref = default_table
-
-                if unnest_info:
-                    # This is a reference to an UNNEST result
-                    create_unnest_edge(
-                        self.lineage_graph,
-                        unit=unit,
-                        output_node=output_node,
-                        col_info=col_info,
-                        unnest_info=unnest_info,
-                        col_name=col_name,
-                    )
-                    continue
-
-                # Check if this is a TVF alias (Table-Valued Function)
-                tvf_info = None
-                if table_ref and table_ref in unit.tvf_sources:
-                    tvf_info = unit.tvf_sources[table_ref]
-                elif not table_ref and col_name in unit.tvf_sources:
-                    # Unqualified reference where column name matches TVF alias
-                    tvf_info = unit.tvf_sources[col_name]
-                elif not table_ref:
-                    # Check if unqualified column is a TVF output column
-                    for _alias, tvf in unit.tvf_sources.items():
-                        if col_name in tvf.output_columns:
-                            tvf_info = tvf
-                            break
-
-                if tvf_info:
-                    # This is a reference to a TVF output - create synthetic edge
-                    create_tvf_edge(
-                        self.lineage_graph,
-                        unit=unit,
-                        output_node=output_node,
-                        col_info=col_info,
-                        tvf_info=tvf_info,
-                        col_name=col_name,
-                    )
-                    continue
-
-                # Check if this is a VALUES alias (literal table)
-                values_info = None
-                if table_ref and table_ref in unit.values_sources:
-                    values_info = unit.values_sources[table_ref]
-                elif not table_ref:
-                    # Check if unqualified column is a VALUES output column
-                    for _alias, vals in unit.values_sources.items():
-                        if col_name in vals.column_names:
-                            values_info = vals
-                            break
-
-                if values_info:
-                    # This is a reference to a VALUES output - create literal edge
-                    create_values_edge(
-                        self.lineage_graph,
-                        unit=unit,
-                        output_node=output_node,
-                        col_info=col_info,
-                        values_info=values_info,
-                        col_name=col_name,
-                    )
-                    continue
-
-                source_unit = (
-                    self._resolve_source_unit(unit, effective_table_ref)
-                    if effective_table_ref
-                    else None
-                )
-
-                # Parse aggregate spec if this is an aggregate edge
-                aggregate_spec = None
-                if col_info["type"] == "aggregate":
-                    aggregate_spec = parse_aggregate_spec(col_info.get("ast_node"))
-
-                if source_unit:
-                    # Reference to another query unit (CTE or subquery)
-                    source_node = self._find_column_in_unit(source_unit, col_name)
-
-                    if source_node:
-                        edge = ColumnEdge(
-                            from_node=source_node,
-                            to_node=output_node,
-                            edge_type=col_info["type"],
-                            transformation=col_info["type"],
-                            context=unit.unit_type.value,
-                            expression=col_info["expression"],
-                            json_path=json_path,
-                            json_function=json_function,
-                            nested_path=nested_path,
-                            access_type=access_type,
-                            aggregate_spec=aggregate_spec,
-                        )
-                        self.lineage_graph.add_edge(edge)
-
-                else:
-                    # Reference to base table - resolve alias to actual table name
-                    base_table = (
-                        self._resolve_base_table_name(unit, effective_table_ref)
-                        if effective_table_ref
-                        else None
-                    )
-                    if base_table:
-                        source_node = find_or_create_table_column_node(self.lineage_graph, base_table, col_name)
-
-                        edge = ColumnEdge(
-                            from_node=source_node,
-                            to_node=output_node,
-                            edge_type=col_info["type"],
-                            transformation=col_info["type"],
-                            context=unit.unit_type.value,
-                            expression=col_info["expression"],
-                            json_path=json_path,
-                            json_function=json_function,
-                            nested_path=nested_path,
-                            access_type=access_type,
-                            aggregate_spec=aggregate_spec,
-                        )
-                        self.lineage_graph.add_edge(edge)
+        # Branch 5: Regular columns
+        trace_regular_columns(
+            self.lineage_graph, unit, output_node, col_info, source_columns,
+            self._resolve_source_unit, self._resolve_base_table_name,
+            self._find_column_in_unit, self._get_default_from_table,
+        )
 
     def _resolve_source_unit(
         self, current_unit: QueryUnit, table_ref: Optional[str]
