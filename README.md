@@ -47,6 +47,12 @@ Traditional tools reverse-engineer lineage from query logs and database metadata
 - **Text-to-SQL** — Schema-aware SQL generation with column descriptions as context
 - **Programmatic tools** — 11 built-in tools for lineage, schema, and governance queries
 
+### MCP Server (AI Integration)
+- **Claude Desktop integration** — Expose lineage tools via Model Context Protocol
+- **Multi-transport** — stdio, HTTP, SSE, streamable-http
+- **12 built-in tools** — All lineage, schema, and governance tools available to AI agents
+- **Pipeline resources** — Full schema, table list, and per-table metadata as MCP resources
+
 ### Pipeline Execution
 - **Run pipelines** — Execute queries in dependency order (async or sequential)
 - **Airflow integration** — Generate Airflow DAGs from your pipeline
@@ -693,6 +699,94 @@ PII columns: No PII columns found
 | `GetOwnersTool` | Get ownership information for tables/columns |
 | `GenerateSQLTool` | Generate SQL from natural language (requires LLM) |
 | `ExplainQueryTool` | Explain what a SQL query does (requires LLM) |
+
+### MCP Server (Claude Desktop / AI Agents)
+
+Expose your pipeline's lineage tools to AI assistants via the [Model Context Protocol](https://modelcontextprotocol.io/). Any MCP-compatible client (Claude Desktop, Cursor, etc.) can query lineage, trace columns, and explore schemas through natural tool calls.
+
+#### Installation
+
+```bash
+pip install 'clgraph[mcp]'
+```
+
+#### Claude Desktop Configuration
+
+Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+
+<!-- skip-test -->
+```json
+{
+  "mcpServers": {
+    "clgraph": {
+      "command": "python",
+      "args": ["-m", "clgraph.mcp", "--pipeline", "/path/to/your/sql/queries/"]
+    }
+  }
+}
+```
+
+Then ask Claude: *"What tables are in my pipeline?"*, *"Where does revenue.total come from?"*, *"What columns contain PII?"*
+
+#### CLI Usage
+
+```bash
+# stdio transport (default, for Claude Desktop)
+python -m clgraph.mcp --pipeline ./queries/
+
+# HTTP transport (for remote MCP clients)
+python -m clgraph.mcp --pipeline ./queries/ --transport http
+
+# From a JSON pipeline file
+python -m clgraph.mcp --pipeline pipeline.json
+
+# Specify dialect (default: bigquery)
+python -m clgraph.mcp --pipeline ./queries/ --dialect snowflake
+```
+
+#### Programmatic Usage
+
+<!-- skip-test -->
+```python
+from clgraph import Pipeline
+from clgraph.mcp import create_mcp_server, run_mcp_server
+
+pipeline = Pipeline.from_sql_files("queries/", dialect="bigquery")
+
+# Create server and run on stdio (blocking)
+run_mcp_server(pipeline)
+
+# Or create the server for custom usage
+server = create_mcp_server(pipeline)
+server.run(transport="http")  # or "stdio", "sse", "streamable-http"
+```
+
+#### Available MCP Tools
+
+The server exposes all clgraph lineage tools:
+
+| Tool | Description |
+|------|-------------|
+| `trace_backward` | Trace a column to its ultimate sources |
+| `trace_forward` | Find all columns impacted by a source column |
+| `get_lineage_path` | Find the lineage path between two columns |
+| `get_table_lineage` | Get upstream/downstream tables for a table |
+| `list_tables` | List all tables in the pipeline |
+| `get_table_schema` | Get columns and metadata for a table |
+| `get_relationships` | Get table relationships (joins, dependencies) |
+| `search_columns` | Search columns by name pattern |
+| `get_execution_order` | Get topologically sorted execution order |
+| `find_pii_columns` | Find columns marked as PII |
+| `get_owners` | Get ownership information for tables/columns |
+| `get_columns_by_tag` | Find columns by metadata tag |
+
+#### Available MCP Resources
+
+| Resource URI | Description |
+|-------------|-------------|
+| `pipeline://schema` | Full schema of all tables and columns |
+| `pipeline://tables` | List of all tables with metadata |
+| `pipeline://tables/{name}` | Detailed info for a specific table |
 
 ## Architecture
 
