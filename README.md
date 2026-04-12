@@ -810,6 +810,10 @@ clgraph analyze PATH [--dialect DIALECT] [--format table|json|dot]
 | `--dialect` | `bigquery` | SQL dialect (bigquery, snowflake, postgres, mysql, duckdb, clickhouse, …) |
 | `--format`, `-f` | `table` | Output format: **table** (Rich table), **json** (machine-readable), **dot** (Graphviz) |
 
+> **See it in action:** [Step 1 — Rich table output](#step-1--analyze-the-pipeline) · [Step 2 — JSON output](#step-2--get-json-output-for-ciscripts) · [Step 3 — Graphviz DOT](#step-3--generate-a-graphviz-diagram)
+>
+> **Related:** [Single Query Column Lineage](#single-query-column-lineage) · [Multi-Query Pipeline Lineage](#multi-query-pipeline-lineage) · [Metadata from SQL Comments](#metadata-from-sql-comments) · [Metadata Management and Export](#metadata-management-and-export)
+
 ### `clgraph diff`
 
 Compare lineage between two pipeline versions — useful for reviewing the impact of SQL changes in PRs.
@@ -824,6 +828,8 @@ clgraph diff OLD_PATH NEW_PATH [--dialect DIALECT] [--format table|json]
 | `NEW_PATH` | *(required)* | Path to new SQL file or directory |
 | `--dialect` | `bigquery` | SQL dialect |
 | `--format`, `-f` | `table` | Output format: **table** or **json** |
+
+> **See it in action:** [Step 4 — Diff table output](#step-4--diff-two-versions-to-review-impact) · [Step 5 — Diff JSON output](#step-5--get-diff-as-json-for-automation)
 
 ### `clgraph mcp`
 
@@ -841,6 +847,10 @@ clgraph mcp --pipeline PATH [--dialect DIALECT] [--transport stdio|http] [--no-l
 | `--no-llm-tools` | `false` | Exclude LLM-dependent tools from the server |
 
 Requires: `pip install clgraph[mcp]`
+
+> **See it in action:** [Step 6 — MCP server setup](#step-6--serve-lineage-to-ai-via-mcp)
+>
+> **Related:** [MCP Server (Claude Desktop / AI Agents)](#mcp-server-claude-desktop--ai-agents) · [Lineage Tools (Programmatic Access)](#lineage-tools-programmatic-access)
 
 ---
 
