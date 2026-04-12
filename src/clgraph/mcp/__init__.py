@@ -1,12 +1,14 @@
 """
 MCP Server for clgraph lineage tools.
 
-Exposes lineage tools via the Model Context Protocol (MCP),
-allowing external LLMs and agents to interact with pipeline lineage.
+Uses FastMCP 3.x for automatic tool registration and multi-transport support.
 
 Usage:
-    # As a module
+    # As a module (stdio for Claude Desktop)
     python -m clgraph.mcp --pipeline path/to/queries/
+
+    # HTTP transport (for remote access)
+    python -m clgraph.mcp --pipeline path/to/queries/ --transport http
 
     # In Claude Desktop config
     {
