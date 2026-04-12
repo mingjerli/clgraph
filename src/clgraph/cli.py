@@ -10,10 +10,22 @@ Usage:
 """
 
 import json
+from enum import Enum
 from pathlib import Path
 
 import typer
 from typing_extensions import Annotated
+
+
+class AnalyzeFormat(str, Enum):
+    table = "table"
+    json = "json"
+    dot = "dot"
+
+
+class DiffFormat(str, Enum):
+    table = "table"
+    json = "json"
 
 app = typer.Typer(
     name="clgraph",
@@ -138,9 +150,9 @@ def analyze(
         typer.Option(help="SQL dialect"),
     ] = "bigquery",
     output_format: Annotated[
-        str,
+        AnalyzeFormat,
         typer.Option("--format", "-f", help="Output format: table, json, dot"),
-    ] = "table",
+    ] = AnalyzeFormat.table,
 ):
     """Analyze SQL files and display column lineage summary."""
     if not path.exists():
@@ -149,9 +161,9 @@ def analyze(
 
     pipeline = _load_pipeline(path, dialect)
 
-    if output_format == "json":
+    if output_format == AnalyzeFormat.json:
         _print_json_summary(pipeline)
-    elif output_format == "dot":
+    elif output_format == AnalyzeFormat.dot:
         _print_dot(pipeline)
     else:
         _print_table_summary(pipeline)
@@ -172,9 +184,9 @@ def diff(
         typer.Option(help="SQL dialect"),
     ] = "bigquery",
     output_format: Annotated[
-        str,
+        DiffFormat,
         typer.Option("--format", "-f", help="Output format: table, json"),
-    ] = "table",
+    ] = DiffFormat.table,
 ):
     """Compare lineage between two SQL pipeline versions."""
     if not old_path.exists():
@@ -189,7 +201,7 @@ def diff(
 
     diff_result = new_pipeline.diff(old_pipeline)
 
-    if output_format == "json":
+    if output_format == DiffFormat.json:
         output = {
             "columns_added": diff_result.columns_added,
             "columns_removed": diff_result.columns_removed,
