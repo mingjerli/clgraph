@@ -788,6 +788,203 @@ The server exposes all clgraph lineage tools:
 | `pipeline://tables` | List of all tables with metadata |
 | `pipeline://tables/{name}` | Detailed info for a specific table |
 
+## CLI Reference
+
+clgraph ships a command-line interface for analysing SQL lineage without writing Python.
+
+```
+clgraph [COMMAND] [OPTIONS]
+```
+
+### `clgraph analyze`
+
+Parse SQL files and display a column-lineage summary.
+
+```bash
+clgraph analyze PATH [--dialect DIALECT] [--format table|json|dot]
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `PATH` | *(required)* | SQL file, directory of `.sql` files, or JSON pipeline file |
+| `--dialect` | `bigquery` | SQL dialect (bigquery, snowflake, postgres, mysql, duckdb, clickhouse, …) |
+| `--format`, `-f` | `table` | Output format: **table** (Rich table), **json** (machine-readable), **dot** (Graphviz) |
+
+### `clgraph diff`
+
+Compare lineage between two pipeline versions — useful for reviewing the impact of SQL changes in PRs.
+
+```bash
+clgraph diff OLD_PATH NEW_PATH [--dialect DIALECT] [--format table|json]
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `OLD_PATH` | *(required)* | Path to old SQL file or directory |
+| `NEW_PATH` | *(required)* | Path to new SQL file or directory |
+| `--dialect` | `bigquery` | SQL dialect |
+| `--format`, `-f` | `table` | Output format: **table** or **json** |
+
+### `clgraph mcp`
+
+Start an MCP server so AI assistants (Claude Desktop, Cursor, etc.) can query your lineage graph.
+
+```bash
+clgraph mcp --pipeline PATH [--dialect DIALECT] [--transport stdio|http] [--no-llm-tools]
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--pipeline`, `-p` | *(required)* | Path to SQL directory or JSON pipeline file |
+| `--dialect` | `bigquery` | SQL dialect |
+| `--transport` | `stdio` | Transport type: **stdio** (Claude Desktop) or **http** (remote clients) |
+| `--no-llm-tools` | `false` | Exclude LLM-dependent tools from the server |
+
+Requires: `pip install clgraph[mcp]`
+
+---
+
+## End-to-End CLI Walkthrough
+
+This walkthrough uses the example files in [`examples/cli_e2e/`](examples/cli_e2e/).
+The pipeline has three SQL files: `users`, `orders`, and a `user_spend` mart.
+
+### Step 1 — Analyze the pipeline
+
+```bash
+$ clgraph analyze examples/cli_e2e/v1/
+```
+
+```
+                       Pipeline Tables
+┏━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━┓
+┃ Table         ┃ Type    ┃ Columns ┃ Upstream ┃ Downstream ┃
+┡━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━┩
+│ users         │ derived │       4 │        1 │          1 │
+│ source_users  │ source  │       4 │        0 │          1 │
+│ orders        │ derived │       4 │        1 │          1 │
+│ source_orders │ source  │       4 │        0 │          1 │
+│ user_spend    │ derived │       7 │        2 │          0 │
+└───────────────┴─────────┴─────────┴──────────┴────────────┘
+
+5 tables, 23 columns, 15 lineage edges
+```
+
+clgraph discovered 5 tables (2 sources, 2 intermediate, 1 final mart) and traced 15 column-level lineage edges — all from static SQL analysis.
+
+### Step 2 — Get JSON output for CI/scripts
+
+```bash
+$ clgraph analyze examples/cli_e2e/v1/ --format json
+```
+
+```json
+{
+  "dialect": "bigquery",
+  "tables": [
+    {
+      "name": "users",
+      "is_source": false,
+      "columns": [
+        {"name": "user_id", "type": "direct_column", "pii": false},
+        {"name": "email",   "type": "direct_column", "pii": true},
+        {"name": "signup_date", "type": "direct_column", "pii": false},
+        {"name": "country", "type": "direct_column", "pii": false}
+      ]
+    }
+  ],
+  "columns": 23,
+  "edges": 15,
+  "issues": 0
+}
+```
+
+Notice that `email` already has `"pii": true` — parsed from the `[pii: true]` comment in the SQL.
+
+### Step 3 — Generate a Graphviz diagram
+
+```bash
+$ clgraph analyze examples/cli_e2e/v1/ --format dot | dot -Tpng -o lineage.png
+```
+
+The DOT output is a standard Graphviz `digraph` that shows table dependencies:
+
+```dot
+digraph {
+  rankdir=LR
+  source_users -> users [label=CREATE]
+  source_orders -> orders [label=CREATE]
+  users -> user_spend [label=CREATE]
+  orders -> user_spend [label=CREATE]
+}
+```
+
+### Step 4 — Diff two versions to review impact
+
+Now suppose a teammate adds a `tier` column to users, a `discount` column to orders,
+and updates `user_spend` to compute `lifetime_net_spend`. Compare old vs new:
+
+```bash
+$ clgraph diff examples/cli_e2e/v1/ examples/cli_e2e/v2/
+```
+
+```
++6 columns added
+  + source_orders.discount
+  + orders.discount
+  + user_spend.tier
+  + users.tier
+  + user_spend.lifetime_net_spend
+  + source_users.tier
+```
+
+The diff tells you exactly which columns were added, removed, or modified across the entire pipeline — perfect for code review or CI gates.
+
+### Step 5 — Get diff as JSON for automation
+
+```bash
+$ clgraph diff examples/cli_e2e/v1/ examples/cli_e2e/v2/ --format json
+```
+
+```json
+{
+  "columns_added": [
+    "source_orders.discount",
+    "orders.discount",
+    "source_users.tier",
+    "user_spend.lifetime_net_spend",
+    "users.tier",
+    "user_spend.tier"
+  ],
+  "columns_removed": [],
+  "columns_modified": [],
+  "has_changes": true
+}
+```
+
+### Step 6 — Serve lineage to AI via MCP
+
+```bash
+$ clgraph mcp --pipeline examples/cli_e2e/v1/
+```
+
+This starts an MCP server on stdio. Connect it to Claude Desktop by adding to your config:
+
+```json
+{
+  "mcpServers": {
+    "clgraph": {
+      "command": "clgraph",
+      "args": ["mcp", "--pipeline", "/path/to/your/sql/"]
+    }
+  }
+}
+```
+
+Then ask Claude: *"What tables does user_spend depend on?"* or *"Which columns contain PII?"*
+
+---
+
 ## Architecture
 
 > 📊 **[View the complete architecture diagram](clgraph-simple-diagram.md)** - A visual overview of the 4-stage flow from SQL input to applications.
