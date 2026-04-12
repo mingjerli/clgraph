@@ -30,7 +30,6 @@ from .table import TableDependencyGraph
 logger = logging.getLogger(__name__)
 
 
-
 class Pipeline:
     """
     Main pipeline class for SQL workflow orchestration with integrated lineage analysis.

@@ -40,7 +40,19 @@ def _find_agg_node(sql: str, dialect: str | None = None) -> exp.Expression:
     stmt = sqlglot.parse_one(f"SELECT {sql} FROM t", dialect=dialect)
     expr = stmt.expressions[0]  # type: ignore[union-attr]
     for node in expr.walk():
-        if isinstance(node, (exp.AggFunc, exp.Count, exp.Sum, exp.Avg, exp.Min, exp.Max, exp.ArrayAgg, exp.GroupConcat)):
+        if isinstance(
+            node,
+            (
+                exp.AggFunc,
+                exp.Count,
+                exp.Sum,
+                exp.Avg,
+                exp.Min,
+                exp.Max,
+                exp.ArrayAgg,
+                exp.GroupConcat,
+            ),
+        ):
             return node
     raise ValueError(f"No aggregate node found in: {sql}")
 
@@ -378,9 +390,7 @@ class TestParseAggregateSpecCoverage:
 
     def test_array_agg_with_qualified_order_by(self):
         """Test ARRAY_AGG with table-qualified ORDER BY column."""
-        expr = _parse_expr(
-            "ARRAY_AGG(t.product_id ORDER BY t.purchase_date)", dialect="bigquery"
-        )
+        expr = _parse_expr("ARRAY_AGG(t.product_id ORDER BY t.purchase_date)", dialect="bigquery")
         result = parse_aggregate_spec(expr)
 
         assert result is not None

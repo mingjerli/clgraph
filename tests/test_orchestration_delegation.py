@@ -1,4 +1,5 @@
 """Verify orchestration methods still exist and delegate correctly."""
+
 import pytest
 
 from clgraph import Pipeline

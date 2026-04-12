@@ -342,9 +342,7 @@ def extract_columns_from_expr(expr_str: str, default_table: str) -> List[Tuple[s
         for col in parsed.find_all(exp.Column):
             table_ref = default_table
             if hasattr(col, "table") and col.table:
-                table_ref = (
-                    str(col.table.name) if hasattr(col.table, "name") else str(col.table)
-                )
+                table_ref = str(col.table.name) if hasattr(col.table, "name") else str(col.table)
             col_name = col.name
             result.append((table_ref, col_name))
     except (sqlglot.errors.SqlglotError, ValueError, TypeError):

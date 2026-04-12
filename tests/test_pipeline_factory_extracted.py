@@ -147,17 +147,13 @@ class TestGenerateQueryId:
 
     def test_insert_into(self):
         id_counts: dict = {}
-        result = generate_query_id(
-            "INSERT INTO staging SELECT a FROM raw", "bigquery", id_counts
-        )
+        result = generate_query_id("INSERT INTO staging SELECT a FROM raw", "bigquery", id_counts)
         assert result == "insert_staging"
 
     def test_duplicate_gets_suffix(self):
         id_counts: dict = {}
         generate_query_id("CREATE TABLE staging AS SELECT a FROM raw", "bigquery", id_counts)
-        result = generate_query_id(
-            "INSERT INTO staging SELECT a FROM raw2", "bigquery", id_counts
-        )
+        result = generate_query_id("INSERT INTO staging SELECT a FROM raw2", "bigquery", id_counts)
         # Second reference to staging table should get disambiguated
         assert "staging" in result
 
@@ -181,9 +177,7 @@ class TestGenerateQueryId:
 
     def test_insert_into_select(self):
         id_counts: dict = {}
-        result = generate_query_id(
-            "INSERT INTO target SELECT a FROM source", "bigquery", id_counts
-        )
+        result = generate_query_id("INSERT INTO target SELECT a FROM source", "bigquery", id_counts)
         assert isinstance(result, str)
         assert len(result) > 0
 
@@ -206,7 +200,9 @@ class TestGenerateQueryId:
 
     def test_update_statement(self):
         id_counts: dict = {}
-        result = generate_query_id("UPDATE users SET name = 'x' WHERE id = 1", "bigquery", id_counts)
+        result = generate_query_id(
+            "UPDATE users SET name = 'x' WHERE id = 1", "bigquery", id_counts
+        )
         assert isinstance(result, str)
         assert len(result) > 0
 
@@ -236,7 +232,9 @@ class TestCreateFromSqlString:
         assert len(pipeline.table_graph.queries) == 2
 
     def test_splits_on_semicolon(self):
-        sql = "CREATE TABLE staging AS SELECT a FROM raw; CREATE TABLE final AS SELECT a FROM staging"
+        sql = (
+            "CREATE TABLE staging AS SELECT a FROM raw; CREATE TABLE final AS SELECT a FROM staging"
+        )
         pipeline = create_from_sql_string(sql)
 
         assert "create_staging" in pipeline.table_graph.queries
@@ -266,10 +264,12 @@ class TestCreateFromJson:
 
     def _get_json_data(self):
         """Helper to create valid JSON pipeline data."""
-        pipeline = create_from_tuples([
-            ("q1", "CREATE TABLE t1 AS SELECT a, b FROM raw"),
-            ("q2", "CREATE TABLE t2 AS SELECT a FROM t1"),
-        ])
+        pipeline = create_from_tuples(
+            [
+                ("q1", "CREATE TABLE t1 AS SELECT a, b FROM raw"),
+                ("q2", "CREATE TABLE t2 AS SELECT a FROM t1"),
+            ]
+        )
         return pipeline.to_json()
 
     def test_basic(self):
@@ -302,9 +302,11 @@ class TestCreateFromJson:
 
     def test_apply_metadata_restores_descriptions(self):
         """Metadata fields (description, owner, pii, tags) are restored from JSON."""
-        pipeline_orig = create_from_tuples([
-            ("q1", "CREATE TABLE t1 AS SELECT a FROM raw"),
-        ])
+        pipeline_orig = create_from_tuples(
+            [
+                ("q1", "CREATE TABLE t1 AS SELECT a FROM raw"),
+            ]
+        )
         # Manually set metadata on a column
         for col in pipeline_orig.columns.values():
             if col.column_name == "a" and "t1" in col.full_name:
@@ -334,9 +336,11 @@ class TestCreateFromJsonFile:
     """Tests for create_from_json_file factory function."""
 
     def test_basic(self):
-        pipeline_orig = create_from_tuples([
-            ("q1", "CREATE TABLE t1 AS SELECT a FROM raw"),
-        ])
+        pipeline_orig = create_from_tuples(
+            [
+                ("q1", "CREATE TABLE t1 AS SELECT a FROM raw"),
+            ]
+        )
         data = pipeline_orig.to_json()
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
@@ -358,12 +362,8 @@ class TestCreateFromSqlFiles:
 
     def test_basic(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            (Path(tmpdir) / "staging.sql").write_text(
-                "CREATE TABLE staging AS SELECT a FROM raw"
-            )
-            (Path(tmpdir) / "final.sql").write_text(
-                "CREATE TABLE final AS SELECT a FROM staging"
-            )
+            (Path(tmpdir) / "staging.sql").write_text("CREATE TABLE staging AS SELECT a FROM raw")
+            (Path(tmpdir) / "final.sql").write_text("CREATE TABLE final AS SELECT a FROM staging")
 
             pipeline = create_from_sql_files(tmpdir)
 
@@ -372,9 +372,7 @@ class TestCreateFromSqlFiles:
 
     def test_query_ids_from_filenames(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            (Path(tmpdir) / "my_query.sql").write_text(
-                "CREATE TABLE t1 AS SELECT a FROM raw"
-            )
+            (Path(tmpdir) / "my_query.sql").write_text("CREATE TABLE t1 AS SELECT a FROM raw")
 
             pipeline = create_from_sql_files(tmpdir)
 
@@ -408,9 +406,7 @@ class TestCreateFromSqlFiles:
     def test_invalid_query_id_from_raises(self):
         """Invalid query_id_from value raises ValueError."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            (Path(tmpdir) / "q1.sql").write_text(
-                "CREATE TABLE t1 AS SELECT a FROM raw"
-            )
+            (Path(tmpdir) / "q1.sql").write_text("CREATE TABLE t1 AS SELECT a FROM raw")
             with pytest.raises(ValueError, match="query_id_from"):
                 create_from_sql_files(tmpdir, query_id_from="invalid_option")
 
@@ -468,9 +464,11 @@ class TestBackwardCompatibility:
         assert isinstance(pipeline, Pipeline)
 
     def test_from_json_still_works(self):
-        pipeline_orig = Pipeline.from_tuples([
-            ("q1", "CREATE TABLE t1 AS SELECT a FROM raw"),
-        ])
+        pipeline_orig = Pipeline.from_tuples(
+            [
+                ("q1", "CREATE TABLE t1 AS SELECT a FROM raw"),
+            ]
+        )
         data = pipeline_orig.to_json()
         pipeline = Pipeline.from_json(data)
 
@@ -479,9 +477,7 @@ class TestBackwardCompatibility:
 
     def test_from_sql_files_still_works(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            (Path(tmpdir) / "q1.sql").write_text(
-                "CREATE TABLE t1 AS SELECT a FROM raw"
-            )
+            (Path(tmpdir) / "q1.sql").write_text("CREATE TABLE t1 AS SELECT a FROM raw")
             pipeline = Pipeline.from_sql_files(tmpdir)
 
         assert isinstance(pipeline, Pipeline)

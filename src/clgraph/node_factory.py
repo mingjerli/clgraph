@@ -69,9 +69,7 @@ def find_or_create_star_node(
     return node
 
 
-def resolve_external_table_name(
-    external_table_columns: Dict, table_name: str
-) -> Optional[str]:
+def resolve_external_table_name(external_table_columns: Dict, table_name: str) -> Optional[str]:
     """
     Resolve a table name to its full qualified version in external_table_columns.
 
@@ -95,9 +93,7 @@ def resolve_external_table_name(
     return None
 
 
-def find_or_create_table_star_node(
-    graph: ColumnLineageGraph, table_name: str
-) -> ColumnNode:
+def find_or_create_table_star_node(graph: ColumnLineageGraph, table_name: str) -> ColumnNode:
     """Find or create star node for a base table."""
     node_key = f"{table_name}.*"
 

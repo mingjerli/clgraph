@@ -6,7 +6,6 @@ graph structure. These tests are written against RecursiveLineageBuilder and
 Pipeline so they validate behavior, not implementation internals.
 """
 
-
 from clgraph import RecursiveLineageBuilder
 
 
@@ -115,7 +114,11 @@ class TestSetOperations:
         graph = builder.build()
 
         # UNION result column is named main.id (not output.id)
-        union_result_nodes = [k for k in graph.nodes if ".id" in k and not k.startswith("users") and not k.startswith("admins")]
+        union_result_nodes = [
+            k
+            for k in graph.nodes
+            if ".id" in k and not k.startswith("users") and not k.startswith("admins")
+        ]
         assert len(union_result_nodes) > 0
 
     def test_union_sources_linked(self):

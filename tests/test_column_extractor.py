@@ -8,7 +8,6 @@ Covers:
 - Backward compatibility via RecursiveLineageBuilder
 """
 
-
 from clgraph import Pipeline, RecursiveLineageBuilder
 from clgraph.column_extractor import (
     ExtractionContext,
