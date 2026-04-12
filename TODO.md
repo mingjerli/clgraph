@@ -4,7 +4,7 @@ Track progress on adding real-world data pipeline example notebooks.
 
 ## Examples
 
-- [ ] **A. dbt Jaffle Shop-style ELT** (`examples/jaffle_shop_elt_pipeline.ipynb`)
+- [x] **A. dbt Jaffle Shop-style ELT** (`examples/jaffle_shop_elt_pipeline.ipynb`)
   - E-commerce pipeline: raw sources (customers, orders, payments) -> staging -> intermediate -> marts
   - Multi-source fan-in, dimension/fact modeling, PII tracking, impact analysis
 
