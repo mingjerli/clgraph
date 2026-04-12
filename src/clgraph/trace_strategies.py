@@ -85,9 +85,7 @@ def trace_aggregate_star(
     # Add warning only if multiple tables are involved (ambiguous case)
     has_multiple_sources = len(unit.depends_on_tables) + len(unit.depends_on_units) > 1
     if has_multiple_sources:
-        warning = (
-            f"Ambiguous lineage: {col_info['expression']} uses * with multiple sources."
-        )
+        warning = f"Ambiguous lineage: {col_info['expression']} uses * with multiple sources."
         output_node.warnings.append(warning)
 
     # Link to ALL tables involved.
@@ -98,9 +96,7 @@ def trace_aggregate_star(
             # Schema is known — link to individual columns
             column_names = external_table_columns[resolved_table]
             for col_name in column_names:
-                source_node = find_or_create_table_column_node(
-                    graph, resolved_table, col_name
-                )
+                source_node = find_or_create_table_column_node(graph, resolved_table, col_name)
                 edge = ColumnEdge(
                     from_node=source_node,
                     to_node=output_node,
@@ -211,18 +207,12 @@ def trace_merge_columns(
             source_node = find_column_in_unit(source_unit, col_name)
         if not source_node:
             # Try as base table
-            base_table = (
-                resolve_base_table_name(unit, table_ref) if table_ref else None
-            )
+            base_table = resolve_base_table_name(unit, table_ref) if table_ref else None
             if base_table:
-                source_node = find_or_create_table_column_node(
-                    graph, base_table, col_name
-                )
+                source_node = find_or_create_table_column_node(graph, base_table, col_name)
             elif table_ref:
                 # Fallback: use table_ref directly
-                source_node = find_or_create_table_column_node(
-                    graph, table_ref, col_name
-                )
+                source_node = find_or_create_table_column_node(graph, table_ref, col_name)
 
         if source_node:
             edge = ColumnEdge(
@@ -255,9 +245,7 @@ def trace_regular_columns(
         # Unpack source reference (now includes JSON and nested access metadata)
         # Handle different tuple formats for backward compatibility
         if len(source_ref) >= 6:
-            table_ref, col_name, json_path, json_function, nested_path, access_type = (
-                source_ref
-            )
+            table_ref, col_name, json_path, json_function, nested_path, access_type = source_ref
         elif len(source_ref) == 4:
             table_ref, col_name, json_path, json_function = source_ref
             nested_path, access_type = None, None
@@ -348,9 +336,7 @@ def trace_regular_columns(
             continue
 
         source_unit = (
-            resolve_source_unit(unit, effective_table_ref)
-            if effective_table_ref
-            else None
+            resolve_source_unit(unit, effective_table_ref) if effective_table_ref else None
         )
 
         # Parse aggregate spec if this is an aggregate edge
@@ -381,9 +367,7 @@ def trace_regular_columns(
         else:
             # Reference to base table — resolve alias to actual table name
             base_table = (
-                resolve_base_table_name(unit, effective_table_ref)
-                if effective_table_ref
-                else None
+                resolve_base_table_name(unit, effective_table_ref) if effective_table_ref else None
             )
             if base_table:
                 source_node = find_or_create_table_column_node(graph, base_table, col_name)

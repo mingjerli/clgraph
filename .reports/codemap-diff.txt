@@ -1,0 +1,21 @@
+Codemap Diff Report
+===================
+Generated: 2026-04-11
+Previous version: None (initial generation)
+
+Files created:
+  codemaps/architecture.md  - Overall architecture and layer diagram
+  codemaps/backend.md       - Backend module structure (22 modules, 18,205 LOC)
+  codemaps/frontend.md      - Frontend (N/A - backend-only library)
+  codemaps/data.md          - Data models and schemas (models.py, 935 LOC)
+
+Diff percentage: N/A (first generation)
+
+Summary:
+  - clgraph is a Python 3.10+ SQL column lineage library (18,205 LOC)
+  - Core engine: query_parser.py (2,354L) + lineage_builder.py (3,419L)
+  - 5 orchestrator integrations (Airflow, Dagster, Prefect, Kestra, Mage)
+  - 11+ lineage intelligence tools + conversational agent
+  - MCP server for Claude Desktop integration
+  - 48 test files with comprehensive coverage
+  - No frontend (Graphviz for visualization, Jupyter for interactive use)

@@ -8,7 +8,6 @@ Covers:
 - Functional tests for PipelineLineageBuilder
 """
 
-
 from clgraph.pipeline import Pipeline
 
 
@@ -90,7 +89,10 @@ class TestPipelineLineageBuilderFunctional:
         """PipelineLineageBuilder correctly builds cross-query lineage."""
         queries = [
             ("q1", "CREATE TABLE staging AS SELECT customer_id, amount FROM raw_orders"),
-            ("q2", "CREATE TABLE final AS SELECT customer_id, SUM(amount) AS total FROM staging GROUP BY customer_id"),
+            (
+                "q2",
+                "CREATE TABLE final AS SELECT customer_id, SUM(amount) AS total FROM staging GROUP BY customer_id",
+            ),
         ]
         pipeline = Pipeline(queries, dialect="bigquery")
 
@@ -134,7 +136,8 @@ class TestPipelineLineageBuilderFunctional:
 
         # With star expansion, final should have explicit columns
         final_cols = [
-            col for col in pipeline.columns.values()
+            col
+            for col in pipeline.columns.values()
             if col.table_name == "final" and col.layer == "output" and not col.is_star
         ]
         assert len(final_cols) > 0, "Star expansion should produce explicit output columns"
@@ -147,7 +150,10 @@ class TestPipelineLineageBuilderFunctional:
         """PipelineLineageBuilder handles 3-query chain with proper cross-query edges."""
         queries = [
             ("q1", "CREATE TABLE raw_clean AS SELECT id, val FROM raw_source"),
-            ("q2", "CREATE TABLE aggregated AS SELECT id, SUM(val) AS total FROM raw_clean GROUP BY id"),
+            (
+                "q2",
+                "CREATE TABLE aggregated AS SELECT id, SUM(val) AS total FROM raw_clean GROUP BY id",
+            ),
             ("q3", "CREATE TABLE report AS SELECT id, total FROM aggregated WHERE total > 0"),
         ]
         pipeline = Pipeline(queries, dialect="bigquery")
@@ -175,7 +181,8 @@ class TestPipelineLineageBuilderFunctional:
         pipeline = Pipeline(queries, dialect="bigquery")
 
         result_cols = [
-            col for col in pipeline.columns.values()
+            col
+            for col in pipeline.columns.values()
             if col.table_name == "result" and col.layer == "output"
         ]
         assert len(result_cols) > 0
@@ -193,4 +200,6 @@ class TestPipelineLineageBuilderFunctional:
 
         # There should be an edge from staging.user_id to final.user_id
         edge_pairs = {(e.from_node.full_name, e.to_node.full_name) for e in pipeline.edges}
-        assert any("staging.user_id" in pair[0] and "final.user_id" in pair[1] for pair in edge_pairs)
+        assert any(
+            "staging.user_id" in pair[0] and "final.user_id" in pair[1] for pair in edge_pairs
+        )

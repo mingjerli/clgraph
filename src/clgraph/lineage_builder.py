@@ -141,7 +141,12 @@ class RecursiveLineageBuilder:
         # 3. For each output column, trace to its sources
         for col_info in output_cols:
             # Create output node
-            output_node = create_column_node(unit=unit, col_info=col_info, metadata_extractor=self.metadata_extractor, is_output=True)
+            output_node = create_column_node(
+                unit=unit,
+                col_info=col_info,
+                metadata_extractor=self.metadata_extractor,
+                is_output=True,
+            )
             self.lineage_graph.add_node(output_node)
 
             # 4. Trace dependencies recursively
@@ -494,7 +499,9 @@ class RecursiveLineageBuilder:
                 table_name, col_name = parts
 
                 # Create source node for the correlated column
-                source_node = find_or_create_table_column_node(self.lineage_graph, table_name, col_name)
+                source_node = find_or_create_table_column_node(
+                    self.lineage_graph, table_name, col_name
+                )
 
                 # Create a correlation context node for the LATERAL subquery
                 # This represents the fact that the LATERAL uses this column for correlation
@@ -690,7 +697,10 @@ class RecursiveLineageBuilder:
         # Branch 1: Star passthrough
         if col_info.get("is_star"):
             trace_star_passthrough(
-                self.lineage_graph, unit, output_node, col_info,
+                self.lineage_graph,
+                unit,
+                output_node,
+                col_info,
                 self.unit_graph,
             )
             return
@@ -698,8 +708,12 @@ class RecursiveLineageBuilder:
         # Branch 2: COUNT(*) / aggregate with star
         if has_star_in_aggregate(col_info.get("ast_node")):
             trace_aggregate_star(
-                self.lineage_graph, unit, output_node, col_info,
-                self.unit_columns_cache, self.external_table_columns,
+                self.lineage_graph,
+                unit,
+                output_node,
+                col_info,
+                self.unit_columns_cache,
+                self.external_table_columns,
                 self.unit_graph,
             )
             return
@@ -707,7 +721,10 @@ class RecursiveLineageBuilder:
         # Branch 3: UNION/INTERSECT/EXCEPT
         if col_info.get("type") == "union_column" and "source_branches" in col_info:
             trace_set_operation(
-                self.lineage_graph, unit, output_node, col_info,
+                self.lineage_graph,
+                unit,
+                output_node,
+                col_info,
                 self.unit_columns_cache,
             )
             return
@@ -715,17 +732,27 @@ class RecursiveLineageBuilder:
         # Branch 4: MERGE
         if col_info.get("type") in ("merge_match", "merge_update", "merge_insert"):
             trace_merge_columns(
-                self.lineage_graph, unit, output_node, col_info,
-                self._resolve_source_unit, self._resolve_base_table_name,
+                self.lineage_graph,
+                unit,
+                output_node,
+                col_info,
+                self._resolve_source_unit,
+                self._resolve_base_table_name,
                 self._find_column_in_unit,
             )
             return
 
         # Branch 5: Regular columns
         trace_regular_columns(
-            self.lineage_graph, unit, output_node, col_info, source_columns,
-            self._resolve_source_unit, self._resolve_base_table_name,
-            self._find_column_in_unit, self._get_default_from_table,
+            self.lineage_graph,
+            unit,
+            output_node,
+            col_info,
+            source_columns,
+            self._resolve_source_unit,
+            self._resolve_base_table_name,
+            self._find_column_in_unit,
+            self._get_default_from_table,
         )
 
     def _resolve_source_unit(

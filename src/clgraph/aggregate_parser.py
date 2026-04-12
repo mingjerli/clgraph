@@ -240,9 +240,7 @@ def parse_aggregate_spec(ast_node: Optional[exp.Expression]) -> Optional[Aggrega
                     col_name = f"{order_expr.table}.{order_expr.name}"
 
             if col_name:
-                order_by.append(
-                    OrderByColumn(column=col_name, direction=direction, nulls=nulls)
-                )
+                order_by.append(OrderByColumn(column=col_name, direction=direction, nulls=nulls))
 
     # Extract separator for STRING_AGG/LISTAGG
     separator = None
