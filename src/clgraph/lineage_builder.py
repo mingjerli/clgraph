@@ -5,9 +5,8 @@ Builds complete column lineage graphs by recursively tracing through query units
 Includes SQLColumnTracer wrapper for backward compatibility (re-exported from sql_column_tracer).
 """
 
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
-import sqlglot
 from sqlglot import exp
 
 from .aggregate_parser import (
@@ -52,7 +51,6 @@ from .lineage_utils import (  # noqa: F401, E402
 )
 from .metadata_parser import MetadataExtractor
 from .models import (
-    AggregateType,
     ColumnEdge,
     ColumnLineageGraph,
     ColumnNode,
