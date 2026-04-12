@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -12,6 +13,11 @@ from typer.testing import CliRunner
 from clgraph.cli import app
 
 runner = CliRunner()
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences from text."""
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
 
 @pytest.fixture
@@ -189,8 +195,9 @@ class TestMCPCommand:
     def test_mcp_help(self):
         result = runner.invoke(app, ["mcp", "--help"])
         assert result.exit_code == 0
-        assert "--pipeline" in result.stdout
-        assert "--transport" in result.stdout
+        output = _strip_ansi(result.stdout)
+        assert "--pipeline" in output
+        assert "--transport" in output
 
     def test_mcp_nonexistent_path(self):
         result = runner.invoke(app, ["mcp", "--pipeline", "/nonexistent"])
@@ -214,5 +221,6 @@ class TestHelpOutput:
     def test_analyze_help(self):
         result = runner.invoke(app, ["analyze", "--help"])
         assert result.exit_code == 0
-        assert "--dialect" in result.stdout
-        assert "--format" in result.stdout
+        output = _strip_ansi(result.stdout)
+        assert "--dialect" in output
+        assert "--format" in output
