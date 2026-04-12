@@ -27,6 +27,7 @@ class DiffFormat(str, Enum):
     table = "table"
     json = "json"
 
+
 app = typer.Typer(
     name="clgraph",
     help="Column lineage and pipeline dependency analysis for SQL.",
