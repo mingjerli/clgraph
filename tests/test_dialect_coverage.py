@@ -11,7 +11,7 @@ marked with ``pytest.mark.xfail`` to document known gaps.
 
 import pytest
 
-from clgraph import Pipeline, RecursiveLineageBuilder, SQLColumnTracer
+from clgraph import Pipeline, RecursiveLineageBuilder
 
 # ============================================================================
 # Helper utilities
@@ -25,11 +25,7 @@ def _output_column_names(graph):
 
 def _source_columns_for(graph, output_col):
     """Return source column names that feed into *output_col*."""
-    return {
-        e.from_node.column_name
-        for e in graph.edges
-        if e.to_node.column_name == output_col
-    }
+    return {e.from_node.column_name for e in graph.edges if e.to_node.column_name == output_col}
 
 
 # ============================================================================
@@ -474,8 +470,7 @@ class TestCrossDialectEquivalence:
                 baseline_cols = business_cols
             else:
                 assert business_cols == baseline_cols, (
-                    f"Dialect {dialect} produced {business_cols}, "
-                    f"expected {baseline_cols}"
+                    f"Dialect {dialect} produced {business_cols}, expected {baseline_cols}"
                 )
 
 

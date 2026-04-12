@@ -18,10 +18,7 @@ Tests cover:
 Total: 16 test cases
 """
 
-import pytest
-
 from clgraph import RecursiveLineageBuilder, SQLColumnTracer
-
 
 # ============================================================================
 # Test Group 1: Simple CASE WHEN
@@ -154,10 +151,10 @@ class TestCaseMultipleSources:
         ref_edges = [e for e in graph.edges if e.to_node.full_name == "output.reference_code"]
         source_tables = {e.from_node.table_name for e in ref_edges}
 
-        assert "orders" in source_tables or "o" in source_tables, \
-            "Orders table should be a source"
-        assert "shipments" in source_tables or "s" in source_tables, \
+        assert "orders" in source_tables or "o" in source_tables, "Orders table should be a source"
+        assert "shipments" in source_tables or "s" in source_tables, (
             "Shipments table should be a source"
+        )
 
     def test_case_multi_table_backward_lineage(self):
         """Backward lineage should identify required inputs from all joined tables."""
@@ -182,8 +179,9 @@ class TestCaseMultipleSources:
             all_cols.update(cols)
 
         assert "role" in all_cols, "Condition column from users should be required"
-        assert "full_access_level" in all_cols or "basic_access_level" in all_cols, \
+        assert "full_access_level" in all_cols or "basic_access_level" in all_cols, (
             "Result columns from permissions should be required"
+        )
 
 
 # ============================================================================
@@ -294,8 +292,9 @@ class TestCaseWithAggregates:
         count_edges = [e for e in graph.edges if e.to_node.full_name == "output.active_count"]
         source_columns = {e.from_node.column_name for e in count_edges}
 
-        assert "is_active" in source_columns or "employee_id" in source_columns, \
+        assert "is_active" in source_columns or "employee_id" in source_columns, (
             "At least the condition or result column should be traced"
+        )
 
 
 # ============================================================================

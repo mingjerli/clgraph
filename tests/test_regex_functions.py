@@ -14,8 +14,7 @@ Tests cover:
 
 import pytest
 
-from clgraph import RecursiveLineageBuilder, SQLColumnTracer
-
+from clgraph import RecursiveLineageBuilder
 
 # ============================================================================
 # Test Group 1: REGEXP_CONTAINS (BigQuery)
@@ -36,9 +35,7 @@ class TestRegexpContains:
         builder = RecursiveLineageBuilder(sql, dialect="bigquery")
         graph = builder.build()
 
-        is_example_edges = [
-            e for e in graph.edges if e.to_node.column_name == "is_example_domain"
-        ]
+        is_example_edges = [e for e in graph.edges if e.to_node.column_name == "is_example_domain"]
         assert len(is_example_edges) > 0
 
         source_columns = {e.from_node.column_name for e in is_example_edges}
@@ -81,9 +78,7 @@ class TestRegexpExtract:
         builder = RecursiveLineageBuilder(sql, dialect="snowflake")
         graph = builder.build()
 
-        area_code_edges = [
-            e for e in graph.edges if e.to_node.column_name == "area_code"
-        ]
+        area_code_edges = [e for e in graph.edges if e.to_node.column_name == "area_code"]
         assert len(area_code_edges) > 0
 
         source_columns = {e.from_node.column_name for e in area_code_edges}
@@ -108,9 +103,7 @@ class TestRegexpReplace:
         builder = RecursiveLineageBuilder(sql, dialect="bigquery")
         graph = builder.build()
 
-        clean_phone_edges = [
-            e for e in graph.edges if e.to_node.column_name == "clean_phone"
-        ]
+        clean_phone_edges = [e for e in graph.edges if e.to_node.column_name == "clean_phone"]
         assert len(clean_phone_edges) > 0
 
         source_columns = {e.from_node.column_name for e in clean_phone_edges}
@@ -126,9 +119,7 @@ class TestRegexpReplace:
         builder = RecursiveLineageBuilder(sql, dialect="snowflake")
         graph = builder.build()
 
-        sanitized_edges = [
-            e for e in graph.edges if e.to_node.column_name == "sanitized_address"
-        ]
+        sanitized_edges = [e for e in graph.edges if e.to_node.column_name == "sanitized_address"]
         assert len(sanitized_edges) > 0
 
         source_columns = {e.from_node.column_name for e in sanitized_edges}
@@ -178,9 +169,7 @@ class TestPostgresRegex:
         builder = RecursiveLineageBuilder(sql, dialect="postgres")
         graph = builder.build()
 
-        desc_edges = [
-            e for e in graph.edges if e.to_node.column_name == "description"
-        ]
+        desc_edges = [e for e in graph.edges if e.to_node.column_name == "description"]
         assert len(desc_edges) > 0
 
         source_columns = {e.from_node.column_name for e in desc_edges}
@@ -209,9 +198,7 @@ class TestRegexpInCaseWhen:
         builder = RecursiveLineageBuilder(sql, dialect="bigquery")
         graph = builder.build()
 
-        protocol_edges = [
-            e for e in graph.edges if e.to_node.column_name == "protocol_type"
-        ]
+        protocol_edges = [e for e in graph.edges if e.to_node.column_name == "protocol_type"]
         assert len(protocol_edges) > 0
 
         source_columns = {e.from_node.column_name for e in protocol_edges}
@@ -231,9 +218,7 @@ class TestRegexpInCaseWhen:
         builder = RecursiveLineageBuilder(sql, dialect="bigquery")
         graph = builder.build()
 
-        phone_edges = [
-            e for e in graph.edges if e.to_node.column_name == "normalized_phone"
-        ]
+        phone_edges = [e for e in graph.edges if e.to_node.column_name == "normalized_phone"]
         assert len(phone_edges) > 0
 
         source_columns = {e.from_node.column_name for e in phone_edges}
@@ -262,15 +247,11 @@ class TestRegexpInWhereClause:
         graph = builder.build()
 
         # user_id should still trace to source
-        user_id_edges = [
-            e for e in graph.edges if e.to_node.column_name == "user_id"
-        ]
+        user_id_edges = [e for e in graph.edges if e.to_node.column_name == "user_id"]
         assert len(user_id_edges) > 0
 
         # email_domain should trace back to email
-        domain_edges = [
-            e for e in graph.edges if e.to_node.column_name == "email_domain"
-        ]
+        domain_edges = [e for e in graph.edges if e.to_node.column_name == "email_domain"]
         assert len(domain_edges) > 0
 
         source_columns = {e.from_node.column_name for e in domain_edges}
@@ -295,9 +276,7 @@ class TestRegexpDialects:
         builder = RecursiveLineageBuilder(sql, dialect="bigquery")
         graph = builder.build()
 
-        clean_edges = [
-            e for e in graph.edges if e.to_node.column_name == "clean_name"
-        ]
+        clean_edges = [e for e in graph.edges if e.to_node.column_name == "clean_name"]
         assert len(clean_edges) > 0
 
         source_columns = {e.from_node.column_name for e in clean_edges}
@@ -313,9 +292,7 @@ class TestRegexpDialects:
         builder = RecursiveLineageBuilder(sql, dialect="postgres")
         graph = builder.build()
 
-        clean_edges = [
-            e for e in graph.edges if e.to_node.column_name == "clean_name"
-        ]
+        clean_edges = [e for e in graph.edges if e.to_node.column_name == "clean_name"]
         assert len(clean_edges) > 0
 
         source_columns = {e.from_node.column_name for e in clean_edges}
@@ -331,9 +308,7 @@ class TestRegexpDialects:
         builder = RecursiveLineageBuilder(sql, dialect="snowflake")
         graph = builder.build()
 
-        clean_edges = [
-            e for e in graph.edges if e.to_node.column_name == "clean_name"
-        ]
+        clean_edges = [e for e in graph.edges if e.to_node.column_name == "clean_name"]
         assert len(clean_edges) > 0
 
         source_columns = {e.from_node.column_name for e in clean_edges}
