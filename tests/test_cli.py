@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from typer.testing import CliRunner
@@ -102,6 +103,10 @@ class TestAnalyzeCommand:
         finally:
             os.unlink(csv_path)
 
+    def test_analyze_invalid_format(self, sql_dir):
+        result = runner.invoke(app, ["analyze", sql_dir, "--format", "xml"])
+        assert result.exit_code != 0
+
     def test_analyze_nonexistent_path(self):
         result = runner.invoke(app, ["analyze", "/nonexistent/path"])
         assert result.exit_code != 0
@@ -145,6 +150,35 @@ class TestDiffCommand:
             assert result.exit_code == 0
             assert "no" in result.stdout.lower()
 
+    def test_diff_single_sql_files(self, single_sql_file):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".sql", delete=False) as f:
+            f.write("""
+                WITH monthly AS (
+                    SELECT user_id, SUM(amount) as total, COUNT(*) as cnt
+                    FROM orders
+                    GROUP BY 1
+                )
+                SELECT u.name, m.total, m.cnt
+                FROM users u
+                JOIN monthly m ON u.id = m.user_id
+            """)
+            f.flush()
+            new_file = f.name
+
+        try:
+            result = runner.invoke(app, ["diff", single_sql_file, new_file])
+            assert result.exit_code == 0
+        finally:
+            os.unlink(new_file)
+
+    def test_diff_invalid_format(self):
+        with tempfile.TemporaryDirectory() as dir1, tempfile.TemporaryDirectory() as dir2:
+            sql = "CREATE TABLE t1 AS SELECT id FROM raw"
+            (Path(dir1) / "q1.sql").write_text(sql)
+            (Path(dir2) / "q1.sql").write_text(sql)
+            result = runner.invoke(app, ["diff", dir1, dir2, "--format", "xml"])
+            assert result.exit_code != 0
+
     def test_diff_nonexistent_path(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = runner.invoke(app, ["diff", "/nonexistent", tmpdir])
@@ -161,6 +195,12 @@ class TestMCPCommand:
     def test_mcp_nonexistent_path(self):
         result = runner.invoke(app, ["mcp", "--pipeline", "/nonexistent"])
         assert result.exit_code != 0
+
+    def test_mcp_missing_dependency(self, sql_dir):
+        with patch.dict("sys.modules", {"clgraph.mcp": None}):
+            result = runner.invoke(app, ["mcp", "--pipeline", sql_dir])
+            assert result.exit_code != 0
+            assert "mcp" in result.output.lower()
 
 
 class TestHelpOutput:
