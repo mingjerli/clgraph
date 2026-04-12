@@ -44,7 +44,7 @@ llm = [
 ]
 # MCP server for Claude Desktop integration
 mcp = [
-    "mcp>=1.0.0",
+    "fastmcp>=3.2.0",
 ]
 dev = [
     "pytest>=7.0.0",
