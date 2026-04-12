@@ -209,6 +209,9 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
+# Git worktrees
+.worktrees/
+
 # Demo applications and legacy code (excluded from source control)
 demo/clvisualize/
 python/
