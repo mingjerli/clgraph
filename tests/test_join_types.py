@@ -32,7 +32,6 @@ import pytest
 
 from clgraph import RecursiveLineageBuilder, SQLColumnTracer
 
-
 # ============================================================================
 # Test Group 1: INNER JOIN
 # ============================================================================
@@ -56,10 +55,7 @@ class TestInnerJoin:
         assert "output.order_id" in graph.nodes
         assert "output.amount" in graph.nodes
 
-        edges_dict = {
-            (e.from_node.full_name, e.to_node.full_name): e
-            for e in graph.edges
-        }
+        edges_dict = {(e.from_node.full_name, e.to_node.full_name): e for e in graph.edges}
         assert ("users.id", "output.id") in edges_dict
         assert ("users.name", "output.name") in edges_dict
         assert ("orders.order_id", "output.order_id") in edges_dict
@@ -103,10 +99,7 @@ class TestLeftJoin:
         assert "output.name" in graph.nodes
         assert "output.bio" in graph.nodes
 
-        edges_dict = {
-            (e.from_node.full_name, e.to_node.full_name): e
-            for e in graph.edges
-        }
+        edges_dict = {(e.from_node.full_name, e.to_node.full_name): e for e in graph.edges}
         assert ("users.id", "output.id") in edges_dict
         assert ("profiles.bio", "output.bio") in edges_dict
 
@@ -145,10 +138,7 @@ class TestRightJoin:
         assert "output.order_id" in graph.nodes
         assert "output.amount" in graph.nodes
 
-        edges_dict = {
-            (e.from_node.full_name, e.to_node.full_name): e
-            for e in graph.edges
-        }
+        edges_dict = {(e.from_node.full_name, e.to_node.full_name): e for e in graph.edges}
         assert ("users.name", "output.name") in edges_dict
         assert ("orders.order_id", "output.order_id") in edges_dict
 
@@ -188,10 +178,7 @@ class TestFullOuterJoin:
         assert "output.order_id" in graph.nodes
         assert "output.amount" in graph.nodes
 
-        edges_dict = {
-            (e.from_node.full_name, e.to_node.full_name): e
-            for e in graph.edges
-        }
+        edges_dict = {(e.from_node.full_name, e.to_node.full_name): e for e in graph.edges}
         assert ("users.id", "output.id") in edges_dict
         assert ("orders.amount", "output.amount") in edges_dict
 
@@ -232,10 +219,7 @@ class TestCrossJoin:
         assert "output.name" in graph.nodes
         assert "output.color_name" in graph.nodes
 
-        edges_dict = {
-            (e.from_node.full_name, e.to_node.full_name): e
-            for e in graph.edges
-        }
+        edges_dict = {(e.from_node.full_name, e.to_node.full_name): e for e in graph.edges}
         assert ("users.name", "output.name") in edges_dict
         assert ("colors.color_name", "output.color_name") in edges_dict
 
@@ -262,12 +246,8 @@ class TestSelfJoin:
         assert "output.manager" in graph.nodes
 
         # Both output columns trace back to employees.name
-        employee_edges = [
-            e for e in graph.edges if e.to_node.full_name == "output.employee"
-        ]
-        manager_edges = [
-            e for e in graph.edges if e.to_node.full_name == "output.manager"
-        ]
+        employee_edges = [e for e in graph.edges if e.to_node.full_name == "output.employee"]
+        manager_edges = [e for e in graph.edges if e.to_node.full_name == "output.manager"]
 
         assert len(employee_edges) > 0
         assert len(manager_edges) > 0
@@ -311,10 +291,7 @@ class TestMultipleJoins:
         assert "output.order_id" in graph.nodes
         assert "output.product_name" in graph.nodes
 
-        edges_dict = {
-            (e.from_node.full_name, e.to_node.full_name): e
-            for e in graph.edges
-        }
+        edges_dict = {(e.from_node.full_name, e.to_node.full_name): e for e in graph.edges}
         assert ("users.name", "output.name") in edges_dict
         assert ("orders.order_id", "output.order_id") in edges_dict
         assert ("products.product_name", "output.product_name") in edges_dict
@@ -362,9 +339,7 @@ class TestJoinWithSubquery:
         assert "output.total_amount" in graph.nodes
 
         # total_amount should trace back through the subquery to orders.amount
-        total_edges = [
-            e for e in graph.edges if e.to_node.full_name == "output.total_amount"
-        ]
+        total_edges = [e for e in graph.edges if e.to_node.full_name == "output.total_amount"]
         assert len(total_edges) > 0
 
     def test_join_subquery_backward_lineage(self):
@@ -406,12 +381,7 @@ class TestJoinConditionLineage:
         assert "output.name" in graph.nodes
         assert "output.amount" in graph.nodes
 
-        # The join-key columns should appear as source nodes in the graph
-        all_source_names = {
-            e.from_node.full_name for e in graph.edges
-        }
-        # users.id and orders.user_id are join keys; at minimum the selected
-        # columns (users.name, orders.amount) must have edges
+        # At minimum the selected columns (users.name, orders.amount) must have edges
         assert ("users.name", "output.name") in {
             (e.from_node.full_name, e.to_node.full_name) for e in graph.edges
         }
@@ -447,10 +417,7 @@ class TestJoinDialects:
         assert "output.order_id" in graph.nodes
         assert "output.amount" in graph.nodes
 
-        edges_dict = {
-            (e.from_node.full_name, e.to_node.full_name): e
-            for e in graph.edges
-        }
+        edges_dict = {(e.from_node.full_name, e.to_node.full_name): e for e in graph.edges}
         assert ("users.id", "output.id") in edges_dict
         assert ("orders.amount", "output.amount") in edges_dict
 

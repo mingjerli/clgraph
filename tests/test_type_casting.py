@@ -267,9 +267,9 @@ class TestCastDialects:
 
         edges = [e for e in graph.edges if e.to_node.column_name == "amount_int"]
         assert len(edges) > 0, f"No edges for amount_int in dialect={dialect}"
-        assert any(
-            e.from_node.column_name == "amount" for e in edges
-        ), f"Source column 'amount' not found in dialect={dialect}"
+        assert any(e.from_node.column_name == "amount" for e in edges), (
+            f"Source column 'amount' not found in dialect={dialect}"
+        )
 
     @pytest.mark.parametrize("dialect", ["bigquery", "postgres", "snowflake"])
     def test_cast_backward_lineage_across_dialects(self, dialect):
