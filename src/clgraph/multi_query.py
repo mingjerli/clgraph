@@ -259,6 +259,12 @@ class MultiQueryParser:
     def _extract_source_tables(self, ast: exp.Expression, tokenizer: TemplateTokenizer) -> Set[str]:
         """
         Extract all source tables referenced in the query (excluding destination table).
+
+        CTE aliases are filtered out so they don't leak into the table dependency
+        graph as phantom source tables. For example, in:
+            WITH source AS (SELECT * FROM raw.orders)
+            SELECT * FROM source
+        only `raw.orders` is returned, not the CTE alias `source`.
         """
         tables = set()
 
@@ -269,11 +275,21 @@ class MultiQueryParser:
             if ast.this:
                 destination_table = self._get_table_name(ast.this, tokenizer)
 
+        # Collect CTE alias names so we can exclude CTE references from source
+        # tables. sqlglot represents `FROM <cte_name>` as an exp.Table node,
+        # which would otherwise be mis-classified as an external table.
+        cte_aliases = {cte.alias for cte in ast.find_all(exp.CTE) if cte.alias}
+
         # Find all Table nodes in the AST
         for table_node in ast.find_all(exp.Table):
             table_name = self._get_table_name(table_node, tokenizer)
-            if table_name and table_name != destination_table:
-                tables.add(table_name)
+            if not table_name or table_name == destination_table:
+                continue
+            # A bare Table node whose name matches a CTE alias (and has no
+            # schema/db qualifier) is a CTE reference, not an external table.
+            if table_name in cte_aliases and not (table_node.db or table_node.catalog):
+                continue
+            tables.add(table_name)
 
         return tables
 

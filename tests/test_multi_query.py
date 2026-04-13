@@ -232,6 +232,68 @@ class TestTableDependencies:
         query = graph.queries["query_0"]
         assert "staging.orders" in query.source_tables
 
+    def test_cte_names_not_treated_as_source_tables(self):
+        """CTE names referenced in FROM clauses must not leak as source tables.
+
+        dbt-style SQL uses WITH <cte_name> AS (...) heavily. Before the fix,
+        find_all(exp.Table) picked up CTE references as if they were external
+        tables, polluting the table dependency graph.
+        """
+        queries = [
+            """
+            CREATE TABLE staging.stg_customers AS
+            WITH source AS (
+                SELECT * FROM raw.raw_customers
+            ),
+            renamed AS (
+                SELECT id AS customer_id, name AS customer_name FROM source
+            )
+            SELECT * FROM renamed
+            """
+        ]
+
+        parser = MultiQueryParser()
+        graph = parser.parse_queries(queries)
+
+        query = graph.queries["query_0"]
+        # Only the real external table should be present
+        assert query.source_tables == {"raw.raw_customers"}
+        # CTE names must not leak
+        assert "source" not in query.source_tables
+        assert "renamed" not in query.source_tables
+
+    def test_cte_name_collision_across_queries(self):
+        """CTE names that collide with physical table names must be scoped correctly.
+
+        A CTE named 'orders' inside one query should not be treated as the
+        physical 'orders' table, and should not leak into the table graph
+        as a phantom source.
+        """
+        queries = [
+            """
+            CREATE TABLE marts.customers AS
+            WITH orders AS (
+                SELECT * FROM marts.orders
+            ),
+            summary AS (
+                SELECT customer_id, SUM(order_total) AS lifetime_spend
+                FROM orders
+                GROUP BY 1
+            )
+            SELECT * FROM summary
+            """
+        ]
+
+        parser = MultiQueryParser()
+        graph = parser.parse_queries(queries)
+
+        query = graph.queries["query_0"]
+        # Only the real external table should appear
+        assert "marts.orders" in query.source_tables
+        # CTE names must not leak (even though 'orders' collides with a real table suffix)
+        assert "orders" not in query.source_tables
+        assert "summary" not in query.source_tables
+
     def test_topological_sort_two_queries(self):
         """Test topological sorting with two dependent queries"""
         queries = [
