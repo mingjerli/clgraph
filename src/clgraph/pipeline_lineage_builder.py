@@ -574,6 +574,13 @@ class PipelineLineageBuilder:
         output columns are assigned to a virtual result table named '{query_id}_result'.
         This ensures they appear in simplified lineage views.
         """
+        # CTE and subquery columns keep their internal table_name (the CTE/subquery
+        # alias). Do not map them to physical source tables — they are
+        # query-internal structures, not external tables.
+        unit_id = node.unit_id
+        if unit_id and (unit_id.startswith("cte:") or unit_id.startswith("subq:")):
+            return node.table_name
+
         # For output columns, use destination table or virtual result table
         if node.layer == "output":
             if query.destination_table:
