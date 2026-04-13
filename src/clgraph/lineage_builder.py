@@ -647,8 +647,12 @@ class RecursiveLineageBuilder:
                     col_info["replace_columns"] = {}
 
                 # STAR EXPANSION: Try to expand star if we know the source columns
-                # This only applies to the main query output (not CTEs/subqueries)
-                if unit.unit_type == QueryUnitType.MAIN_QUERY:
+                # Applies to main query outputs AND CTEs when the upstream is unambiguous.
+                # CTEs with a single physical/CTE source can safely expand; CTEs with
+                # JOIN/multi-source stars will fall through to the
+                # UNQUALIFIED_STAR_MULTIPLE_TABLES validation path.
+                # Do NOT extend to SUBQUERY_FROM or DERIVED_TABLE — those stay unexpanded.
+                if unit.unit_type in (QueryUnitType.MAIN_QUERY, QueryUnitType.CTE):
                     expanded_cols = None
 
                     # Case 1: Source is a CTE or subquery (internal query unit)

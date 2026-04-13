@@ -11,7 +11,8 @@ locally inside each function to avoid circular imports.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+import pathlib
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 if TYPE_CHECKING:
     from .pipeline import Pipeline
@@ -347,6 +348,43 @@ def create_from_sql_files(
     return create_from_tuples(queries, dialect=dialect, template_context=template_context)
 
 
+def wrap_dbt_models(
+    project_dir: Union[str, pathlib.Path],
+    schema_map: Optional[Dict[str, str]] = None,
+) -> List[Tuple[str, str, str]]:
+    """Read dbt model SQL files and return Pipeline-ready 3-tuples.
+
+    Args:
+        project_dir: Path to dbt project root (containing a ``models/`` subdir).
+        schema_map: Ordered mapping of subdirectory name under ``models/`` to
+            the target schema. Iteration order determines query ordering, so
+            earlier entries (e.g. ``staging``) are emitted before later ones
+            (e.g. ``marts``). Defaults to ``{"staging": "staging", "marts": "marts"}``.
+
+    Returns:
+        List of ``(model_name, sql, target_table)`` tuples ready for
+        :class:`~clgraph.Pipeline`.
+
+    Raises:
+        FileNotFoundError: If ``project_dir/models`` does not exist.
+    """
+    project_dir = pathlib.Path(project_dir)
+    models_dir = project_dir / "models"
+    if not models_dir.exists():
+        raise FileNotFoundError(f"No models/ directory in {project_dir}")
+
+    schema_map = schema_map or {"staging": "staging", "marts": "marts"}
+
+    queries: List[Tuple[str, str, str]] = []
+    for subdir, schema in schema_map.items():
+        subdir_path = models_dir / subdir
+        if not subdir_path.exists():
+            continue
+        for f in sorted(subdir_path.glob("*.sql")):
+            queries.append((f.stem, f.read_text(), f"{schema}.{f.stem}"))
+    return queries
+
+
 def create_empty(
     table_graph: "TableDependencyGraph",
 ) -> "Pipeline":
@@ -370,6 +408,7 @@ def create_empty(
     instance.query_mapping = {}
     instance.column_graph = PipelineLineageGraph()
     instance.query_graphs = {}
+    instance._unit_graphs = {}
     instance.llm = None
     instance.table_graph = table_graph
     instance._tracer = None

@@ -1175,6 +1175,176 @@ class TestCrossQueryLineage:
         status_col = next(col for col in output_columns if col.column_name == "status")
         assert "UPPER" in status_col.expression
 
+    def test_cte_star_expansion_from_physical_table(self):
+        """A CTE doing 'SELECT * FROM physical_table' should emit individual columns."""
+        from clgraph import Pipeline
+
+        queries = [
+            ("orders", "CREATE TABLE marts.orders AS SELECT id, amount FROM raw.orders"),
+            (
+                "customers",
+                """
+                CREATE TABLE marts.customers AS
+                WITH orders AS (SELECT * FROM marts.orders),
+                     summary AS (
+                         SELECT id, SUM(amount) AS total FROM orders GROUP BY 1
+                     )
+                SELECT * FROM summary
+                """,
+            ),
+        ]
+        pipeline = Pipeline(queries, dialect="bigquery")
+
+        cte_order_cols = [
+            c
+            for c in pipeline.columns.values()
+            if c.query_id == "customers" and c.table_name == "orders"
+        ]
+        col_names = {c.column_name for c in cte_order_cols}
+        assert "*" not in col_names
+        assert "id" in col_names
+        assert "amount" in col_names
+
+    def test_trace_backward_through_cte_alias(self):
+        """trace_column_backward should cross the CTE-to-physical-table boundary."""
+        from clgraph import Pipeline
+
+        queries = [
+            ("orders", "CREATE TABLE marts.orders AS SELECT id, amount FROM raw.orders"),
+            (
+                "customers",
+                """
+                CREATE TABLE marts.customers AS
+                WITH orders AS (SELECT * FROM marts.orders)
+                SELECT id, SUM(amount) AS lifetime_spend FROM orders GROUP BY id
+                """,
+            ),
+        ]
+        pipeline = Pipeline(queries, dialect="bigquery")
+        sources = pipeline.trace_column_backward("marts.customers", "lifetime_spend")
+        source_names = {(s.table_name, s.column_name) for s in sources}
+        assert ("raw.orders", "amount") in source_names
+
+    def test_cte_star_expansion_transitive(self):
+        """SELECT * chained through multiple CTEs should still resolve columns."""
+        from clgraph import Pipeline
+
+        queries = [
+            ("src", "CREATE TABLE physical.t AS SELECT id, val FROM raw.t"),
+            (
+                "downstream",
+                """
+                CREATE TABLE marts.x AS
+                WITH a AS (SELECT * FROM physical.t),
+                     b AS (SELECT * FROM a)
+                SELECT * FROM b
+                """,
+            ),
+        ]
+        pipeline = Pipeline(queries, dialect="bigquery")
+        sources = pipeline.trace_column_backward("marts.x", "val")
+        assert any(s.table_name == "raw.t" and s.column_name == "val" for s in sources)
+
+    def test_cte_star_with_join_not_expanded(self):
+        """A CTE doing SELECT * across a JOIN with unknown schemas must NOT
+        silently expand — the existing UNQUALIFIED_STAR_MULTIPLE_TABLES
+        validation path must still fire."""
+        from clgraph import Pipeline
+
+        queries = [
+            (
+                "joined",
+                """
+                CREATE TABLE marts.j AS
+                WITH both AS (
+                    SELECT * FROM raw.a JOIN raw.b ON raw.a.id = raw.b.id
+                )
+                SELECT * FROM both
+                """,
+            ),
+        ]
+        pipeline = Pipeline(queries, dialect="bigquery")
+        issues = pipeline.get_all_issues()
+        assert any(issue.category.name == "UNQUALIFIED_STAR_MULTIPLE_TABLES" for issue in issues)
+        # The CTE should keep a '*' column rather than phantom-expand without schema
+        assert any(
+            c.query_id == "joined" and c.table_name == "both" and c.is_star
+            for c in pipeline.columns.values()
+        )
+
+    def test_pipeline_accepts_three_tuple_with_target_table(self):
+        """Pipeline should wrap SELECT-only SQL when a target table is provided."""
+        from clgraph import Pipeline
+
+        queries = [
+            ("model_a", "SELECT id, name FROM raw.users", "marts.users"),
+        ]
+        pipeline = Pipeline(queries, dialect="bigquery")
+        assert "marts.users" in pipeline.table_graph.tables
+        assert pipeline.table_graph.tables["marts.users"].created_by == "model_a"
+
+    def test_pipeline_three_tuple_strips_leading_comments(self):
+        """Leading -- and /* */ comments should not prevent SELECT detection."""
+        from clgraph import Pipeline
+
+        queries = [
+            (
+                "model_b",
+                "-- dbt header comment\n/* block */\nSELECT id FROM raw.users",
+                "marts.u2",
+            ),
+        ]
+        pipeline = Pipeline(queries, dialect="bigquery")
+        assert "marts.u2" in pipeline.table_graph.tables
+
+    def test_pipeline_three_tuple_cte(self):
+        """3-tuple with a WITH/CTE body should also be wrapped."""
+        from clgraph import Pipeline
+
+        queries = [
+            (
+                "model_c",
+                "WITH s AS (SELECT id FROM raw.users) SELECT * FROM s",
+                "marts.u3",
+            ),
+        ]
+        pipeline = Pipeline(queries, dialect="bigquery")
+        assert "marts.u3" in pipeline.table_graph.tables
+
+    def test_pipeline_three_tuple_ignored_for_ddl(self):
+        """If SQL is already DDL, the target_table argument is ignored."""
+        from clgraph import Pipeline
+
+        queries = [
+            (
+                "model_d",
+                "CREATE TABLE marts.real AS SELECT id FROM raw.users",
+                "marts.ignored",
+            ),
+        ]
+        pipeline = Pipeline(queries, dialect="bigquery")
+        assert "marts.real" in pipeline.table_graph.tables
+        assert "marts.ignored" not in pipeline.table_graph.tables
+
+    def test_cte_alias_matches_physical_table_still_works(self):
+        """Regression: when CTE alias = physical table short name, lineage should work."""
+        from clgraph import Pipeline
+
+        queries = [
+            ("stg", "CREATE TABLE staging.stg_orders AS SELECT id FROM raw.orders"),
+            (
+                "m",
+                """
+                CREATE TABLE marts.orders AS
+                WITH stg_orders AS (SELECT * FROM staging.stg_orders)
+                SELECT * FROM stg_orders
+                """,
+            ),
+        ]
+        pipeline = Pipeline(queries, dialect="bigquery")
+        sources = pipeline.trace_column_backward("marts.orders", "id")
+        assert any(s.table_name == "raw.orders" and s.column_name == "id" for s in sources)
+
 
 # ============================================================================
 # Part 4: Edge Cases Tests

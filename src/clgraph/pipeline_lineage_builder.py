@@ -95,6 +95,8 @@ class PipelineLineageBuilder:
                     # Store query lineage
                     pipeline.query_graphs[query_id] = query_lineage
                     query.query_lineage = query_lineage
+                    # Persist unit graph for cross-query edge construction
+                    pipeline._unit_graphs[query_id] = lineage_builder.unit_graph
 
                     # Step 2b: Add columns to pipeline graph
                     self._add_query_columns(pipeline, query, query_lineage)
@@ -564,6 +566,90 @@ class PipelineLineageBuilder:
                             query_id=None,  # Cross-query edge
                         )
                         pipeline.add_edge(edge)
+
+        # Connect physical-table columns into CTE columns that read from them.
+        # This handles the case where a CTE aliases a physical table (e.g.
+        # ``WITH orders AS (SELECT * FROM marts.orders)``). Without this step,
+        # lineage breaks at the query boundary because the CTE columns share a
+        # name with the physical table but are not linked to it.
+        self._add_cte_cross_query_edges(pipeline)
+
+    def _add_cte_cross_query_edges(self, pipeline: "Pipeline"):
+        """Link physical-table columns into CTE columns that read from them."""
+        from .models import QueryUnitType
+
+        for query_id, unit_graph in pipeline._unit_graphs.items():
+            # Build mapping {cte_alias: physical_source_table} for unambiguous CTEs
+            cte_to_source: Dict[str, str] = {}
+            for unit in unit_graph.units.values():
+                if unit.unit_type != QueryUnitType.CTE:
+                    continue
+                if not unit.name:
+                    continue
+                # Only unambiguous: exactly one physical upstream, no unit upstream
+                if len(unit.depends_on_tables) == 1 and not unit.depends_on_units:
+                    cte_to_source[unit.name] = unit.depends_on_tables[0]
+
+            if not cte_to_source:
+                continue
+
+            # Resolve each physical source to the fully-qualified table name used
+            # in the pipeline (matching ParsedQuery.source_tables), since
+            # depends_on_tables may carry short names.
+            query = pipeline.table_graph.queries.get(query_id)
+            source_tables = set(query.source_tables) if query else set()
+
+            # Iterate CTE columns for this query and connect them
+            for col in list(pipeline.columns.values()):
+                if col.query_id != query_id:
+                    continue
+                if not col.unit_id or not col.unit_id.startswith("cte:"):
+                    continue
+                if col.is_star:
+                    continue
+                cte_name = col.table_name
+                if cte_name not in cte_to_source:
+                    continue
+                physical = self._resolve_physical_table(
+                    cte_to_source[cte_name], pipeline, source_tables
+                )
+                if not physical:
+                    continue
+                physical_full = f"{physical}.{col.column_name}"
+                source_col = pipeline.columns.get(physical_full)
+                if source_col is None:
+                    continue
+                # Dedup using O(1) incoming adjacency index
+                incoming = pipeline._get_incoming_edges(col.full_name)
+                if any(e.from_node.full_name == physical_full for e in incoming):
+                    continue
+                pipeline.add_edge(
+                    ColumnEdge(
+                        from_node=source_col,
+                        to_node=col,
+                        edge_type="cross_query",
+                        context="cross_query",
+                        transformation=f"{physical} -> CTE {cte_name}",
+                        query_id=None,
+                    )
+                )
+
+    @staticmethod
+    def _resolve_physical_table(
+        tbl: str, pipeline: "Pipeline", source_tables: set
+    ) -> Optional[str]:
+        """Resolve a short/qualified table name to a fully-qualified pipeline table."""
+        if tbl in pipeline.table_graph.tables:
+            return tbl
+        if tbl in source_tables:
+            return tbl
+        for st in source_tables:
+            if st.endswith(f".{tbl}") or st == tbl:
+                return st
+        for tn in pipeline.table_graph.tables:
+            if tn == tbl or tn.endswith(f".{tbl}"):
+                return tn
+        return None
 
     def _infer_table_name(self, node: ColumnNode, query: ParsedQuery) -> Optional[str]:
         """

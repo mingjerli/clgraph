@@ -30,6 +30,33 @@ from .table import TableDependencyGraph
 logger = logging.getLogger(__name__)
 
 
+def _wrap_as_create_table(sql: str, target_table: str) -> str:
+    """Wrap a SELECT-only statement with ``CREATE TABLE <target> AS``.
+
+    Strips leading SQL line comments (``-- ...``) and block comments
+    (``/* ... */``) before sniffing the first keyword, so dbt models that
+    retain header comments after Jinja rendering are still detected.
+    If ``sql`` already starts with a DDL/DML keyword, it is returned as-is
+    and ``target_table`` is ignored.
+    """
+    stripped = sql.strip().rstrip(";").strip()
+    body = stripped
+    while True:
+        if body.startswith("--"):
+            nl = body.find("\n")
+            body = body[nl + 1 :].lstrip() if nl >= 0 else ""
+        elif body.startswith("/*"):
+            end = body.find("*/")
+            body = body[end + 2 :].lstrip() if end >= 0 else ""
+        else:
+            break
+
+    head = body[:10].upper()
+    if head.startswith("SELECT") or head.startswith("WITH"):
+        return f"CREATE TABLE {target_table} AS {stripped}"
+    return sql
+
+
 class Pipeline:
     """
     Main pipeline class for SQL workflow orchestration with integrated lineage analysis.
@@ -69,7 +96,7 @@ class Pipeline:
 
     def __init__(
         self,
-        queries: List[Tuple[str, str]],
+        queries: "List[Union[Tuple[str, str], Tuple[str, str, str]]]",
         dialect: str = "bigquery",
         template_context: Optional[Dict[str, Any]] = None,
     ):
@@ -105,6 +132,8 @@ class Pipeline:
         # Column-level lineage graph
         self.column_graph: PipelineLineageGraph = PipelineLineageGraph()
         self.query_graphs: Dict[str, ColumnLineageGraph] = {}
+        # Per-query unit graphs (populated during build), used for cross-query CTE edges
+        self._unit_graphs: Dict[str, Any] = {}
         self.llm: Optional[Any] = None  # LangChain BaseChatModel
 
         # Lazy-initialized component instances
@@ -113,9 +142,21 @@ class Pipeline:
         self._metadata_mgr: Optional[Any] = None  # MetadataManager (lazy)
         self._subpipeline_builder: Optional[Any] = None  # SubpipelineBuilder (lazy)
 
-        # Convert tuples to plain SQL strings for MultiQueryParser
+        # Convert tuples to plain SQL strings for MultiQueryParser.
+        # Tuples may be 2-tuples (id, sql) or 3-tuples (id, sql, target_table)
+        # for dbt-style SELECT-only models.
         sql_list = []
-        for user_query_id, sql in queries:
+        for query_tuple in queries:
+            if len(query_tuple) == 3:
+                user_query_id, sql, target_table = query_tuple
+                sql = _wrap_as_create_table(sql, target_table)
+            elif len(query_tuple) == 2:
+                user_query_id, sql = query_tuple
+            else:
+                raise ValueError(
+                    f"Pipeline query entries must be (id, sql) or (id, sql, target_table); "
+                    f"got tuple of length {len(query_tuple)}"
+                )
             sql_list.append(sql)
             auto_id = f"query_{len(sql_list) - 1}"
             self.query_mapping[auto_id] = user_query_id
@@ -842,6 +883,34 @@ class Pipeline:
             query_id_from=query_id_from,
             template_context=template_context,
         )
+
+    @classmethod
+    def from_dbt_models(
+        cls,
+        project_dir: Any,
+        schema_map: Optional[Dict[str, str]] = None,
+        **pipeline_kwargs: Any,
+    ) -> "Pipeline":
+        """Build a Pipeline directly from a dbt project's model files.
+
+        dbt models are SELECT-only; this helper wraps each model in
+        ``CREATE TABLE <schema>.<model_name> AS ...`` so lineage links into
+        the physical table graph.
+
+        Args:
+            project_dir: Path to the dbt project root (containing ``models/``).
+            schema_map: Optional ordered mapping of ``models/<subdir>`` to the
+                target schema. Defaults to ``{"staging": "staging", "marts": "marts"}``.
+            **pipeline_kwargs: Forwarded to :class:`Pipeline` (``dialect``,
+                ``template_context``, etc.).
+
+        Returns:
+            Fully-built Pipeline instance.
+        """
+        from .pipeline_factory import wrap_dbt_models
+
+        queries = wrap_dbt_models(project_dir, schema_map=schema_map)
+        return cls(queries, **pipeline_kwargs)
 
     def _remap_query_ids(self):
         """Remap auto-generated query IDs to user-provided IDs"""
