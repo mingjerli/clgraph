@@ -11,11 +11,14 @@ Contains Pipeline class for unified SQL workflow orchestration with:
 
 import logging
 from datetime import datetime
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
 from .column import (
     PipelineLineageGraph,
 )
+
+if TYPE_CHECKING:
+    from .models import QueryUnitGraph
 from .models import (
     ColumnEdge,
     ColumnLineageGraph,
@@ -24,6 +27,7 @@ from .models import (
     IssueSeverity,
     ValidationIssue,
 )
+from .pipeline_factory import wrap_dbt_models
 from .pipeline_lineage_builder import PipelineLineageBuilder
 from .table import TableDependencyGraph
 
@@ -47,7 +51,11 @@ def _wrap_as_create_table(sql: str, target_table: str) -> str:
             body = body[nl + 1 :].lstrip() if nl >= 0 else ""
         elif body.startswith("/*"):
             end = body.find("*/")
-            body = body[end + 2 :].lstrip() if end >= 0 else ""
+            if end < 0:
+                # Unterminated block comment — don't guess at the body;
+                # fall back to treating the input as opaque and return as-is.
+                return sql
+            body = body[end + 2 :].lstrip()
         else:
             break
 
@@ -96,7 +104,7 @@ class Pipeline:
 
     def __init__(
         self,
-        queries: "List[Union[Tuple[str, str], Tuple[str, str, str]]]",
+        queries: List[Union[Tuple[str, str], Tuple[str, str, str]]],
         dialect: str = "bigquery",
         template_context: Optional[Dict[str, Any]] = None,
     ):
@@ -133,7 +141,7 @@ class Pipeline:
         self.column_graph: PipelineLineageGraph = PipelineLineageGraph()
         self.query_graphs: Dict[str, ColumnLineageGraph] = {}
         # Per-query unit graphs (populated during build), used for cross-query CTE edges
-        self._unit_graphs: Dict[str, Any] = {}
+        self._unit_graphs: Dict[str, "QueryUnitGraph"] = {}
         self.llm: Optional[Any] = None  # LangChain BaseChatModel
 
         # Lazy-initialized component instances
@@ -907,8 +915,6 @@ class Pipeline:
         Returns:
             Fully-built Pipeline instance.
         """
-        from .pipeline_factory import wrap_dbt_models
-
         queries = wrap_dbt_models(project_dir, schema_map=schema_map)
         return cls(queries, **pipeline_kwargs)
 
