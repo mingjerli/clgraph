@@ -16,18 +16,21 @@ fi
 
 # Find the git hooks directory (handle submodule case)
 if [ -d "$REPO_ROOT/.git/hooks" ]; then
-    HOOK_PATH="$REPO_ROOT/.git/hooks/pre-commit"
+    HOOKS_DIR="$REPO_ROOT/.git/hooks"
 elif [ -f "$REPO_ROOT/.git" ]; then
     # Submodule case: .git is a file pointing to parent's git dir
     PARENT_GIT_DIR="$(cd "$REPO_ROOT" && git rev-parse --git-dir)"
-    HOOK_PATH="$PARENT_GIT_DIR/hooks/pre-commit"
+    HOOKS_DIR="$PARENT_GIT_DIR/hooks"
 else
     echo "⚠️  No .git directory found - skipping hook installation"
     echo "   (This is expected when running in a submodule context)"
     exit 0
 fi
 
-cat > "$HOOK_PATH" << 'EOF'
+PRE_COMMIT="$HOOKS_DIR/pre-commit"
+PRE_PUSH="$HOOKS_DIR/pre-push"
+
+cat > "$PRE_COMMIT" << 'EOF'
 #!/bin/bash
 # Pre-commit hook that runs ruff for formatting and linting, and ty for type checking
 
@@ -65,13 +68,50 @@ echo "✅ All pre-commit checks passed!"
 exit 0
 EOF
 
-chmod +x "$HOOK_PATH"
+chmod +x "$PRE_COMMIT"
+
+cat > "$PRE_PUSH" << 'EOF'
+#!/bin/bash
+# Pre-push hook that mirrors CI lint + format checks.
+# Catches issues BEFORE they reach GitHub Actions.
+#
+# Bypass (not recommended): git push --no-verify
+
+set -e
+
+echo "🔍 Running pre-push CI-equivalent checks..."
+
+# Run the same commands as .github/workflows/ci.yml "Lint & Format" job
+echo ""
+echo "[1/2] ruff check . (lint, same as CI)"
+if ! uv run ruff check .; then
+    echo "❌ Lint failed. Fix with: uv run ruff check --fix ."
+    exit 1
+fi
+
+echo ""
+echo "[2/2] ruff format --check . (formatting, same as CI)"
+if ! uv run ruff format --check .; then
+    echo "❌ Formatting issues. Fix with: uv run ruff format ."
+    exit 1
+fi
+
+echo ""
+echo "✅ All pre-push checks passed!"
+exit 0
+EOF
+
+chmod +x "$PRE_PUSH"
 
 echo "✅ Git hooks installed successfully!"
 echo ""
-echo "The pre-commit hook will now run:"
+echo "pre-commit will run on every commit:"
 echo "  - Ruff auto-format (automatically formats and stages changes)"
 echo "  - Ruff linting"
 echo "  - Type checking (warnings only)"
 echo ""
-echo "To bypass the hook (not recommended), use: git commit --no-verify"
+echo "pre-push will run before every push (mirrors CI):"
+echo "  - Ruff check ."
+echo "  - Ruff format --check ."
+echo ""
+echo "To bypass: git commit --no-verify / git push --no-verify (not recommended)"
