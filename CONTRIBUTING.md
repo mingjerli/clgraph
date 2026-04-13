@@ -21,6 +21,15 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 ```
 
+4. Install git hooks (recommended):
+```bash
+bash scripts/install-hooks.sh
+```
+This installs two hooks:
+- **pre-commit**: runs `ruff format` + lint on your changes
+- **pre-push**: runs the exact same `ruff check .` and `ruff format --check .`
+  commands that CI uses, catching lint/format failures before they hit GitHub
+
 ## Running Tests
 
 Run the full test suite:
