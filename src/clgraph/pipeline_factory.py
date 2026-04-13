@@ -11,8 +11,11 @@ locally inside each function to avoid circular imports.
 
 from __future__ import annotations
 
+import logging
 import pathlib
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .pipeline import Pipeline
@@ -382,6 +385,15 @@ def wrap_dbt_models(
             continue
         for f in sorted(subdir_path.glob("*.sql")):
             queries.append((f.stem, f.read_text(), f"{schema}.{f.stem}"))
+
+    if not queries:
+        logger.warning(
+            "wrap_dbt_models found no .sql files under %s using schema_map=%s. "
+            "dbt projects often use custom subdirs (e.g. intermediate/, dim/, fct/); "
+            "pass schema_map={'<subdir>': '<schema>', ...} to match your layout.",
+            models_dir,
+            list(schema_map.keys()),
+        )
     return queries
 
 
