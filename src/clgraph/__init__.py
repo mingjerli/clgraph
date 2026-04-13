@@ -54,6 +54,7 @@ from .parser import (
     TableNode,
     TemplateTokenizer,
 )
+from .pipeline_factory import wrap_dbt_models
 from .tools import (
     ALL_TOOLS,
     BASIC_TOOLS,
@@ -106,6 +107,7 @@ __all__ = [
     "SQLColumnTracer",
     "MultiQueryParser",
     "PipelineLineageBuilder",
+    "wrap_dbt_models",
     # Column lineage (unified types)
     "ColumnLineageGraph",
     "ColumnNode",
