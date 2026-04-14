@@ -189,6 +189,9 @@ class TableDependencyGraph:
         """
         Build dependency map: query_id -> set of query_ids it depends on.
         This is the core algorithm used by both topological_sort and get_execution_order.
+
+        Self-exclusion: a query cannot depend on itself. This prevents cycles
+        when a query both reads from and writes to the same table.
         """
         deps = {}
         for query_id, query in self.queries.items():
@@ -197,10 +200,12 @@ class TableDependencyGraph:
                 if source_table in self.tables:
                     table_node = self.tables[source_table]
                     # Depend on the query that creates this table
-                    if table_node.created_by:
+                    if table_node.created_by and table_node.created_by != query_id:
                         deps[query_id].add(table_node.created_by)
                     # Also depend on queries that modify it (if any)
-                    deps[query_id].update(table_node.modified_by)
+                    for mod_id in table_node.modified_by:
+                        if mod_id != query_id:
+                            deps[query_id].add(mod_id)
         return deps
 
     def _build_table_dependencies(self) -> Dict[str, Set[str]]:
@@ -229,6 +234,8 @@ class TableDependencyGraph:
                 query = self.queries.get(table.created_by)
                 if query:
                     for source_table in query.source_tables:
+                        if source_table == table_name:
+                            continue  # skip self-dependency
                         if source_table in self.tables:
                             deps[table_name].add(source_table)
 
@@ -237,6 +244,8 @@ class TableDependencyGraph:
                 query = self.queries.get(query_id)
                 if query:
                     for source_table in query.source_tables:
+                        if source_table == table_name:
+                            continue  # skip self-dependency
                         if source_table in self.tables:
                             deps[table_name].add(source_table)
 

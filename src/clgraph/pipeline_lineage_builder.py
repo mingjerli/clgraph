@@ -66,6 +66,7 @@ class PipelineLineageBuilder:
 
         # Step 1: Topological sort
         sorted_query_ids = table_graph.topological_sort()
+        self.sorted_query_ids = sorted_query_ids
 
         # Step 2: Process each query
         for query_id in sorted_query_ids:
@@ -114,6 +115,9 @@ class PipelineLineageBuilder:
 
         # Step 3: Add cross-query edges
         self._add_cross_query_edges(pipeline)
+
+        # Step 4: Add cross-query edges for self-read columns
+        self._add_self_read_cross_query_edges(pipeline, sorted_query_ids)
 
         return pipeline
 
@@ -322,8 +326,20 @@ class PipelineLineageBuilder:
 
             full_name = self._make_full_name(node, query)
 
+            # Detect self-read columns for node_type override
+            is_self_read = self._is_self_read_column(node, query)
+
             # Skip if column already exists (shared physical table column)
             if full_name in pipeline.columns:
+                # Diagnostic: log when a physical-table column is dropped by
+                # the dedup guard for a query with self-referenced tables.
+                if getattr(query, "self_referenced_tables", set()):
+                    logger.debug(
+                        "Dedup guard dropped %s for query %s (self_referenced_tables=%s)",
+                        full_name,
+                        query.query_id,
+                        query.self_referenced_tables,
+                    )
                 continue
 
             # Extract metadata from SQL comments if available
@@ -352,7 +368,7 @@ class PipelineLineageBuilder:
                 full_name=full_name,
                 query_id=query.query_id,
                 unit_id=node.unit_id,
-                node_type=node.node_type,
+                node_type="self_read" if is_self_read else node.node_type,
                 layer=node.layer,
                 expression=node.expression,
                 operation=node.node_type,  # Use node_type as operation for now
@@ -389,11 +405,24 @@ class PipelineLineageBuilder:
         Handles star expansion: when an edge points to an output * that was expanded,
         create edges to all expanded columns instead.
         """
+        # Compute statement_order from sorted_query_ids
+        stmt_order = None
+        if hasattr(self, "sorted_query_ids"):
+            try:
+                stmt_order = self.sorted_query_ids.index(query.query_id)
+            except ValueError:
+                pass
+
         for edge in query_lineage.edges:
             from_full = self._make_full_name(edge.from_node, query)
             to_full = self._make_full_name(edge.to_node, query)
 
             if from_full in pipeline.columns and to_full in pipeline.columns:
+                # Determine edge_role for self-read edges
+                edge_role = None
+                if self._is_self_read_column(edge.from_node, query):
+                    edge_role = "prior_state_read"
+
                 # Normal case: both nodes exist
                 pipeline_edge = ColumnEdge(
                     from_node=pipeline.columns[from_full],
@@ -402,6 +431,8 @@ class PipelineLineageBuilder:
                     transformation=edge.transformation,
                     context=edge.context,
                     query_id=query.query_id,
+                    statement_order=stmt_order,
+                    edge_role=edge_role,
                     # Preserve JSON extraction metadata
                     json_path=getattr(edge, "json_path", None),
                     json_function=getattr(edge, "json_function", None),
@@ -634,6 +665,104 @@ class PipelineLineageBuilder:
                     )
                 )
 
+    def _add_self_read_cross_query_edges(self, pipeline: "Pipeline", sorted_query_ids: List[str]):
+        """
+        Connect prior-statement output columns to self-read input columns.
+
+        For each query with self_referenced_tables, find self-read input nodes
+        (node_type=="self_read") and connect them to the most recent prior query
+        that wrote that specific column to the same table. If no prior writer
+        exists, create a pre-pipeline source-state node.
+        """
+        # Build index: query_id -> topo sort position
+        query_order = {qid: i for i, qid in enumerate(sorted_query_ids)}
+
+        for query_id in sorted_query_ids:
+            query = pipeline.table_graph.queries.get(query_id)
+            if not query:
+                continue
+            self_ref_tables = getattr(query, "self_referenced_tables", set())
+            if not self_ref_tables:
+                continue
+
+            current_order = query_order.get(query_id, 0)
+
+            # Find all self-read input nodes for this query
+            self_read_nodes = [
+                col
+                for col in pipeline.columns.values()
+                if col.query_id == query_id and col.node_type == "self_read"
+            ]
+
+            for sr_node in self_read_nodes:
+                # Extract the physical table name from the full_name pattern:
+                # "{query_id}:self_read:{table}.{column}"
+                parts = sr_node.full_name.split(":self_read:", 1)
+                if len(parts) != 2:
+                    continue
+                table_col = parts[1]  # e.g., "dim_customer.id"
+
+                # Find the most recent prior query that wrote this column
+                prior_output = None
+                best_order = -1
+                for col in pipeline.columns.values():
+                    if (
+                        col.full_name == table_col
+                        and col.layer == "output"
+                        and col.query_id
+                        and col.query_id != query_id
+                    ):
+                        col_order = query_order.get(col.query_id, -1)
+                        if col_order < current_order and col_order > best_order:
+                            best_order = col_order
+                            prior_output = col
+
+                if prior_output:
+                    # Connect prior output to self-read input
+                    edge = ColumnEdge(
+                        from_node=prior_output,
+                        to_node=sr_node,
+                        edge_type="cross_query_self_ref",
+                        context="cross_query",
+                        transformation=f"prior state of {table_col}",
+                        query_id=None,
+                        edge_role="cross_query_self_ref",
+                        statement_order=current_order,
+                    )
+                    pipeline.add_edge(edge)
+                else:
+                    # No prior writer found - create a pre-pipeline source-state node
+                    # if it doesn't already exist
+                    if table_col not in pipeline.columns:
+                        # Parse table and column from table_col
+                        last_dot = table_col.rfind(".")
+                        if last_dot < 0:
+                            continue
+                        tbl = table_col[:last_dot]
+                        col_name = table_col[last_dot + 1 :]
+                        source_node = ColumnNode(
+                            column_name=col_name,
+                            table_name=tbl,
+                            full_name=table_col,
+                            layer="input",
+                            node_type="source",
+                        )
+                        pipeline.add_column(source_node)
+
+                    source_col = pipeline.columns.get(table_col)
+                    if source_col:
+                        edge = ColumnEdge(
+                            from_node=source_col,
+                            to_node=sr_node,
+                            edge_type="cross_query_self_ref",
+                            context="cross_query",
+                            transformation=f"pre-pipeline state of {table_col}",
+                            query_id=None,
+                            edge_role="cross_query_self_ref",
+                            statement_order=current_order,
+                        )
+                        pipeline.add_edge(edge)
+
     @staticmethod
     def _resolve_physical_table(
         tbl: str, pipeline: "Pipeline", source_tables: set
@@ -705,11 +834,42 @@ class PipelineLineageBuilder:
         # Ambiguous - can't determine table
         return None
 
+    def _is_self_read_column(self, node: ColumnNode, query: ParsedQuery) -> bool:
+        """
+        Check if an input-layer column is a self-read (reads from a table
+        that this query also writes to).
+        """
+        if node.layer != "input":
+            return False
+        self_ref_tables = getattr(query, "self_referenced_tables", set())
+        if not self_ref_tables:
+            return False
+        # Resolve alias -> table name if needed
+        candidate = node.table_name
+        resolved = getattr(query, "self_ref_aliases", {}).get(candidate, candidate)
+        if resolved in self_ref_tables:
+            return True
+        # Also try the inferred table name
+        inferred = self._infer_table_name(node, query)
+        if inferred:
+            resolved_inferred = getattr(query, "self_ref_aliases", {}).get(inferred, inferred)
+            if resolved_inferred in self_ref_tables:
+                return True
+        return False
+
+    def _resolve_self_read_table(self, node: ColumnNode, query: ParsedQuery) -> str:
+        """Resolve the physical table name for a self-read column."""
+        candidate = self._infer_table_name(node, query) or node.table_name
+        return getattr(query, "self_ref_aliases", {}).get(candidate, candidate)
+
     def _make_full_name(self, node: ColumnNode, query: ParsedQuery) -> str:
         """
         Create fully qualified column name.
 
         Naming convention:
+        - Self-read: {query_id}:self_read:{table_name}.{column_name}
+          For input columns that read from a table this query also writes to.
+
         - Physical tables: {table_name}.{column_name}
           Examples: raw.orders.customer_id, staging.orders.amount
           These are shared nodes - same column appears once regardless of which query uses it
@@ -725,6 +885,11 @@ class PipelineLineageBuilder:
         - Other internal: {query_id}:{unit_id}.{column_name}
           Fallback for other query-internal structures
         """
+        # Check self-read BEFORE physical table check
+        if self._is_self_read_column(node, query):
+            resolved_table = self._resolve_self_read_table(node, query)
+            return f"{query.query_id}:self_read:{resolved_table}.{node.column_name}"
+
         table_name = self._infer_table_name(node, query)
         unit_id = node.unit_id
 

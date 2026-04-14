@@ -207,6 +207,9 @@ class Pipeline:
         Column keys now include query_id prefix (e.g., "query_1:table.column")
         for uniqueness. This method provides convenient lookup by table/column name.
 
+        When multiple candidates match (e.g., both input and output layers),
+        output-layer columns are preferred since they represent the written state.
+
         Args:
             table_name: The table name
             column_name: The column name
@@ -215,11 +218,39 @@ class Pipeline:
         Returns:
             The ColumnNode if found, None otherwise
         """
+        best: Optional[ColumnNode] = None
         for col in self.columns.values():
             if col.table_name == table_name and col.column_name == column_name:
-                if query_id is None or col.query_id == query_id:
-                    return col
-        return None
+                if query_id is not None and col.query_id != query_id:
+                    continue
+                # Skip self-read nodes for the default lookup (they have
+                # node_type="self_read" and query-scoped full_names)
+                if col.node_type == "self_read":
+                    continue
+                if best is None:
+                    best = col
+                elif col.layer == "output" and best.layer != "output":
+                    best = col
+        return best
+
+    def get_self_read_columns(self, table_name: str) -> List[ColumnNode]:
+        """
+        Get all self-read nodes for a given physical table.
+
+        Self-read nodes represent the prior state of a table that a query
+        reads from while also writing to the same table.
+
+        Args:
+            table_name: The physical table name (e.g., "dim_customer")
+
+        Returns:
+            List of ColumnNode objects with node_type="self_read" for that table
+        """
+        return [
+            col
+            for col in self.columns.values()
+            if col.node_type == "self_read" and f":self_read:{table_name}." in col.full_name
+        ]
 
     def get_columns_by_table(self, table_name: str) -> List[ColumnNode]:
         """
