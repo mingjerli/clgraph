@@ -305,6 +305,13 @@ def extract_merge_columns(ctx: ExtractionContext, unit: QueryUnit) -> List[Dict]
     for action in matched_actions:
         if action.get("action_type") == "update":
             condition = action.get("condition")
+            # Note: target_alias is used as default_table, but WHEN conditions
+            # typically use qualified refs (t.name, s.name). extract_columns_from_expr
+            # uses the qualified table ref when present, so the default_table only
+            # applies to unqualified column names.
+            condition_columns = (
+                extract_columns_from_expr(condition, target_alias) if condition else []
+            )
             for target_col, source_expr in action.get("column_mappings", {}).items():
                 col_info = {
                     "index": idx,
@@ -316,6 +323,7 @@ def extract_merge_columns(ctx: ExtractionContext, unit: QueryUnit) -> List[Dict]
                     "source_columns": extract_columns_from_expr(source_expr, source_alias),
                     "merge_action": "update",
                     "merge_condition": condition,
+                    "condition_columns": condition_columns,
                 }
                 output_cols.append(col_info)
                 idx += 1
