@@ -132,6 +132,75 @@ class TestMatchConditions:
         assert "region" in col_names
 
 
+class TestMatchFilterColumns:
+    """Test literal-bound predicates in MERGE ON clause (Gap 9)."""
+
+    def test_literal_predicate_extracted(self):
+        """ON t.id = s.id AND t.is_active = 'Y' extracts is_active as filter column."""
+        sql = """
+        MERGE INTO dim_customer t
+        USING staging s ON t.id = s.id AND t.is_active = 'Y'
+        WHEN MATCHED THEN UPDATE SET t.name = s.name
+        """
+        parser = RecursiveQueryParser(sql, dialect="postgres")
+        graph = parser.parse()
+
+        merge_units = [u for u in graph.units.values() if u.unit_type == QueryUnitType.MERGE]
+        unit = merge_units[0]
+        config = unit.unpivot_config
+
+        # Column-column pair should still work
+        match_columns = config.get("match_columns", [])
+        col_names = [col[0] for col in match_columns]
+        assert "id" in col_names
+
+        # Literal-bound predicate should be in match_filter_columns
+        match_filter_columns = config.get("match_filter_columns", [])
+        assert len(match_filter_columns) >= 1
+        filter_col_names = [col[0] for col in match_filter_columns]
+        assert "is_active" in filter_col_names
+
+    def test_no_filter_columns_for_pure_equijoin(self):
+        """ON t.id = s.id with no literals has match_filter_columns key but empty list.
+
+        Note: We assert the KEY exists (not just .get() with default) so
+        the test fails before Task 2 adds match_filter_columns to the config.
+        """
+        sql = """
+        MERGE INTO target t
+        USING source s ON t.id = s.id
+        WHEN MATCHED THEN UPDATE SET t.value = s.new_value
+        """
+        parser = RecursiveQueryParser(sql, dialect="postgres")
+        graph = parser.parse()
+
+        merge_units = [u for u in graph.units.values() if u.unit_type == QueryUnitType.MERGE]
+        unit = merge_units[0]
+        config = unit.unpivot_config
+
+        assert "match_filter_columns" in config
+        assert config["match_filter_columns"] == []
+
+    def test_multiple_literal_predicates(self):
+        """Multiple literal predicates are all extracted."""
+        sql = """
+        MERGE INTO target t
+        USING source s ON t.id = s.id AND t.is_active = 'Y' AND t.region = 'US'
+        WHEN MATCHED THEN UPDATE SET t.value = s.new_value
+        """
+        parser = RecursiveQueryParser(sql, dialect="postgres")
+        graph = parser.parse()
+
+        merge_units = [u for u in graph.units.values() if u.unit_type == QueryUnitType.MERGE]
+        unit = merge_units[0]
+        config = unit.unpivot_config
+
+        match_filter_columns = config.get("match_filter_columns", [])
+        filter_col_names = [col[0] for col in match_filter_columns]
+        assert "is_active" in filter_col_names
+        assert "region" in filter_col_names
+
+
 # ============================================================================
 # Test Group 3: WHEN MATCHED Actions
 # ============================================================================

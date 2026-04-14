@@ -628,12 +628,17 @@ class RecursiveQueryParser:
 
         # Extract match columns from ON condition
         match_columns: List[Tuple[str, str]] = []
+        match_filter_columns: List[Tuple[str, str]] = []
         if match_condition:
             for eq in match_condition.find_all(exp.EQ):
                 left_col = eq.left
                 right_col = eq.right
                 if isinstance(left_col, exp.Column) and isinstance(right_col, exp.Column):
                     match_columns.append((left_col.name, right_col.name))
+                elif isinstance(left_col, exp.Column) and not isinstance(right_col, exp.Column):
+                    match_filter_columns.append((left_col.name, right_col.sql()))
+                elif isinstance(right_col, exp.Column) and not isinstance(left_col, exp.Column):
+                    match_filter_columns.append((right_col.name, left_col.sql()))
 
         # Parse WHEN clauses from the 'whens' arg
         whens = merge_node.args.get("whens")
@@ -698,6 +703,7 @@ class RecursiveQueryParser:
             "source_alias": source_alias,
             "match_condition": match_condition_sql,
             "match_columns": match_columns,
+            "match_filter_columns": match_filter_columns,
             "matched_actions": matched_actions,
             "not_matched_actions": not_matched_actions,
         }
