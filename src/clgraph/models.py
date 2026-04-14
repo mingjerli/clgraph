@@ -613,7 +613,9 @@ class ColumnEdge:
     is_merge_operation: bool = False  # True if this edge is from a MERGE statement
     merge_action: Optional[str] = None  # "match", "update", "insert", "delete"
     merge_condition: Optional[str] = None  # Condition for conditional WHEN clauses
-    merge_column_role: Optional[str] = None  # "value" or "condition"
+    merge_column_role: Optional[str] = (
+        None  # None (match), "value" (SET RHS), or "condition" (WHEN guard / ON filter)
+    )
 
     # ─── QUALIFY Clause Metadata ───
     is_qualify_column: bool = False  # True if this column is used in QUALIFY clause
