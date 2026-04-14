@@ -20,10 +20,9 @@ Track progress on adding real-world data pipeline example notebooks.
 
 Discovered during CDC/SCD design review (see `docs/superpowers/specs/2026-04-13-cdc-scd-pipeline-gaps-design.md` §Risks 5, 6). Both are cross-cutting changes that must land before the CDC/SCD notebook (item B) can honestly showcase lineage.
 
-- [ ] **Gap 4. Self-referencing target across statements** (statement-scoped table versioning)
-  - Today: `depends_on_tables` / `depends_on_units` reference tables by name only; no N-vs-N+1 snapshot distinction (see `pipeline_lineage_builder.py:76-108`).
-  - Symptom: in SCD2, Step 2's `LEFT JOIN dim_customer t` collapses onto the same node that Step 1 (MERGE) just wrote — the pipeline graph shows a self-loop instead of "read prior state, then overwrite."
-  - Needs its own design doc.
+- [x] **Gap 4. Self-referencing target across statements** (statement-scoped table versioning)
+  - Implemented in PR #61: self-read node detection via AST node identity, cycle-safe dependency resolution, query-scoped `{query_id}:self_read:{table}.{col}` naming, column-granular cross-query wiring, edge role/order annotations.
+  - Design: `docs/superpowers/specs/2026-04-13-gap4-self-referencing-target-design.md`
 
 - [ ] **Gap 7. JOIN ON predicate columns not recorded in column lineage**
   - Today: JOIN ON predicates produce **zero** column-lineage edges (no handling in `lineage_builder` for ON clause columns beyond the equi-join's identity resolution).
