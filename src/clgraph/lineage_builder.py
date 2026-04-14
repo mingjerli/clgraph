@@ -632,6 +632,13 @@ class RecursiveLineageBuilder:
                 if node:
                     return node
 
+        # Struct dot-access fallback (Gap 1): if table_ref is unresolvable,
+        # treat as struct field access on a column from the first base table
+        if table_ref and self._is_unresolvable_struct_ref(unit, table_ref):
+            fallback_tables = self._collect_base_tables_recursive(unit)
+            fallback_table = fallback_tables[0] if fallback_tables else table_ref
+            return find_or_create_table_column_node(self.lineage_graph, fallback_table, table_ref)
+
         # Fallback: use table_ref directly if provided
         if table_ref:
             return find_or_create_table_column_node(self.lineage_graph, table_ref, col_name)
@@ -917,7 +924,34 @@ class RecursiveLineageBuilder:
             self._resolve_base_table_name,
             self._find_column_in_unit,
             self._get_default_from_table,
+            self._is_unresolvable_struct_ref,
+            self._collect_base_tables_recursive,
         )
+
+    # ─── Struct Dot-Access Fallback (Gap 1) ───
+
+    _MAX_STRUCT_RESOLVE_DEPTH = 4
+
+    def _is_unresolvable_struct_ref(self, unit: QueryUnit, table_ref: str) -> bool:
+        """Return True when table_ref cannot be resolved as a table/alias/unit in scope."""
+        if table_ref in unit.alias_mapping:
+            return False
+        if table_ref in unit.depends_on_tables:
+            return False
+        if self._resolve_source_unit(unit, table_ref):
+            return False
+        return True
+
+    def _collect_base_tables_recursive(self, unit: QueryUnit, depth: int = 0) -> List[str]:
+        """Walk unit dependency chain to find ultimate base tables."""
+        if depth > self._MAX_STRUCT_RESOLVE_DEPTH:
+            return []
+        result = list(unit.depends_on_tables)
+        for dep_unit_id in unit.depends_on_units:
+            dep_unit = self.unit_graph.units.get(dep_unit_id)
+            if dep_unit:
+                result = [*result, *self._collect_base_tables_recursive(dep_unit, depth + 1)]
+        return result
 
     def _resolve_source_unit(
         self, current_unit: QueryUnit, table_ref: Optional[str]

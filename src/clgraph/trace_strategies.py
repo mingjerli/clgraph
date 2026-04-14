@@ -266,6 +266,8 @@ def trace_regular_columns(
     resolve_base_table_name: Callable,
     find_column_in_unit: Callable,
     get_default_from_table: Callable,
+    is_unresolvable_struct_ref: Callable = None,  # (unit, table_ref) -> bool
+    collect_base_tables: Callable = None,  # (unit) -> List[str]
 ) -> None:
     """Handle regular column references with UNNEST, TVF, VALUES sub-cases."""
     for source_ref in source_columns:
@@ -411,5 +413,29 @@ def trace_regular_columns(
                     nested_path=nested_path,
                     access_type=access_type,
                     aggregate_spec=aggregate_spec,
+                )
+                graph.add_edge(edge)
+            elif (
+                effective_table_ref
+                and is_unresolvable_struct_ref
+                and is_unresolvable_struct_ref(unit, effective_table_ref)
+            ):
+                # Struct dot-access fallback: "after.id" where "after" is not a
+                # table/alias/unit — treat as struct field access on a column
+                # named "after" from the first resolvable base table.
+                fallback_tables = collect_base_tables(unit) if collect_base_tables else []
+                fallback_table = fallback_tables[0] if fallback_tables else effective_table_ref
+                source_node = find_or_create_table_column_node(
+                    graph, fallback_table, effective_table_ref
+                )
+                edge = ColumnEdge(
+                    from_node=source_node,
+                    to_node=output_node,
+                    edge_type=col_info["type"],
+                    transformation=col_info["type"],
+                    context=unit.unit_type.value,
+                    expression=col_info["expression"],
+                    nested_path=f".{col_name}",
+                    access_type="struct",
                 )
                 graph.add_edge(edge)
