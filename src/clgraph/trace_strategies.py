@@ -225,6 +225,7 @@ def trace_merge_columns(
                 is_merge_operation=True,
                 merge_action=merge_action,
                 merge_condition=merge_condition,
+                merge_column_role=col_info.get("merge_column_role"),
             )
             graph.add_edge(edge)
 

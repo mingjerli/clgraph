@@ -849,7 +849,12 @@ class RecursiveLineageBuilder:
             return
 
         # Branch 4: MERGE
-        if col_info.get("type") in ("merge_match", "merge_update", "merge_insert"):
+        if col_info.get("type") in (
+            "merge_match",
+            "merge_update",
+            "merge_insert",
+            "merge_match_filter",
+        ):
             trace_merge_columns(
                 self.lineage_graph,
                 unit,
