@@ -19,6 +19,7 @@ from .models import (
     TVFInfo,
     TVFType,
     ValuesInfo,
+    WherePredicateInfo,
 )
 
 # ============================================================================
@@ -198,6 +199,17 @@ class RecursiveQueryParser:
         where_clause = select_node.args.get("where")
         if where_clause:
             self._parse_where_subqueries(where_clause, unit, depth)
+
+        # 4b. Extract WHERE clause column refs for filter lineage
+        if where_clause:
+            where_cols = self._extract_where_columns(where_clause.this)
+            if where_cols:
+                unit.where_predicates.append(
+                    WherePredicateInfo(
+                        condition_sql=where_clause.this.sql(),
+                        columns=where_cols,
+                    )
+                )
 
         # 5. Parse HAVING clause (may contain subqueries)
         having_clause = select_node.args.get("having")
@@ -1556,6 +1568,20 @@ class RecursiveQueryParser:
             return table_node.name
 
         return None
+
+    def _extract_where_columns(self, condition: exp.Expression):
+        """Extract column refs from WHERE condition, skipping exp.Subquery subtrees."""
+        subquery_columns: set = set()
+        for subq in condition.find_all(exp.Subquery):
+            for col in subq.find_all(exp.Column):
+                subquery_columns.add(id(col))
+
+        columns = []
+        for col in condition.find_all(exp.Column):
+            if id(col) not in subquery_columns:
+                table_ref = col.table if col.table else None
+                columns.append((table_ref, col.name))
+        return columns
 
     def _parse_where_subqueries(
         self, where_node: exp.Expression, parent_unit: QueryUnit, depth: int
