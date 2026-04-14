@@ -734,5 +734,26 @@ class TestSCD2MergeConditionLineage:
         assert "email" in end_time_upstream
 
 
+class TestMergeRoleExport:
+    """Test that merge_column_role appears in JSON export."""
+
+    def test_merge_column_role_in_export(self):
+        """merge_column_role should appear in exported edge data."""
+        sql = """
+        MERGE INTO dim_customer t
+        USING staging s ON t.id = s.id
+        WHEN MATCHED AND (t.name <> s.name) THEN
+          UPDATE SET t.end_time = current_timestamp()
+        """
+        pipeline = Pipeline([("scd2_close", sql)], dialect="postgres")
+
+        exporter = JSONExporter()
+        data = exporter.export(pipeline)
+
+        edges = data.get("edges", [])
+        condition_edges = [e for e in edges if e.get("merge_column_role") == "condition"]
+        assert len(condition_edges) >= 1
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

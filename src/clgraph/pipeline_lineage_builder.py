@@ -450,6 +450,7 @@ class PipelineLineageBuilder:
                     is_merge_operation=getattr(edge, "is_merge_operation", False),
                     merge_action=getattr(edge, "merge_action", None),
                     merge_condition=getattr(edge, "merge_condition", None),
+                    merge_column_role=getattr(edge, "merge_column_role", None),
                     # Preserve QUALIFY clause metadata
                     is_qualify_column=getattr(edge, "is_qualify_column", False),
                     qualify_context=getattr(edge, "qualify_context", None),
