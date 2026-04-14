@@ -332,6 +332,8 @@ def extract_merge_columns(ctx: ExtractionContext, unit: QueryUnit) -> List[Dict]
     for action in not_matched_actions:
         if action.get("action_type") == "insert":
             condition = action.get("condition")
+            # Note: source_alias is used as default_table (not target_alias) because
+            # NOT MATCHED conditions reference source rows (target row doesn't exist).
             condition_columns = (
                 extract_columns_from_expr(condition, source_alias) if condition else []
             )
