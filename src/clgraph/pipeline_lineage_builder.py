@@ -470,6 +470,9 @@ class PipelineLineageBuilder:
                     is_join_predicate=getattr(edge, "is_join_predicate", False),
                     join_condition=getattr(edge, "join_condition", None),
                     join_side=getattr(edge, "join_side", None),
+                    # Preserve WHERE filter metadata
+                    is_where_filter=getattr(edge, "is_where_filter", False),
+                    where_condition=getattr(edge, "where_condition", None),
                     # Preserve complex aggregate metadata
                     aggregate_spec=getattr(edge, "aggregate_spec", None),
                 )

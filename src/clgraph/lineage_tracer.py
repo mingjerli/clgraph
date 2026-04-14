@@ -223,8 +223,14 @@ def trace_forward(
         if not outgoing:
             descendants.append(current)
         else:
+            has_unvisited = False
             for edge in outgoing:
-                queue.append(edge.to_node)
+                if edge.to_node.full_name not in visited:
+                    has_unvisited = True
+                    queue.append(edge.to_node)
+            # If all outgoing targets are already visited, treat as terminal
+            if not has_unvisited:
+                descendants.append(current)
 
     return descendants
 

@@ -188,6 +188,14 @@ class JoinPredicateInfo:
 
 
 @dataclass
+class WherePredicateInfo:
+    """WHERE clause predicate for column lineage tracking."""
+
+    condition_sql: str
+    columns: List[Tuple[Optional[str], str]]
+
+
+@dataclass
 class QueryUnit:
     """
     Represents a single query unit in any context.
@@ -284,6 +292,10 @@ class QueryUnit:
     # JOIN predicate metadata
     # Stores info about JOIN ON clause columns for predicate lineage edges
     join_predicates: List["JoinPredicateInfo"] = field(default_factory=list)
+
+    # WHERE predicate metadata
+    # Stores info about WHERE clause columns for filter lineage edges
+    where_predicates: List["WherePredicateInfo"] = field(default_factory=list)
 
     # Metadata
     depth: int = 0  # Nesting depth (0 = main query)
@@ -644,6 +656,10 @@ class ColumnEdge:
     is_join_predicate: bool = False  # True if this edge is from a JOIN ON clause
     join_condition: Optional[str] = None  # Raw SQL of the ON clause
     join_side: Optional[str] = None  # "left" or "right" (which side of the join this column is on)
+
+    # ─── WHERE Filter Metadata ───
+    is_where_filter: bool = False  # True if this edge is from a WHERE clause
+    where_condition: Optional[str] = None  # Raw SQL of the WHERE condition
 
     # ─── Self-Reference / Pipeline Ordering Metadata ───
     statement_order: Optional[int] = None  # Topological sort index of the query

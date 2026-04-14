@@ -177,6 +177,10 @@ class RecursiveLineageBuilder:
         if unit.join_predicates:
             self._create_join_predicate_edges(unit, output_cols)
 
+        # 10. Create where filter edges
+        if unit.where_predicates:
+            self._create_where_filter_edges(unit, output_cols)
+
     def _create_window_function_edges(self, unit: QueryUnit, output_cols: List[Dict]):
         """
         Create edges for columns used in window functions.
@@ -487,6 +491,42 @@ class RecursiveLineageBuilder:
             return find_or_create_table_column_node(self.lineage_graph, table_ref, col_name)
 
         return None
+
+    def _create_where_filter_edges(self, unit: QueryUnit, output_cols: List[Dict]):
+        """
+        Create edges for columns used in WHERE clauses.
+
+        WHERE clauses filter rows, so all referenced columns affect every
+        non-star output column. Creates where_filter edges from each WHERE
+        column to each non-star output column.
+
+        Args:
+            unit: The query unit with where_predicates
+            output_cols: The output columns of this unit
+        """
+        for pred in unit.where_predicates:
+            for table_ref, col_name in pred.columns:
+                source_node = self._resolve_join_predicate_column(unit, table_ref, col_name)
+                if not source_node:
+                    continue
+                for col_info in output_cols:
+                    if col_info.get("is_star"):
+                        continue
+                    node_key = get_node_key(unit, col_info)
+                    output_node = self.lineage_graph.nodes.get(node_key)
+                    if not output_node:
+                        continue
+                    edge = ColumnEdge(
+                        from_node=source_node,
+                        to_node=output_node,
+                        edge_type="where_filter",
+                        transformation="where_filter",
+                        context="WHERE",
+                        expression=pred.condition_sql,
+                        is_where_filter=True,
+                        where_condition=pred.condition_sql,
+                    )
+                    self.lineage_graph.add_edge(edge)
 
     def _create_qualify_edges(self, unit: QueryUnit, output_cols: List[Dict]):
         """

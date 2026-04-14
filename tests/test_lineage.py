@@ -1238,11 +1238,13 @@ class TestSimplifiedGraph:
         graph = builder.build()
         simplified = graph.to_simplified()
 
-        # Original should have 8 nodes (2 input + 2 step1 + 2 step2 + 2 output)
-        assert len(graph.nodes) == 8
+        # Original should have 9 nodes (3 input + 2 step1 + 2 step2 + 2 output)
+        # orders.status is an input node from the WHERE clause filter lineage
+        assert len(graph.nodes) == 9
 
-        # Simplified should only have 4 nodes (2 input + 2 output)
-        assert len(simplified.nodes) == 4
+        # Simplified should have 5 nodes (3 input + 2 output)
+        # orders.status is included as a WHERE filter input
+        assert len(simplified.nodes) == 5
 
         # Check edges trace through both CTEs
         edge_pairs = {(e.from_node.full_name, e.to_node.full_name) for e in simplified.edges}
