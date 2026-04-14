@@ -211,6 +211,9 @@ class RecursiveQueryParser:
                     )
                 )
 
+        # 4c. Promote dedup qualify info from WHERE (Gap 2)
+        self._promote_dedup_qualify_if_applicable(select_node, unit)
+
         # 5. Parse HAVING clause (may contain subqueries)
         having_clause = select_node.args.get("having")
         if having_clause:
@@ -1687,6 +1690,53 @@ class RecursiveQueryParser:
             "window_functions": window_functions,
         }
 
+    def _promote_dedup_qualify_if_applicable(self, select_node: exp.Select, unit: QueryUnit):
+        """
+        Promote dedup qualify info from a subquery-based WHERE pattern (Gap 2).
+
+        Detects the common dedup pattern:
+            SELECT ... FROM (SELECT *, ROW_NUMBER() OVER (...) AS rn FROM t) WHERE rn = 1
+        and promotes it to qualify_info on the outer unit.
+
+        Only ranking functions (ROW_NUMBER, RANK, DENSE_RANK, NTILE) are eligible.
+        Comparison operators =, <=, < against a literal are recognized.
+
+        Args:
+            select_node: The SELECT expression
+            unit: The query unit to potentially add qualify_info to
+        """
+        where_clause = select_node.args.get("where")
+        if not where_clause or unit.qualify_info:
+            return
+
+        for dep_unit_id in unit.depends_on_units:
+            dep_unit = self.unit_graph.units.get(dep_unit_id)
+            if not dep_unit or not dep_unit.ranking_window_columns:
+                continue
+
+            for node in where_clause.walk():
+                if isinstance(node, (exp.EQ, exp.LTE, exp.LT)):
+                    left, right = node.left, node.right
+                    col_name = None
+                    if isinstance(left, exp.Column) and isinstance(right, exp.Literal):
+                        col_name = left.name
+                    elif isinstance(right, exp.Column) and isinstance(left, exp.Literal):
+                        col_name = right.name
+
+                    if col_name and col_name in dep_unit.ranking_window_columns:
+                        window_meta = dep_unit.ranking_window_columns[col_name]
+                        unit.qualify_info = {
+                            "condition": where_clause.this.sql(),
+                            "partition_columns": list(window_meta["partition_by"]),
+                            "order_columns": [
+                                c["column"] if isinstance(c, dict) else c
+                                for c in window_meta["order_by"]
+                            ],
+                            "window_functions": [window_meta["function"]],
+                            "promoted_from_subquery": True,
+                        }
+                        return
+
     def _parse_grouping_sets(self, group_clause: exp.Group, unit: QueryUnit):
         """
         Parse GROUP BY clause for GROUPING SETS, CUBE, and ROLLUP constructs.
@@ -1841,6 +1891,18 @@ class RecursiveQueryParser:
 
         if windows:
             unit.window_info = {"windows": windows}
+
+        # Populate ranking_window_columns for dedup qualify promotion (Gap 2)
+        RANKING_FUNCTIONS = {"ROW_NUMBER", "RANK", "DENSE_RANK", "NTILE"}
+        for window_def in windows:
+            func_name = window_def.get("function", "").upper()
+            output_col = window_def.get("output_column")
+            if func_name in RANKING_FUNCTIONS and output_col:
+                unit.ranking_window_columns[output_col] = {
+                    "function": func_name,
+                    "partition_by": window_def.get("partition_by", []),
+                    "order_by": window_def.get("order_by", []),
+                }
 
     def _parse_single_window(
         self,

@@ -297,6 +297,11 @@ class QueryUnit:
     # Stores info about WHERE clause columns for filter lineage edges
     where_predicates: List["WherePredicateInfo"] = field(default_factory=list)
 
+    # Ranking window columns for dedup qualify promotion (Gap 2)
+    # Maps alias -> {function, partition_by, order_by} for ranking functions
+    # Example: {'rn': {'function': 'ROW_NUMBER', 'partition_by': ['id'], 'order_by': [...]}}
+    ranking_window_columns: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+
     # Metadata
     depth: int = 0  # Nesting depth (0 = main query)
     order: int = 0  # Topological order for CTEs
