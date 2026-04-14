@@ -196,25 +196,32 @@ def trace_merge_columns(
     merge_action = col_info.get("merge_action", col_info.get("type"))
     merge_condition = col_info.get("merge_condition")
     source_refs = col_info.get("source_columns", [])
+    condition_refs = col_info.get("condition_columns", [])
 
-    for source_ref in source_refs:
-        table_ref, col_name = source_ref[:2]
-
-        # Try to resolve as a source unit or base table
+    def _resolve_to_node(table_ref, col_name):
+        """Resolve a (table, column) ref to a ColumnNode."""
         source_node = None
         source_unit = resolve_source_unit(unit, table_ref) if table_ref else None
         if source_unit:
             source_node = find_column_in_unit(source_unit, col_name)
         if not source_node:
-            # Try as base table
             base_table = resolve_base_table_name(unit, table_ref) if table_ref else None
             if base_table:
                 source_node = find_or_create_table_column_node(graph, base_table, col_name)
             elif table_ref:
-                # Fallback: use table_ref directly
                 source_node = find_or_create_table_column_node(graph, table_ref, col_name)
+        return source_node
 
+    # Value-assignment edges (RHS of SET) or match/filter edges
+    for source_ref in source_refs:
+        table_ref, col_name = source_ref[:2]
+        source_node = _resolve_to_node(table_ref, col_name)
         if source_node:
+            # Determine role: match edges get None, update/insert get "value",
+            # merge_match_filter edges keep their explicit "condition" role
+            role = col_info.get("merge_column_role")
+            if role is None and col_info["type"] in ("merge_update", "merge_insert"):
+                role = "value"
             edge = ColumnEdge(
                 from_node=source_node,
                 to_node=output_node,
@@ -225,7 +232,26 @@ def trace_merge_columns(
                 is_merge_operation=True,
                 merge_action=merge_action,
                 merge_condition=merge_condition,
-                merge_column_role=col_info.get("merge_column_role"),
+                merge_column_role=role,
+            )
+            graph.add_edge(edge)
+
+    # Condition-gating edges (from WHEN AND clause)
+    for cond_ref in condition_refs:
+        table_ref, col_name = cond_ref[:2]
+        source_node = _resolve_to_node(table_ref, col_name)
+        if source_node:
+            edge = ColumnEdge(
+                from_node=source_node,
+                to_node=output_node,
+                edge_type=col_info["type"],
+                transformation=col_info["type"],
+                context=unit.unit_type.value,
+                expression=merge_condition,
+                is_merge_operation=True,
+                merge_action=merge_action,
+                merge_condition=merge_condition,
+                merge_column_role="condition",
             )
             graph.add_edge(edge)
 

@@ -511,5 +511,132 @@ class TestMergeFilterLineage:
         assert len(filter_edges) >= 1
 
 
+# ============================================================================
+# Test Group 11: MERGE Condition Column Parsing (Gap 3)
+# ============================================================================
+
+
+class TestMergeConditionColumns:
+    """Test WHEN MATCHED condition columns extracted as refs (Gap 3)."""
+
+    def test_when_condition_columns_extracted(self):
+        """WHEN MATCHED AND (t.name <> s.name) extracts name as condition column."""
+        sql = """
+        MERGE INTO dim_customer t
+        USING staging s ON t.id = s.id
+        WHEN MATCHED AND (t.name <> s.name OR t.city <> s.city) THEN
+          UPDATE SET t.end_time = current_timestamp(), t.is_active = 'N'
+        """
+        builder = RecursiveLineageBuilder(sql, dialect="postgres")
+        graph = builder.build()
+
+        merge_edges = [e for e in graph.edges if e.is_merge_operation]
+
+        end_time_cond_edges = [
+            e
+            for e in merge_edges
+            if e.to_node.column_name == "end_time" and e.merge_column_role == "condition"
+        ]
+        cond_col_names = {e.from_node.column_name for e in end_time_cond_edges}
+        assert "name" in cond_col_names
+        assert "city" in cond_col_names
+
+    def test_is_active_has_same_condition_columns(self):
+        """Both assigned columns share the same condition columns."""
+        sql = """
+        MERGE INTO dim_customer t
+        USING staging s ON t.id = s.id
+        WHEN MATCHED AND (t.name <> s.name OR t.city <> s.city) THEN
+          UPDATE SET t.end_time = current_timestamp(), t.is_active = 'N'
+        """
+        builder = RecursiveLineageBuilder(sql, dialect="postgres")
+        graph = builder.build()
+
+        merge_edges = [e for e in graph.edges if e.is_merge_operation]
+
+        is_active_cond_edges = [
+            e
+            for e in merge_edges
+            if e.to_node.column_name == "is_active" and e.merge_column_role == "condition"
+        ]
+        cond_col_names = {e.from_node.column_name for e in is_active_cond_edges}
+        assert "name" in cond_col_names
+        assert "city" in cond_col_names
+
+    def test_condition_columns_include_both_sides(self):
+        """Condition t.name <> s.name includes columns from both target and source."""
+        sql = """
+        MERGE INTO dim_customer t
+        USING staging s ON t.id = s.id
+        WHEN MATCHED AND (t.name <> s.name) THEN
+          UPDATE SET t.end_time = current_timestamp()
+        """
+        builder = RecursiveLineageBuilder(sql, dialect="postgres")
+        graph = builder.build()
+
+        merge_edges = [e for e in graph.edges if e.is_merge_operation]
+        end_time_cond_edges = [
+            e
+            for e in merge_edges
+            if e.to_node.column_name == "end_time" and e.merge_column_role == "condition"
+        ]
+        assert len(end_time_cond_edges) >= 2
+        source_tables = {e.from_node.table_name for e in end_time_cond_edges}
+        assert "dim_customer" in source_tables, "Expected target-side condition column"
+        assert "staging" in source_tables, "Expected source-side condition column"
+
+    def test_no_condition_columns_for_unconditional_update(self):
+        """WHEN MATCHED without AND condition produces no condition edges."""
+        sql = """
+        MERGE INTO target t
+        USING source s ON t.id = s.id
+        WHEN MATCHED THEN UPDATE SET t.value = s.new_value
+        """
+        builder = RecursiveLineageBuilder(sql, dialect="postgres")
+        graph = builder.build()
+
+        merge_edges = [e for e in graph.edges if e.is_merge_operation]
+        assert len(merge_edges) > 0, "Expected merge edges to exist"
+        cond_edges = [e for e in merge_edges if e.merge_column_role == "condition"]
+        assert cond_edges == []
+
+
+class TestMergeValueRole:
+    """Test that value-assignment edges are tagged with merge_column_role='value'."""
+
+    def test_update_value_edges_tagged(self):
+        """UPDATE SET t.value = s.new_value produces edge with role='value'."""
+        sql = """
+        MERGE INTO target t
+        USING source s ON t.id = s.id
+        WHEN MATCHED THEN UPDATE SET t.value = s.new_value
+        """
+        builder = RecursiveLineageBuilder(sql, dialect="postgres")
+        graph = builder.build()
+
+        update_edges = [
+            e for e in graph.edges if e.is_merge_operation and e.merge_action == "update"
+        ]
+        assert len(update_edges) >= 1
+        for edge in update_edges:
+            assert edge.merge_column_role == "value"
+
+    def test_match_edges_have_no_role(self):
+        """ON clause match edges should have merge_column_role=None."""
+        sql = """
+        MERGE INTO target t
+        USING source s ON t.id = s.id
+        WHEN MATCHED THEN UPDATE SET t.value = s.new_value
+        """
+        builder = RecursiveLineageBuilder(sql, dialect="postgres")
+        graph = builder.build()
+
+        match_edges = [
+            e for e in graph.edges if e.is_merge_operation and e.edge_type == "merge_match"
+        ]
+        for edge in match_edges:
+            assert edge.merge_column_role is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
