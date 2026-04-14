@@ -24,7 +24,6 @@ Discovered during CDC/SCD design review (see `docs/superpowers/specs/2026-04-13-
   - Implemented in PR #61: self-read node detection via AST node identity, cycle-safe dependency resolution, query-scoped `{query_id}:self_read:{table}.{col}` naming, column-granular cross-query wiring, edge role/order annotations.
   - Design: `docs/superpowers/specs/2026-04-13-gap4-self-referencing-target-design.md`
 
-- [ ] **Gap 7. JOIN ON predicate columns not recorded in column lineage**
-  - Today: JOIN ON predicates produce **zero** column-lineage edges (no handling in `lineage_builder` for ON clause columns beyond the equi-join's identity resolution).
-  - Symptom: point-in-time joins like `o.order_ts BETWEEN d.start_time AND d.end_time` leave `start_time`/`end_time` invisible as influences on downstream columns.
-  - Needs its own design doc — new edge semantic for "predicate-conditional" columns.
+- [x] **Gap 7. JOIN ON predicate columns not recorded in column lineage**
+  - Implemented: tagged `is_join_predicate=True` edges from ON-clause columns to right-side projected output columns. Supports equi-joins, range/BETWEEN, function-wrapped, multi-join chains, and Gap 4 self-read interaction.
+  - Design: `docs/superpowers/specs/2026-04-13-gap7-join-predicate-columns-design.md`

@@ -232,9 +232,12 @@ class TestPipelineUnqualifiedColumns:
 
         pipeline = Pipeline.from_sql_list(queries, dialect="bigquery")
 
-        # Check that month has lineage to order_date
+        # Check that month has lineage to order_date (filter out join predicate edges)
         month_edges = [
-            e for e in pipeline.edges if e.to_node.full_name == "reports.monthly_revenue.month"
+            e
+            for e in pipeline.edges
+            if e.to_node.full_name == "reports.monthly_revenue.month"
+            and not getattr(e, "is_join_predicate", False)
         ]
         assert len(month_edges) == 1
         assert month_edges[0].from_node.column_name == "order_date"
@@ -291,9 +294,12 @@ class TestPipelineUnqualifiedColumns:
         assert len(value_a_edges) == 1
         assert value_a_edges[0].from_node.table_name == "staging.table_a"
 
-        # value_b should come from table_b
+        # value_b should come from table_b (filter out join predicate edges)
         value_b_edges = [
-            e for e in pipeline.edges if e.to_node.full_name == "reports.combined.value_b"
+            e
+            for e in pipeline.edges
+            if e.to_node.full_name == "reports.combined.value_b"
+            and not getattr(e, "is_join_predicate", False)
         ]
         assert len(value_b_edges) == 1
         assert value_b_edges[0].from_node.table_name == "staging.table_b"
@@ -329,8 +335,13 @@ class TestEdgeCases:
         assert len(amount_edges) == 1
         assert amount_edges[0].from_node.table_name == "staging.orders"
 
-        # name should come from users
-        name_edges = [e for e in pipeline.edges if e.to_node.full_name == "reports.summary.name"]
+        # name should come from users (filter out join predicate edges)
+        name_edges = [
+            e
+            for e in pipeline.edges
+            if e.to_node.full_name == "reports.summary.name"
+            and not getattr(e, "is_join_predicate", False)
+        ]
         assert len(name_edges) == 1
         assert name_edges[0].from_node.table_name == "staging.users"
 

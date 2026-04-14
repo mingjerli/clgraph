@@ -11,6 +11,7 @@ import sqlglot
 from sqlglot import exp
 
 from .models import (
+    JoinPredicateInfo,
     QueryUnit,
     QueryUnitGraph,
     QueryUnitType,
@@ -176,6 +177,22 @@ class RecursiveQueryParser:
         joins = select_node.args.get("joins", [])
         for join in joins:
             self._parse_from_sources(join, unit, depth)
+
+        # 3b. Extract JOIN ON predicate columns for lineage tracking
+        for join in joins:
+            on_clause = join.args.get("on")
+            if on_clause:
+                cols = self._extract_join_predicate_columns(on_clause)
+                join_type = self._get_join_type(join)
+                right_table = self._get_join_right_table(join, unit)
+                unit.join_predicates.append(
+                    JoinPredicateInfo(
+                        condition_sql=on_clause.sql(),
+                        columns=cols,
+                        join_type=join_type,
+                        right_table=right_table,
+                    )
+                )
 
         # 4. Parse WHERE clause (may contain subqueries)
         where_clause = select_node.args.get("where")
@@ -1459,6 +1476,80 @@ class RecursiveQueryParser:
                             alias = str(node.alias)
                     if alias and alias not in parent_unit.lateral_sources:
                         process_lateral_subquery(node, parent_unit, preceding_tables)
+
+    def _extract_join_predicate_columns(
+        self, on_clause: exp.Expression
+    ) -> List[Tuple[Optional[str], str]]:
+        """
+        Extract column references from a JOIN ON clause expression.
+
+        Walks the expression tree to find all exp.Column nodes and returns
+        (table_ref, col_name) pairs. Literals are ignored (they are not columns).
+
+        Args:
+            on_clause: The ON clause expression from a JOIN
+
+        Returns:
+            List of (table_ref_or_None, column_name) tuples
+        """
+        columns: List[Tuple[Optional[str], str]] = []
+        for node in on_clause.walk():
+            if isinstance(node, exp.Column):
+                table_ref = node.table if node.table else None
+                col_name = node.name
+                columns.append((table_ref, col_name))
+        return columns
+
+    def _get_join_type(self, join: exp.Join) -> str:
+        """
+        Extract the join type string from a sqlglot Join node.
+
+        Args:
+            join: The sqlglot Join expression
+
+        Returns:
+            Join type string like "inner", "left", "right", "full", "cross"
+        """
+        side = join.side
+        kind = join.kind
+
+        if side:
+            return side.lower()
+        if kind:
+            return kind.lower()
+        return "inner"
+
+    def _get_join_right_table(self, join: exp.Join, unit: QueryUnit) -> Optional[str]:
+        """
+        Extract the right-side table name or alias from a JOIN clause.
+
+        The join's `this` contains the table being joined (the right side).
+        Uses the table's alias if present, otherwise the table name.
+
+        Args:
+            join: The sqlglot Join expression
+            unit: The QueryUnit (for alias_mapping lookup)
+
+        Returns:
+            The alias or name of the right-side table, or None
+        """
+        table_node = join.this
+
+        # Handle subquery case
+        if isinstance(table_node, exp.Subquery):
+            alias = table_node.alias
+            if alias:
+                return str(alias)
+            return None
+
+        # Handle table case
+        if isinstance(table_node, exp.Table):
+            # Prefer alias over table name
+            if hasattr(table_node, "alias") and table_node.alias:
+                return str(table_node.alias)
+            return table_node.name
+
+        return None
 
     def _parse_where_subqueries(
         self, where_node: exp.Expression, parent_unit: QueryUnit, depth: int

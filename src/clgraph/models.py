@@ -178,6 +178,16 @@ class ValuesInfo:
 
 
 @dataclass
+class JoinPredicateInfo:
+    """Information about a JOIN ON clause predicate for column lineage tracking."""
+
+    condition_sql: str  # Raw SQL of the ON clause
+    columns: List[Tuple[Optional[str], str]]  # (table_ref, col_name) pairs
+    join_type: str  # "inner", "left", "right", "full", "cross"
+    right_table: Optional[str]  # Name/alias of the joined (right-side) table
+
+
+@dataclass
 class QueryUnit:
     """
     Represents a single query unit in any context.
@@ -270,6 +280,10 @@ class QueryUnit:
     # Maps alias -> ValuesInfo
     # Example: {'t': ValuesInfo(alias='t', column_names=['id', 'name'], row_count=2)}
     values_sources: Dict[str, "ValuesInfo"] = field(default_factory=dict)
+
+    # JOIN predicate metadata
+    # Stores info about JOIN ON clause columns for predicate lineage edges
+    join_predicates: List["JoinPredicateInfo"] = field(default_factory=list)
 
     # Metadata
     depth: int = 0  # Nesting depth (0 = main query)
@@ -625,6 +639,11 @@ class ColumnEdge:
     # ─── Table-Valued Function Metadata ───
     tvf_info: Optional["TVFInfo"] = None  # Full TVF specification
     is_tvf_output: bool = False  # True if this edge is from a TVF output
+
+    # ─── JOIN Predicate Metadata ───
+    is_join_predicate: bool = False  # True if this edge is from a JOIN ON clause
+    join_condition: Optional[str] = None  # Raw SQL of the ON clause
+    join_side: Optional[str] = None  # "left" or "right" (which side of the join this column is on)
 
     # ─── Self-Reference / Pipeline Ordering Metadata ───
     statement_order: Optional[int] = None  # Topological sort index of the query

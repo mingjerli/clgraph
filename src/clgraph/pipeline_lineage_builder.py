@@ -466,6 +466,10 @@ class PipelineLineageBuilder:
                     window_frame_end=getattr(edge, "window_frame_end", None),
                     window_order_direction=getattr(edge, "window_order_direction", None),
                     window_order_nulls=getattr(edge, "window_order_nulls", None),
+                    # Preserve JOIN predicate metadata
+                    is_join_predicate=getattr(edge, "is_join_predicate", False),
+                    join_condition=getattr(edge, "join_condition", None),
+                    join_side=getattr(edge, "join_side", None),
                     # Preserve complex aggregate metadata
                     aggregate_spec=getattr(edge, "aggregate_spec", None),
                 )
