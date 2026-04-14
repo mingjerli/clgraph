@@ -6,7 +6,7 @@ Includes template tokenization for Jinja2/f-string support.
 """
 
 import re
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import sqlglot
 from sqlglot import exp
@@ -185,8 +185,8 @@ class MultiQueryParser:
         # Determine operation type and destination table
         operation, destination = self._extract_operation_and_destination(ast, tokenizer)
 
-        # Extract source tables
-        sources = self._extract_source_tables(ast, tokenizer)
+        # Extract source tables (now also returns self-reference info)
+        sources, self_referenced, self_ref_aliases = self._extract_source_tables(ast, tokenizer)
 
         # Restore templates in SQL for lineage building
         # Only restore if templates were resolved (template_context was provided)
@@ -205,6 +205,8 @@ class MultiQueryParser:
             operation=operation,
             destination_table=destination,
             source_tables=sources,
+            self_referenced_tables=self_referenced,
+            self_ref_aliases=self_ref_aliases,
             original_sql=original_sql if is_templated else None,
             is_templated=is_templated,
         )
@@ -245,6 +247,10 @@ class MultiQueryParser:
             operation = SQLOperation.UPDATE
             destination = self._get_table_name(ast.this, tokenizer)
 
+        elif isinstance(ast, exp.Delete):
+            operation = SQLOperation.DELETE
+            destination = self._get_table_name(ast.this, tokenizer)
+
         # DQL: SELECT (query-only)
         elif isinstance(ast, exp.Select):
             operation = SQLOperation.SELECT
@@ -256,24 +262,41 @@ class MultiQueryParser:
 
         return operation, destination
 
-    def _extract_source_tables(self, ast: exp.Expression, tokenizer: TemplateTokenizer) -> Set[str]:
+    def _extract_source_tables(
+        self, ast: exp.Expression, tokenizer: TemplateTokenizer
+    ) -> tuple[set[str], set[str], dict[str, str]]:
         """
-        Extract all source tables referenced in the query (excluding destination table).
+        Extract all source tables referenced in the query.
+
+        Tables that match the destination table but appear in the query body
+        (not as the direct target slot) are kept as source tables and also
+        recorded as self-referenced tables.
 
         CTE aliases are filtered out so they don't leak into the table dependency
         graph as phantom source tables. For example, in:
             WITH source AS (SELECT * FROM raw.orders)
             SELECT * FROM source
         only `raw.orders` is returned, not the CTE alias `source`.
-        """
-        tables = set()
 
-        # For CREATE/INSERT/MERGE/UPDATE, the destination table is in ast.this
-        # We need to exclude it from source tables
+        Returns:
+            Tuple of (source_tables, self_referenced_tables, self_ref_aliases)
+        """
+        tables: set[str] = set()
+        self_referenced_tables: set[str] = set()
+        self_ref_aliases: dict[str, str] = {}
+
+        # For CREATE/INSERT/MERGE/UPDATE/DELETE, the destination table is in ast.this
         destination_table = None
-        if isinstance(ast, (exp.Create, exp.Insert, exp.Merge, exp.Update)):
+        target_table_node_ids: set[int] = set()
+
+        if isinstance(ast, (exp.Create, exp.Insert, exp.Merge, exp.Update, exp.Delete)):
             if ast.this:
                 destination_table = self._get_table_name(ast.this, tokenizer)
+                # Collect AST node IDs in the target slot so we can distinguish
+                # the target reference from body references to the same table.
+                target_table_node_ids.add(id(ast.this))
+                for t in ast.this.find_all(exp.Table):
+                    target_table_node_ids.add(id(t))
 
         # Collect CTE alias names so we can exclude CTE references from source
         # tables. sqlglot represents `FROM <cte_name>` as an exp.Table node,
@@ -283,15 +306,29 @@ class MultiQueryParser:
         # Find all Table nodes in the AST
         for table_node in ast.find_all(exp.Table):
             table_name = self._get_table_name(table_node, tokenizer)
-            if not table_name or table_name == destination_table:
+            if not table_name:
                 continue
+
+            # Skip the table node if it IS the target slot itself
+            if id(table_node) in target_table_node_ids:
+                continue
+
             # A bare Table node whose name matches a CTE alias (and has no
             # schema/db qualifier) is a CTE reference, not an external table.
             if table_name in cte_aliases and not (table_node.db or table_node.catalog):
                 continue
+
             tables.add(table_name)
 
-        return tables
+            # Detect self-references: table in the body that matches destination
+            if table_name == destination_table:
+                self_referenced_tables.add(table_name)
+                # Record alias if present
+                alias = table_node.alias
+                if alias:
+                    self_ref_aliases[alias] = table_name
+
+        return tables, self_referenced_tables, self_ref_aliases
 
     def _get_table_name(self, table_node: exp.Table, tokenizer: TemplateTokenizer) -> str:
         """

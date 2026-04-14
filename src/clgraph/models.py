@@ -626,6 +626,10 @@ class ColumnEdge:
     tvf_info: Optional["TVFInfo"] = None  # Full TVF specification
     is_tvf_output: bool = False  # True if this edge is from a TVF output
 
+    # ─── Self-Reference / Pipeline Ordering Metadata ───
+    statement_order: Optional[int] = None  # Topological sort index of the query
+    edge_role: Optional[str] = None  # "prior_state_read", "cross_query_self_ref", or None
+
     def __hash__(self):
         return hash((self.from_node.full_name, self.to_node.full_name, self.edge_type))
 
@@ -834,6 +838,7 @@ class SQLOperation(Enum):
     MERGE = "MERGE"
     DELETE_AND_INSERT = "DELETE+INSERT"  # Common pattern
     UPDATE = "UPDATE"
+    DELETE = "DELETE"
 
     # DQL Operations
     SELECT = "SELECT"  # Query-only, no table creation/modification
@@ -856,6 +861,11 @@ class ParsedQuery:
     operation: SQLOperation  # What kind of operation is this?
     destination_table: Optional[str]  # Table being created/modified (None for SELECT-only)
     source_tables: Set[str]  # Tables being read
+
+    # Self-referencing tables (tables that appear as both destination and source)
+    self_referenced_tables: Set[str] = field(default_factory=set)
+    # Mapping SQL alias -> resolved table name for self-referenced tables only
+    self_ref_aliases: Dict[str, str] = field(default_factory=dict)
 
     # Query-level lineage
     query_lineage: Optional["ColumnLineageGraph"] = None  # Single-query lineage graph
@@ -885,6 +895,7 @@ class ParsedQuery:
             SQLOperation.MERGE,
             SQLOperation.DELETE_AND_INSERT,
             SQLOperation.UPDATE,
+            SQLOperation.DELETE,
         ]
 
     def is_dql(self) -> bool:
