@@ -161,6 +161,7 @@ class JSONExporter:
                 edge_dict["is_merge_operation"] = True
                 edge_dict["merge_action"] = getattr(edge, "merge_action", None)
                 edge_dict["merge_condition"] = getattr(edge, "merge_condition", None)
+                edge_dict["merge_column_role"] = getattr(edge, "merge_column_role", None)
 
             # Include QUALIFY clause metadata if present
             if getattr(edge, "is_qualify_column", False):
