@@ -662,5 +662,77 @@ class TestMergeInsertConditionColumns:
         assert "op" in cond_col_names
 
 
+# ============================================================================
+# Test Group 12: SCD2 End-to-End Integration (Gaps 3, 9, 10)
+# ============================================================================
+
+
+class TestSCD2MergeConditionLineage:
+    """End-to-end test: SCD2 MERGE with all three gaps fixed."""
+
+    SCD2_SQL = """
+    MERGE INTO dim_customer t
+    USING staging_customer_latest s ON t.id = s.id AND t.is_active = 'Y'
+    WHEN MATCHED AND (t.name <> s.name OR t.city <> s.city OR t.email <> s.email) THEN
+      UPDATE SET t.end_time = current_timestamp(), t.is_active = 'N'
+    """
+
+    def test_gap9_on_literal_filter_in_lineage(self):
+        """Gap 9: is_active from ON clause appears in lineage."""
+        builder = RecursiveLineageBuilder(self.SCD2_SQL, dialect="databricks")
+        graph = builder.build()
+
+        merge_edges = [e for e in graph.edges if e.is_merge_operation]
+        filter_edges = [
+            e
+            for e in merge_edges
+            if e.edge_type == "merge_match_filter" and e.from_node.column_name == "is_active"
+        ]
+        assert len(filter_edges) >= 1
+        assert filter_edges[0].merge_column_role == "condition"
+
+    def test_gap3_when_condition_columns_in_lineage(self):
+        """Gap 3: name, city, email from WHEN condition are upstream of end_time."""
+        builder = RecursiveLineageBuilder(self.SCD2_SQL, dialect="databricks")
+        graph = builder.build()
+
+        merge_edges = [e for e in graph.edges if e.is_merge_operation]
+        end_time_cond_edges = [
+            e
+            for e in merge_edges
+            if e.to_node.column_name == "end_time" and e.merge_column_role == "condition"
+        ]
+        cond_col_names = {e.from_node.column_name for e in end_time_cond_edges}
+        assert "name" in cond_col_names
+        assert "city" in cond_col_names
+        assert "email" in cond_col_names
+
+    def test_gap10_condition_only_on_literal_assigned_column(self):
+        """Gap 10: is_active = 'N' (literal RHS) has condition edges but no value edges."""
+        builder = RecursiveLineageBuilder(self.SCD2_SQL, dialect="databricks")
+        graph = builder.build()
+
+        merge_edges = [e for e in graph.edges if e.is_merge_operation]
+
+        is_active_edges = [e for e in merge_edges if e.to_node.column_name == "is_active"]
+        roles = {e.merge_column_role for e in is_active_edges}
+        assert "condition" in roles
+        assert "value" not in roles
+
+    def test_gap10_impact_analysis_name_reaches_end_time(self):
+        """Gap 10: impact analysis from staging.name should reach end_time."""
+        builder = RecursiveLineageBuilder(self.SCD2_SQL, dialect="databricks")
+        graph = builder.build()
+
+        merge_edges = [e for e in graph.edges if e.is_merge_operation]
+
+        end_time_upstream = [
+            e.from_node.column_name for e in merge_edges if e.to_node.column_name == "end_time"
+        ]
+        assert "name" in end_time_upstream
+        assert "city" in end_time_upstream
+        assert "email" in end_time_upstream
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
