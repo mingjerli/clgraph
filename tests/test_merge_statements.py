@@ -638,5 +638,29 @@ class TestMergeValueRole:
             assert edge.merge_column_role is None
 
 
+class TestMergeInsertConditionColumns:
+    """Test WHEN NOT MATCHED condition columns for INSERT actions."""
+
+    def test_not_matched_condition_columns_extracted(self):
+        """WHEN NOT MATCHED AND s.op = 'c' should produce condition edges."""
+        sql = """
+        MERGE INTO target t
+        USING source s ON t.id = s.id
+        WHEN NOT MATCHED AND s.op = 'c' THEN
+          INSERT (id, value) VALUES (s.id, s.value)
+        """
+        builder = RecursiveLineageBuilder(sql, dialect="postgres")
+        graph = builder.build()
+
+        merge_edges = [e for e in graph.edges if e.is_merge_operation]
+        id_cond_edges = [
+            e
+            for e in merge_edges
+            if e.to_node.column_name == "id" and e.merge_column_role == "condition"
+        ]
+        cond_col_names = {e.from_node.column_name for e in id_cond_edges}
+        assert "op" in cond_col_names
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
