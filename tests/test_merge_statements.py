@@ -347,5 +347,50 @@ class TestMergeEdgeCases:
         assert "delete" in action_types or "update" in action_types
 
 
+# ============================================================================
+# Test Group 10: MERGE Condition Column Role (Gap 10)
+# ============================================================================
+
+
+class TestMergeColumnRole:
+    """Test that merge_column_role field exists on ColumnEdge."""
+
+    def test_merge_column_role_field_exists(self):
+        """Test that ColumnEdge has merge_column_role field."""
+        from clgraph.models import ColumnEdge, ColumnNode
+
+        source = ColumnNode(table_name="source", column_name="name", full_name="source.name")
+        target = ColumnNode(
+            table_name="target", column_name="end_time", full_name="target.end_time"
+        )
+        edge = ColumnEdge(
+            from_node=source,
+            to_node=target,
+            edge_type="merge_update",
+            transformation="merge_update",
+            context="merge",
+            is_merge_operation=True,
+            merge_action="update",
+            merge_column_role="condition",
+        )
+        assert edge.merge_column_role == "condition"
+
+    def test_merge_column_role_defaults_none(self):
+        """Test that merge_column_role defaults to None."""
+        from clgraph.models import ColumnEdge, ColumnNode
+
+        source = ColumnNode(table_name="source", column_name="val", full_name="source.val")
+        target = ColumnNode(table_name="target", column_name="val", full_name="target.val")
+        edge = ColumnEdge(
+            from_node=source,
+            to_node=target,
+            edge_type="merge_update",
+            transformation="merge_update",
+            context="merge",
+            is_merge_operation=True,
+        )
+        assert edge.merge_column_role is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
