@@ -284,6 +284,23 @@ def extract_merge_columns(ctx: ExtractionContext, unit: QueryUnit) -> List[Dict]
         output_cols.append(col_info)
         idx += 1
 
+    # 1b. Literal-bound match filter columns (edges for ON clause literal predicates)
+    match_filter_columns = config.get("match_filter_columns", [])
+    for col_name, literal_val in match_filter_columns:
+        col_info = {
+            "index": idx,
+            "name": col_name,
+            "is_star": False,
+            "type": "merge_match_filter",
+            "expression": f"{target_alias}.{col_name} = {literal_val}",
+            "ast_node": None,
+            "source_columns": [(target_alias, col_name)],
+            "merge_action": "match",
+            "merge_column_role": "condition",
+        }
+        output_cols.append(col_info)
+        idx += 1
+
     # 2. WHEN MATCHED -> UPDATE columns
     for action in matched_actions:
         if action.get("action_type") == "update":

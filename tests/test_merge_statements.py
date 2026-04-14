@@ -461,5 +461,55 @@ class TestMergeColumnRole:
         assert edge.merge_column_role is None
 
 
+class TestMergeFilterLineage:
+    """Test lineage edges for literal-bound ON predicates (Gap 9 lineage)."""
+
+    def test_literal_filter_column_produces_lineage_edge(self):
+        """ON t.is_active = 'Y' should produce a lineage edge for is_active."""
+        sql = """
+        MERGE INTO dim_customer t
+        USING staging s ON t.id = s.id AND t.is_active = 'Y'
+        WHEN MATCHED THEN UPDATE SET t.name = s.name
+        """
+        builder = RecursiveLineageBuilder(sql, dialect="postgres")
+        graph = builder.build()
+
+        merge_edges = [e for e in graph.edges if e.is_merge_operation]
+
+        # Should have an edge for is_active with merge_column_role="condition"
+        filter_edges = [
+            e
+            for e in merge_edges
+            if e.merge_column_role == "condition" and e.to_node.column_name == "is_active"
+        ]
+        assert len(filter_edges) >= 1
+
+        # The filter edge should be tagged as merge_match_filter
+        edge = filter_edges[0]
+        assert edge.edge_type == "merge_match_filter"
+        # source_columns uses target_alias "t", but resolve_base_table_name
+        # resolves "t" -> "dim_customer" via alias_mapping
+        assert edge.from_node.table_name == "dim_customer"
+        assert edge.from_node.column_name == "is_active"
+
+    def test_filter_edge_coexists_with_match_edge(self):
+        """Both column-column match edges and literal filter edges are produced."""
+        sql = """
+        MERGE INTO dim_customer t
+        USING staging s ON t.id = s.id AND t.is_active = 'Y'
+        WHEN MATCHED THEN UPDATE SET t.name = s.name
+        """
+        builder = RecursiveLineageBuilder(sql, dialect="postgres")
+        graph = builder.build()
+
+        merge_edges = [e for e in graph.edges if e.is_merge_operation]
+
+        match_edges = [e for e in merge_edges if e.edge_type == "merge_match"]
+        assert len(match_edges) >= 1
+
+        filter_edges = [e for e in merge_edges if e.edge_type == "merge_match_filter"]
+        assert len(filter_edges) >= 1
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
