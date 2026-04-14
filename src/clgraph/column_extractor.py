@@ -332,6 +332,9 @@ def extract_merge_columns(ctx: ExtractionContext, unit: QueryUnit) -> List[Dict]
     for action in not_matched_actions:
         if action.get("action_type") == "insert":
             condition = action.get("condition")
+            condition_columns = (
+                extract_columns_from_expr(condition, source_alias) if condition else []
+            )
             for target_col, source_expr in action.get("column_mappings", {}).items():
                 col_info = {
                     "index": idx,
@@ -343,6 +346,7 @@ def extract_merge_columns(ctx: ExtractionContext, unit: QueryUnit) -> List[Dict]
                     "source_columns": extract_columns_from_expr(source_expr, source_alias),
                     "merge_action": "insert",
                     "merge_condition": condition,
+                    "condition_columns": condition_columns,
                 }
                 output_cols.append(col_info)
                 idx += 1
