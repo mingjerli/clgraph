@@ -173,6 +173,10 @@ class RecursiveLineageBuilder:
         if unit.window_info:
             self._create_window_function_edges(unit, output_cols)
 
+        # 9. Create join predicate edges
+        if unit.join_predicates:
+            self._create_join_predicate_edges(unit, output_cols)
+
     def _create_window_function_edges(self, unit: QueryUnit, output_cols: List[Dict]):
         """
         Create edges for columns used in window functions.
@@ -372,6 +376,117 @@ class RecursiveLineageBuilder:
         """
         # Reuse the QUALIFY column resolution logic
         return self._resolve_qualify_column(unit, col_ref)
+
+    def _create_join_predicate_edges(self, unit: QueryUnit, output_cols: List[Dict]):
+        """
+        Create edges for columns used in JOIN ON clauses.
+
+        For each JOIN predicate, identifies output columns sourced from the right-side
+        table and creates predicate edges from each ON-clause column to those output columns.
+
+        Args:
+            unit: The query unit with join_predicates
+            output_cols: The output columns of this unit
+        """
+        import logging
+
+        logger = logging.getLogger("clgraph.lineage_builder")
+
+        for info in unit.join_predicates:
+            right_table = info.right_table
+            if not right_table:
+                continue
+
+            # Identify output columns sourced from the right-side table
+            right_output_nodes: List[ColumnNode] = []
+            for col_info in output_cols:
+                if col_info.get("is_star"):
+                    continue
+                node_key = get_node_key(unit, col_info)
+                if node_key not in self.lineage_graph.nodes:
+                    continue
+                output_node = self.lineage_graph.nodes[node_key]
+
+                # Check if this output column's source expression references the right table
+                ast_node = col_info.get("ast_node")
+                if ast_node is None:
+                    continue
+
+                is_right_sourced = False
+                for col_node in ast_node.find_all(exp.Column):
+                    col_table = col_node.table if col_node.table else None
+                    if col_table and col_table == right_table:
+                        is_right_sourced = True
+                        break
+
+                if is_right_sourced:
+                    right_output_nodes.append(output_node)
+
+            if not right_output_nodes:
+                continue
+
+            # For each column in the predicate, resolve to a source node and emit edges
+            for table_ref, col_name in info.columns:
+                source_node = self._resolve_join_predicate_column(unit, table_ref, col_name)
+                if not source_node:
+                    logger.debug(
+                        "Could not resolve join predicate column: %s.%s", table_ref, col_name
+                    )
+                    continue
+
+                # Determine join_side based on whether this column is from the right table
+                join_side = "right" if table_ref == right_table else "left"
+
+                for output_node in right_output_nodes:
+                    edge = ColumnEdge(
+                        from_node=source_node,
+                        to_node=output_node,
+                        edge_type="join_predicate",
+                        transformation="join_predicate",
+                        context="JOIN ON",
+                        expression=info.condition_sql,
+                        is_join_predicate=True,
+                        join_condition=info.condition_sql,
+                        join_side=join_side,
+                    )
+                    self.lineage_graph.add_edge(edge)
+
+    def _resolve_join_predicate_column(
+        self, unit: QueryUnit, table_ref: Optional[str], col_name: str
+    ) -> Optional[ColumnNode]:
+        """
+        Resolve a column reference from a JOIN ON clause to a ColumnNode.
+
+        Args:
+            unit: The query unit
+            table_ref: Table alias/name or None if unqualified
+            col_name: Column name
+
+        Returns:
+            ColumnNode or None if not found
+        """
+        # Try to resolve as a source unit (CTE/subquery)
+        source_unit = self._resolve_source_unit(unit, table_ref) if table_ref else None
+        if source_unit:
+            return self._find_column_in_unit(source_unit, col_name)
+
+        # Try as base table
+        base_table = self._resolve_base_table_name(unit, table_ref) if table_ref else None
+        if base_table:
+            return find_or_create_table_column_node(self.lineage_graph, base_table, col_name)
+
+        # Try without table qualifier - infer from dependencies
+        if not table_ref and unit.depends_on_tables:
+            for table in unit.depends_on_tables:
+                node = find_or_create_table_column_node(self.lineage_graph, table, col_name)
+                if node:
+                    return node
+
+        # Fallback: use table_ref directly if provided
+        if table_ref:
+            return find_or_create_table_column_node(self.lineage_graph, table_ref, col_name)
+
+        return None
 
     def _create_qualify_edges(self, unit: QueryUnit, output_cols: List[Dict]):
         """
