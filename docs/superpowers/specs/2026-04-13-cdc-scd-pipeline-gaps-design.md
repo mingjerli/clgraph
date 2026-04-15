@@ -1,8 +1,28 @@
 # CDC/SCD Pipeline: Gap Analysis & Example Notebook
 
-**Date:** 2026-04-13
+**Date:** 2026-04-13 (updated 2026-04-14)
 **TODO item:** B — `examples/cdc_scd_pipeline.ipynb`
 **Goal:** Stress-test clgraph with a realistic CDC/SCD Type 2 pipeline, surface gaps in column-lineage capture, fix what's practical, and deliver a showcase notebook that honestly documents what works and what doesn't.
+
+## Progress Summary
+
+**All 10 gaps closed.** No remaining open issues.
+
+| Closed | Fix |
+|--------|-----|
+| Gap 1 | Struct dot-access fallback for unresolvable table refs with `nested_path`/`access_type="struct"` (67859c7) |
+| Gap 2 | Promote qualify metadata from subquery-based dedup `WHERE rn = 1` pattern (622e651) |
+| Gap 3/10 | MERGE condition-gating edges with `merge_column_role='condition'` (778f918) |
+| Gap 4 | Statement-scoped self-read nodes for self-referencing targets (5ef8dad) |
+| Gap 5 | Verified: literal-only columns appear as terminal nodes with zero upstream edges |
+| Gap 6 | Verified: `current_timestamp()` columns appear as output nodes, no incoming edges |
+| Gap 7 | Tagged predicate edges for JOIN ON columns with `is_join_predicate=True` (12f2b62) |
+| Gap 8 | WHERE filter lineage with `is_where_filter=True` and `where_condition` edges (bf6972d) |
+| Gap 9 | Literal-bound MERGE ON predicate extraction as `merge_match_filter` edges (dfbd6b7) |
+
+Design docs: [Gap 4](2026-04-13-gap4-self-referencing-target-design.md), [Gap 7](2026-04-13-gap7-join-predicate-columns-design.md), [Gaps 1+2+8](2026-04-14-gaps-1-2-8-design.md)
+
+Test suites: `test_struct_dot_access.py` (Gap 1), `test_subquery_dedup_qualify.py` (Gap 2), `test_where_filter_lineage.py` (Gap 8), `test_cdc_scd_pipeline.py` (integration), `test_join_predicate_columns.py` (Gap 7)
 
 ## Background
 
@@ -95,18 +115,18 @@ Each gap will be tested by running the fixture through `Pipeline` and inspecting
 - **I** — *Parses but lineage incomplete* (missing edges)
 - **F** — *Fails to parse*
 
-| # | Gap | Where | Expected classification |
-|---|-----|-------|------------------------|
-| 1 | Struct field access on CDC envelope: `after.id` → `staging.id` | L1→L2 | I (may work via existing struct support, needs verification) |
-| 2 | Dedup pattern: `QUALIFY rn = 1` / `WHERE rn = 1` after `ROW_NUMBER()` | L2 | Likely works (`qualify_lineage` exists); verify not dropped through CTE |
-| 3 | **MERGE WHEN MATCHED trigger columns** — condition `t.name <> s.name` should contribute to the lineage of `end_time` and `is_active`, not just the assigned exprs | L3a Step 1 | **P / I** (likely current behavior only records assigned exprs) |
-| 4 | **Self-referencing target** — Step 2 `LEFT JOIN dim_customer` on a table Step 1 just mutated. Pipeline lineage must treat the same table as both an input and output between statements | L3a | I (pipeline_lineage_builder behavior unknown) |
-| 5 | Literal-only columns (`'Y' AS is_active`, `TIMESTAMP '9999-...'`) — should appear as terminal nodes, not be silently dropped | L3a Step 2 | Likely works; verify |
-| 6 | `current_timestamp()` — function-only source (no column deps) | L3a both steps | Likely works; verify |
-| 7 | `BETWEEN d.start_time AND d.end_time` in JOIN ON — does `fact_orders.customer_city_at_order` lineage include `d.start_time/end_time` as condition columns? | L3→fact | **P / I** (join predicate columns often omitted from column lineage) |
-| 8 | `WHERE t.id IS NULL OR (...)` as sentinel for new-vs-versioned inserts — does the NULL branch get recorded? | L3a Step 2 | I (expected; logical branch not in column graph today) |
-| 9 | MERGE's `ON t.id = s.id AND t.is_active = 'Y'` with literal predicate — match_columns extraction looks at `EQ` pairs only; literal-bound predicate may be dropped | L3a Step 1 | I |
-| 10 | Does MERGE's close-action (UPDATE of `end_time`) show `is_active` as a **dependency** of `end_time` via the WHEN MATCHED condition? Impact analysis depends on this | L3a Step 1 | P (suspected) |
+| # | Gap | Where | Expected classification | Status |
+|---|-----|-------|------------------------|--------|
+| 1 | Struct field access on CDC envelope: `after.id` → `staging.id` | L1→L2 | **I** — sqlglot parses `after.id` as `Column(table="after", name="id")`, indistinguishable from table-qualified ref. | **Closed** (67859c7) — struct fallback emits edges with `nested_path`/`access_type="struct"` when `Column.table` doesn't resolve |
+| 2 | Dedup pattern: `QUALIFY rn = 1` / `WHERE rn = 1` after `ROW_NUMBER()` | L2 | **I** — Subquery-based dedup did not propagate qualify metadata to final output. | **Closed** (622e651) — detects ranking functions in subquery + `WHERE rn = 1` outer filter, promotes qualify metadata |
+| 3 | **MERGE WHEN MATCHED trigger columns** — condition `t.name <> s.name` should contribute to the lineage of `end_time` and `is_active`, not just the assigned exprs | L3a Step 1 | **P / I** (likely current behavior only records assigned exprs) | **Closed** (778f918) |
+| 4 | **Self-referencing target** — Step 2 `LEFT JOIN dim_customer` on a table Step 1 just mutated. Pipeline lineage must treat the same table as both an input and output between statements | L3a | I (pipeline_lineage_builder behavior unknown) | **Closed** (5ef8dad) |
+| 5 | Literal-only columns (`'Y' AS is_active`, `TIMESTAMP '9999-...'`) — should appear as terminal nodes, not be silently dropped | L3a Step 2 | Verified: terminal nodes with zero upstream edges. Minor: `is_literal` flag not set (only used for VALUES clauses). | **Closed** (verified) |
+| 6 | `current_timestamp()` — function-only source (no column deps) | L3a both steps | Verified: output nodes with `node_type=expression`, no incoming edges. Works in both MERGE UPDATE and INSERT contexts. | **Closed** (verified) |
+| 7 | `BETWEEN d.start_time AND d.end_time` in JOIN ON — does `fact_orders.customer_city_at_order` lineage include `d.start_time/end_time` as condition columns? | L3→fact | **P / I** (join predicate columns often omitted from column lineage) | **Closed** (12f2b62) |
+| 8 | `WHERE t.id IS NULL OR (...)` as sentinel for new-vs-versioned inserts — does the NULL branch get recorded? | L3a Step 2 | **I** — WHERE clause columns not tracked in column lineage | **Closed** (bf6972d) — `where_filter` edges with `is_where_filter=True` and `where_condition` metadata |
+| 9 | MERGE's `ON t.id = s.id AND t.is_active = 'Y'` with literal predicate — match_columns extraction looks at `EQ` pairs only; literal-bound predicate may be dropped | L3a Step 1 | I | **Closed** (dfbd6b7) |
+| 10 | Does MERGE's close-action (UPDATE of `end_time`) show `is_active` as a **dependency** of `end_time` via the WHEN MATCHED condition? Impact analysis depends on this | L3a Step 1 | P (suspected) | **Closed** (778f918, same fix as Gap 3) |
 
 **Probably-already-works (sanity checks, not gaps):** cross-CTE propagation (fixed by 8aaa454), column extraction for `DATE(order_ts)`, `SUM(amount)` aggregates, GROUP BY columns.
 
@@ -122,30 +142,31 @@ Three artifacts, in order:
 ### 2. Gap fixes (scope-limited, each in its own commit)
 Only fixes that are **localized and low-risk** land in this effort. Larger architectural changes (e.g., introducing a new edge type for "predicate-conditional" columns) are documented as follow-ups in `TODO.md`, not attempted here.
 
-Likely in-scope fixes:
-- Gap 3/10: extend `_parse_merge_statement` to record WHEN MATCHED `condition` columns as inputs to each assigned target column's mapping.
-- Gap 9: generalize match_columns extraction to skip literal-bound predicates cleanly rather than dropping the whole predicate.
-
-Likely out-of-scope (documented as follow-ups):
-- Gap 7 (join-predicate columns in column lineage) — this is a project-wide convention question, not a CDC-specific fix.
-- Gap 8 (logical-branch lineage from NULL sentinels) — needs a new edge semantic.
+All fixes completed (each in its own commit):
+- **Gap 1** (67859c7): Struct dot-access fallback — when `Column.table` doesn't resolve to a known table/alias/subquery in scope, emits a lineage edge with `nested_path` and `access_type="struct"` using the first base table from the dependency chain as the source. Handles recursive base table resolution for CDC-like subquery patterns.
+- **Gap 2** (622e651): Subquery-based dedup promotion — detects the common pattern (ROW_NUMBER/RANK/DENSE_RANK/NTILE in subquery + `WHERE rn = 1` in outer query) and promotes qualify metadata (`is_qualify_column`, `qualify_context`, `qualify_function`) to the outer unit. Adds `ranking_window_columns` to `QueryUnit` for cross-unit metadata propagation.
+- **Gap 3/10** (778f918): Extended MERGE parsing to extract column references from WHEN MATCHED conditions and emit edges with `merge_column_role='condition'`. Condition columns (e.g., `staging.name`) now appear as upstream inputs to assigned target columns (e.g., `dim_customer.end_time`).
+- **Gap 4** (5ef8dad): Implemented statement-scoped table versioning with `{query_id}:self_read:{table}.{col}` naming. Self-read nodes represent the prior table state, enabling correct lineage when the same table is both input and output across pipeline statements.
+- **Gap 7** (12f2b62): Emits tagged predicate edges for JOIN ON clause columns with `is_join_predicate=True`, `join_condition`, and `join_side` metadata. Supports equi-joins, range/BETWEEN, function-wrapped predicates, and multi-join chains.
+- **Gap 8** (bf6972d): WHERE filter lineage — columns referenced in WHERE clauses now produce `where_filter` edges to all non-star output columns, with `is_where_filter=True` and `where_condition` metadata. Subquery columns within WHERE are excluded from the outer query's predicates. Also fixes `trace_forward` BFS to treat nodes as terminals when all outgoing targets are already visited.
+- **Gap 9** (dfbd6b7): Extracts literal-bound ON predicates in MERGE (e.g., `t.is_active = 'Y'`) and emits lineage edges with `merge_match_filter` edge type and `merge_column_role="condition"`.
 
 ### 3. Showcase notebook (`examples/cdc_scd_pipeline.ipynb`)
 Structure:
 1. **Narrative intro** — what a CDC/SCD2 pipeline is, why it matters, what we're testing.
 2. **The pipeline SQL** — the 6 statements above, with comments pointing out the interesting structures.
 3. **Build + visualize** — `Pipeline(...)` → lineage graph rendered (GraphViz), table-level DAG.
-4. **What clgraph captures** — 4-5 concrete impact-analysis queries (e.g., "what downstream columns depend on `raw_customer_cdc.after.city`?"), showing them returning correct results.
-5. **Known limitations** — honest subsection listing the remaining gaps (7, 8, and any others not fixed), each with a short SQL snippet and what the ideal answer would be. Links to the xfail tests.
+4. **What clgraph captures** — concrete impact-analysis queries (e.g., "what downstream columns depend on `raw_customer_cdc.after.city`?"), showcasing all 10 resolved gaps: struct dot-access (1), dedup qualify promotion (2), MERGE condition-gating (3/10), self-referencing targets (4), literal terminals (5), function-only sources (6), JOIN predicate columns (7), WHERE filter lineage (8), and MERGE literal predicates (9).
+5. **Edge semantics showcase** — demonstrate the new edge types and metadata: `access_type="struct"`, `is_qualify_column`, `merge_column_role`, `is_join_predicate`, `is_where_filter`, `merge_match_filter`.
 
 ## Acceptance Criteria
 
 - [ ] `tests/test_cdc_scd_pipeline.py` exists, runs in CI, and has tests for every row in the gap table.
-- [ ] Each xfail is tagged with a specific gap number and a reason string.
+- [ ] All 10 gap tests pass (no xfails remaining).
 - [ ] Every fix commit has: failing test → fix → passing test (TDD, per repo convention).
 - [ ] The notebook runs end-to-end via `run_all_notebooks.py` with no errors.
-- [ ] The notebook's "Known limitations" section matches the current xfail list (no silent discrepancies).
-- [ ] `TODO.md` updated: item B checked off; follow-up gaps listed as their own new entries.
+- [ ] The notebook showcases all 10 resolved gaps with concrete lineage queries.
+- [ ] `TODO.md` updated: item B checked off.
 
 ## Out of Scope
 
@@ -157,26 +178,26 @@ Structure:
 
 ## Risks & Open Questions
 
-1. **Risk: gap 3/10 fix has wider blast radius than expected.** The MERGE WHEN-MATCHED condition column inputs may already be partially captured elsewhere (e.g., in `match_columns`) in a different way; we need to not duplicate or contradict that. Mitigation: read `lineage_builder`'s MERGE handling before editing `query_parser`.
-2. **Open: how should "trigger columns" be represented in the column graph?** Options: (a) same edge type as assignment inputs — simplest, but flattens semantics; (b) new edge attribute `role: "trigger" | "assignment"`. Recommend (a) for this iteration — keep it simple, revisit if users ask for the distinction.
-3. **Open: should the staging CTE preserve `op` column for dim?** CDC deletes usually produce SCD2 tombstones (`is_active='N', end_time=now()`), not hard deletes. For this iteration we filter `op IN ('c','u')` and list delete-handling as a follow-up gap.
+1. **~~Risk: gap 3/10 fix has wider blast radius than expected.~~** **RESOLVED.** The fix uses `merge_column_role` to distinguish condition vs assignment edges, avoiding duplication with `match_columns`. No blast radius issues encountered.
+2. **~~Open: how should "trigger columns" be represented in the column graph?~~** **RESOLVED.** Chose option (b): edges carry `merge_column_role='condition'` vs `merge_column_role='assignment'`, giving users the ability to distinguish trigger vs assignment semantics without flattening.
+3. **Open: should the staging CTE preserve `op` column for dim?** CDC deletes usually produce SCD2 tombstones (`is_active='N', end_time=now()`), not hard deletes. For this iteration we filter `op IN ('c','u')` and list delete-handling as a follow-up gap. **Analysis:** The `op` column is selected into `staging_customer_latest` but never referenced by the downstream MERGE or INSERT statements — it's present but unused. The test fixture in `test_cdc_scd_pipeline.py` assumes `staging_customer_latest` already exists, so the staging CTE is not yet tested. This is a data modeling choice, not a lineage bug. Reconsider if future requirements need full-envelope preservation or delete-handling.
 
 ### Additional risks surfaced from code inspection
 
-4. **Risk: gap 3/10 may already be half-plumbed, which makes the "fix" subtler than it looks.** `trace_strategies.trace_merge_columns` (`trace_strategies.py:186-229`) already stamps each MERGE `ColumnEdge` with `merge_condition` (raw SQL of the WHEN clause) and `merge_action`. The condition is therefore *recorded as edge metadata* but the columns *referenced by that condition* are not emitted as upstream inputs of the assigned target columns. The fix is not "start capturing the condition" — it's "parse the stored condition into column refs and add them as edges." Mitigation: the parser already has a column-extraction pass we can reuse; don't re-implement it in the MERGE path.
+4. **~~Risk: gap 3/10 may already be half-plumbed.~~** **RESOLVED.** The fix (778f918) parses the stored WHEN condition into column refs and adds them as condition-gating edges with `merge_column_role='condition'`. Reused the existing column-extraction pass as recommended.
 
-5. **Risk: gap 4 (self-referencing target) is load-bearing and unmitigated today.** Confirmed: clgraph has *no* multi-statement table versioning — `depends_on_tables` / `depends_on_units` in `pipeline_lineage_builder.py:76-108` reference tables by name only, with no N-vs-N+1 snapshot distinction. Step 2's `LEFT JOIN dim_customer t` will collapse onto the same node Step 1 just wrote, producing a self-loop in the pipeline graph. This is the dominant correctness issue for SCD2 and is *not* in the "likely in-scope fixes" list. Decide explicitly: either (a) accept the self-loop and document it as gap 4's known limitation in the notebook, or (b) promote gap 4 to in-scope and design a minimal "statement-index-scoped table ref" extension. Recommend (a) for this iteration — the architectural change for (b) is out of proportion with the stated deliverable.
+5. **~~Risk: gap 4 (self-referencing target) is load-bearing and unmitigated.~~** **RESOLVED.** Promoted to in-scope; implemented statement-scoped table versioning with self-read nodes (`{query_id}:self_read:{table}.{col}`). Design doc: `2026-04-13-gap4-self-referencing-target-design.md`. Tests in `test_cdc_scd_pipeline.py` (16 test classes).
 
-6. **Risk: gap 7 is worse than the design implies.** Design says "join predicate columns often omitted." Code search confirms JOIN ON predicate columns produce **zero** lineage edges today (no handling in `lineage_builder`). The fact-layer BETWEEN join therefore produces no evidence of `dim_customer.start_time/end_time` influence on `fact_orders.customer_city_at_order` beyond the equi-join on `customer_id`. The test assertion should be a hard `xfail` with a clear message, not a soft "incomplete" — and the notebook's "known limitations" section needs an explicit callout so users don't silently trust the temporal join.
+6. **~~Risk: gap 7 is worse than the design implies.~~** **RESOLVED.** Implemented tagged predicate edges for JOIN ON clause columns with `is_join_predicate=True` metadata. Design doc: `2026-04-13-gap7-join-predicate-columns-design.md`. Tests in `test_join_predicate_columns.py` (38 test methods).
 
-7. **Risk: gap 9 framing is inaccurate.** `match_columns` extraction (`query_parser.py:612-619`) walks EQ nodes and pairs columns — a literal-bound EQ like `t.is_active = 'Y'` produces an EQ with a literal on one side, which the current code likely filters (column-column pairs only) but may or may not drop cleanly. Before writing the fix, add a unit test that asserts current behavior on `ON t.id = s.id AND t.is_active = 'Y'`, then decide. The design's claim that "literal-bound predicate may be dropped" needs to be reduced to fact before coding.
+7. **~~Risk: gap 9 framing is inaccurate.~~** **RESOLVED.** Fix (dfbd6b7) extracts literal-bound ON predicates and emits `merge_match_filter` edges. Unit tests confirm behavior on `ON t.id = s.id AND t.is_active = 'Y'`.
 
-8. **Risk: struct-column node naming is underspecified for test assertions.** `_extract_nested_path_from_expression` (`lineage_utils.py:335-395`) emits a `(table_ref, column_name, json_path, json_function, nested_path, access_type)` tuple for `after.id` — meaning the column node shape is not a single string but a structured reference. Tests that assert `"after.id"` as a node label will be brittle. Pin the exact shape by reading one existing struct-access test before writing fixture assertions.
+8. **~~Risk: struct-column node naming is underspecified for test assertions.~~** **RESOLVED.** Gap 1 fix (67859c7) implements the struct fallback using the same `nested_path`/`access_type` metadata pattern. Tests in `test_struct_dot_access.py` assert `edge.nested_path == ".id"`, `edge.access_type == "struct"`, consistent with existing `test_struct_array_subscript.py` conventions.
 
-9. **Risk: CI execution model.** The notebook acceptance says "runs via `run_all_notebooks.py` with no errors." clgraph is a static parser, so the SQL does not need a live Delta/Databricks engine — but any cell that calls `spark.sql(...)`, `dbutils`, or prints a rendered Delta table will fail in CI. Keep all cells to: (a) strings of SQL, (b) `Pipeline(...)` calls, (c) `pyvis`/graphviz renders against file output only.
+9. **Risk: CI execution model.** **OPEN — integration gap, not correctness bug.** All 25 existing notebooks use static SQL + `Pipeline()` only (no `spark.sql()`, `dbutils`). Convention is sound. However, `run_all_notebooks.py` is **not wired into CI** — `.github/workflows/ci.yml` runs only `uv run pytest tests/`. The acceptance criterion "runs via `run_all_notebooks.py`" is not enforced. Action: add CI step `python run_all_notebooks.py --skip-llm` after CDC/SCD notebook is created.
 
-10. **Open: de-duplicate with existing MERGE tests.** `tests/test_merge_statements.py` already covers basic MERGE parsing, match_columns, matched/not-matched actions, and edge properties. The new `tests/test_cdc_scd_pipeline.py` should cover *only* the CDC-pipeline-shaped assertions (multi-statement, self-reference, envelope flatten, SCD2-pair semantics) and reference existing tests for the single-statement primitives. Otherwise the gap backlog becomes ambiguous.
+10. **~~Open: de-duplicate with existing MERGE tests.~~** **RESOLVED.** Verified: `test_merge_statements.py` covers single-statement MERGE parsing (match_columns, action column mappings). `test_cdc_scd_pipeline.py` covers multi-statement cross-query semantics (self-reference, topological sort, cross-query edges). Zero overlap — properly scoped by design.
 
-11. **Open: QUALIFY assertion target.** QUALIFY partition/order columns are emitted via edges with `context="qualify_partition"` / `context="qualify_order"` and `is_qualify_column=True` (`lineage_builder.py:376-442`). When writing gap 2's test, assert on `is_qualify_column`/`qualify_context` metadata, not on the plain node set — that's what will catch the "silently dropped through CTE" regression the design worries about.
+11. **~~Open: QUALIFY assertion target.~~** **RESOLVED.** Gap 2 fix (622e651) promotes qualify metadata from subquery-based dedup patterns. Tests in `test_subquery_dedup_qualify.py` use the same metadata assertion pattern (`is_qualify_column`, `qualify_context`, `qualify_function`) as `test_qualify_clause.py`.
 
-12. **Open: should gap 4 (self-reference) and gap 7 (join-predicate columns) graduate to their own design docs?** Both are cross-cutting architectural shifts (statement-scoped table refs; a new edge semantic for predicate-conditional columns). If we leave them as one-liners in `TODO.md`, they will rot. Recommend: this effort closes with two short follow-up design stubs, not just backlog entries.
+12. **~~Open: should gap 4 and gap 7 graduate to their own design docs?~~** **RESOLVED.** Both now have dedicated design docs in `docs/superpowers/specs/`.

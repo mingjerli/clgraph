@@ -36,7 +36,7 @@ for join in joins:
     self._parse_from_sources(join, unit, depth)
 ```
 
-`_parse_from_sources` (`query_parser.py:1370-1415`) processes the `join.this` (the table/subquery being joined) to extract table names, aliases, and subqueries. The ON clause (`join.args.get("on")`) is **never accessed** in the non-MERGE path. No column references from the ON clause are extracted or stored on the `QueryUnit`.
+`_parse_from_sources` (`query_parser.py:693`) processes the `join.this` (the table/subquery being joined) to extract table names, aliases, and subqueries. The ON clause (`join.args.get("on")`) is **never accessed** in the non-MERGE path. No column references from the ON clause are extracted or stored on the `QueryUnit`.
 
 ### 2. The QueryUnit has no field for join predicates
 
@@ -46,7 +46,7 @@ for join in joins:
 
 `lineage_builder.py:130-158` processes each unit by extracting output columns (`_extract_output_columns`) and tracing their dependencies (`_trace_column_dependencies`). Both operate exclusively on SELECT-list expressions. The ON clause is not examined.
 
-`_extract_source_column_refs` (`lineage_builder.py:889-948`) walks expression ASTs to find `exp.Column` nodes -- but it only receives SELECT-list expressions, never ON-clause expressions.
+`_extract_source_column_refs` (`lineage_builder.py:889-974`) walks expression ASTs to find `exp.Column` nodes -- but it only receives SELECT-list expressions, never ON-clause expressions.
 
 ### 4. MERGE already has the pattern we need
 
@@ -96,7 +96,7 @@ join_side: Optional[str] = None        # "left" or "right" (which side of the jo
 
 **Code touched:**
 - `models.py`: add three fields to `ColumnEdge`.
-- `query_parser.py`: in `_parse_select_statement`, after parsing JOINs, extract ON-clause column refs and store on `QueryUnit` as `join_predicates: List[JoinPredicateInfo]`.
+- `query_parser.py`: in `_parse_select_unit`, after parsing JOINs, extract ON-clause column refs and store on `QueryUnit` as `join_predicates: List[JoinPredicateInfo]`.
 - `models.py`: add `JoinPredicateInfo` dataclass (join_condition_sql, left_columns, right_columns, join_type).
 - `lineage_builder.py`: in `_process_unit`, after step 4 (trace dependencies), add a new step to create join-predicate edges. For each join predicate, for each projected output column from the joined table, emit an edge from each ON-clause-only column to that output column with `is_join_predicate=True`.
 - `trace_strategies.py`: no change needed (regular column tracing stays the same).
@@ -217,9 +217,9 @@ raw_orders.customer_id ───[P]────────> output.customer_cit
 raw_orders.order_ts ──────[P]────────> output.customer_city   (left-side pred -> right-side projected)
 ```
 
-This is the final recommended shape. Predicate columns from both sides connect to projected columns from the *opposite* side of the join (the side whose row selection they constrain). Self-side predicate columns (e.g., `d.start_time` constraining which `d` row is selected) also connect to their own side's projected columns, since they constrain the row that contributes the value.
+This is the final recommended shape.
 
-**Final refined rule:** all ON-clause columns connect to all projected output columns from the join's non-FROM side (the joined table). For multi-way joins, each JOIN's predicate columns connect to projected columns from that specific JOIN's right-side table.
+**Final refined rule:** all ON-clause columns (from both sides of the join) connect to all projected output columns that are sourced from the JOIN's right-side table. For multi-way joins, each JOIN's predicate columns connect to projected columns from that specific JOIN's right-side table.
 
 ## Scope
 
@@ -230,12 +230,13 @@ This is the final recommended shape. Predicate columns from both sides connect t
 - Emit `is_join_predicate=True` edges from predicate columns to projected output columns.
 - Support: equi-joins, range joins (BETWEEN), theta joins (>, <, >=, <=, <>), function-wrapped join keys (e.g., `UPPER(a.name) = UPPER(b.name)`), compound predicates (AND/OR).
 - All existing dialects (bigquery, postgres, snowflake, databricks, duckdb, spark, trino, redshift, mysql).
+- **Interaction with Gap 4 self-referencing targets.** When a self-referencing query uses a JOIN whose right-side table is the self-referenced target, predicate columns must resolve through Gap 4's self-read naming. See "Gap 4 Interaction" section below.
 
 ### Non-goals
 
 - **USING clauses.** USING(col) is syntactic sugar for ON a.col = b.col. It can be handled as a follow-up; the AST shape is different (`exp.Using` vs `exp.On`).
 - **NATURAL JOIN.** Implicit equi-join on all same-named columns. Requires schema knowledge to resolve. Out of scope.
-- **LATERAL JOIN correlation.** Already handled by the lateral correlation path (`lineage_builder.py:160-162`). This design does not change that path.
+- **LATERAL JOIN correlation.** The outer correlation reference is already handled by the lateral correlation path (`lineage_builder.py:160-162`). This design does not change that path. JOINs within a LATERAL subquery are regular JOINs and are in scope.
 - **Correlated subqueries in ON.** E.g., `ON a.id = (SELECT max(id) FROM ...)`. Rare in practice; the subquery parsing path already handles subqueries in WHERE/HAVING but not in ON. Follow-up.
 - **CROSS JOIN.** No ON clause; nothing to extract.
 - **Implicit joins (comma joins with WHERE predicate).** WHERE-clause predicates that act as join conditions are a separate problem. Out of scope.
@@ -257,7 +258,7 @@ This is the final recommended shape. Predicate columns from both sides connect t
 
 2. Add `join_predicates: List[JoinPredicateInfo]` field to `QueryUnit`.
 
-3. In `query_parser._parse_select_statement`, after the JOIN loop (line 178), iterate joins again and extract ON-clause columns:
+3. In `query_parser._parse_select_unit`, after the JOIN loop (line 178), iterate joins again and extract ON-clause columns:
    ```python
    for join in joins:
        on_clause = join.args.get("on")
@@ -273,7 +274,8 @@ This is the final recommended shape. Predicate columns from both sides connect t
            ))
    ```
 
-4. Implement `_extract_join_predicate_columns` by reusing `_extract_source_column_refs` or by walking `exp.Column` nodes in the ON clause.
+4. Implement `_extract_join_predicate_columns` by walking `exp.Column` nodes in the ON-clause expression tree directly. Do NOT reuse `_extract_source_column_refs` — it returns 6-tuples with JSON/nested-path metadata irrelevant for join predicates. A simpler dedicated walker that returns `List[Tuple[Optional[str], str]]` is cleaner.
+   Note: literal comparisons in ON clauses (e.g., `t.is_active = 'Y'`) produce column refs for the column side only (`t.is_active`); the literal `'Y'` is not an `exp.Column` node and is correctly ignored by the `exp.Column` walker. No special handling is required.
 
 ### Phase 2: Emit predicate edges (lineage_builder.py, models.py)
 
@@ -284,7 +286,7 @@ This is the final recommended shape. Predicate columns from both sides connect t
    join_side: Optional[str] = None
    ```
 
-2. In `lineage_builder._process_unit`, add a new step after step 4 (window function edges):
+2. In `lineage_builder._process_unit`, add a new step after step 8 (window function edges):
    ```python
    # 9. Create join predicate edges
    if unit.join_predicates:
@@ -293,9 +295,27 @@ This is the final recommended shape. Predicate columns from both sides connect t
 
 3. Implement `_create_join_predicate_edges`:
    - For each `JoinPredicateInfo` on the unit:
-     - Identify which output columns are sourced from the joined (right-side) table.
-     - For each column ref in the predicate, resolve to a source node.
+     - **Identify which output columns are sourced from the right-side table** using alias qualification:
+       1. For each output column, walk its source expression AST to find `exp.Column` nodes.
+       2. Check `column.table` (the alias qualifier) against `info.right_table` (the right-side alias).
+       3. If the alias matches → this output column is from the right side; it receives predicate edges.
+       4. If an output column is unqualified and ambiguous (could belong to either side), emit a
+          debug-level warning and skip predicate edges for that column. Users are expected to write
+          lineage-friendly SQL with explicit table qualifiers.
+       5. If an output column's expression combines columns from both sides (e.g., `COALESCE(a.val, b.val)`),
+          treat it as right-side if *any* source column is from the right side.
+     - **Resolve each predicate column ref to a source node:**
+       1. Use `unit.alias_mapping` to resolve the table alias from `(table_ref, col_name)` to a physical table name.
+       2. Look up the corresponding input `ColumnNode` in the lineage graph by `(resolved_table, col_name)`.
+       3. If not found (column is referenced in ON but never created as an input node), create the input node.
+          This parallels how `_create_qualify_edges` resolves columns via `_resolve_qualify_column`.
+          Note: unlike `_create_qualify_edges` (which targets a single representative output column — the first non-star output column), `_create_join_predicate_edges` targets ALL output columns sourced from the right-side table.
      - Emit a `ColumnEdge` from each predicate column to each right-side projected column, with `is_join_predicate=True`, `join_condition=info.condition_sql`, `edge_type="join_predicate"`.
+       Note: `"join_predicate"` is a new addition to the `edge_type` value set. Existing code that switches on `edge_type` (e.g., visualization, serialization, export) should be audited for exhaustive handling to ensure this new value is not silently ignored.
+       Note: `edge_type="join_predicate"` is intentionally distinct from the existing `"join"` type. Because `ColumnEdge.__eq__` and `__hash__` include `edge_type`, a column can have both a value edge (`edge_type="direct"`) and a predicate edge (`edge_type="join_predicate"`) to the same target node — this is by design and ensures both are preserved.
+     - **`join_side` assignment:** For each predicate column edge, set `join_side="left"` if the predicate column's table alias matches a left-side (FROM) table, `join_side="right"` if it matches the right-side table. This is determined by checking `table_ref` against `info.right_table`.
+
+4. **Update `_add_query_edges` in `pipeline_lineage_builder.py`** (around line 460): Add `is_join_predicate`, `join_condition`, and `join_side` to the explicit field list in `_add_query_edges` (pipeline_lineage_builder.py, around line 460). Without this, predicate edge metadata is silently lost when edges are copied into the pipeline graph.
 
 ### Phase 3: Tests
 
@@ -377,6 +397,78 @@ Using `SQLColumnTracer`, verify that:
 
 The CDC BETWEEN join produces identical predicate edges across bigquery, postgres, snowflake, databricks.
 
+### Test 8: Self-referencing query with JOIN predicates (Gap 4 interaction)
+
+```sql
+INSERT INTO dim_customer
+SELECT s.id, s.name, s.city, s.email,
+       COALESCE(t.is_active, 'Y') AS is_active
+FROM staging s
+LEFT JOIN dim_customer t
+  ON s.id = t.id AND t.is_active = 'Y'
+WHERE t.id IS NULL OR (t.name <> s.name OR t.city <> s.city)
+```
+
+Single-query pipeline. Assert:
+- Gap 4 self-read nodes exist: `query_0:self_read:dim_customer.id`, `query_0:self_read:dim_customer.is_active`.
+- Gap 7 predicate edges exist from self-read nodes (not physical nodes):
+  - `query_0:self_read:dim_customer.id` -[P]-> `dim_customer.is_active` (output) with `is_join_predicate=True`.
+  - `query_0:self_read:dim_customer.is_active` -[P]-> `dim_customer.is_active` (output) with `is_join_predicate=True`.
+  - `staging.id` -[P]-> `dim_customer.is_active` (output) with `is_join_predicate=True`.
+- No predicate edge has a `from_node` with physical `dim_customer.*` naming (all self-ref predicate sources go through self-read nodes).
+- No predicate edge exists from `dim_customer.name` or `dim_customer.city` — those appear only in the WHERE clause, which is out of scope for this feature.
+
+### Test 9: Self-referencing multi-statement pipeline with JOIN predicates (Gap 4 + Gap 7)
+
+SCD2 two-step fixture (MERGE + INSERT). Assert:
+- Step 2's ON-clause predicate columns (`t.id`, `t.is_active`) resolve to self-read nodes.
+- Cross-query edges from Step 1's output to Step 2's self-read nodes exist (Gap 4).
+- Predicate edges from self-read nodes to Step 2's output columns exist (Gap 7).
+- Impact analysis from `staging.id` reaches `dim_customer.is_active` through both the value path and the predicate path.
+
+### Test 10: Unqualified predicate column emits warning
+
+```sql
+SELECT a.id, name
+FROM table_a a
+INNER JOIN table_b b ON a.id = b.id
+```
+
+`name` is unqualified and ambiguous (could be from `a` or `b`). Assert:
+- A debug-level warning is emitted about the ambiguous column.
+- Predicate edges are still created for the qualified ON-clause columns (`a.id`, `b.id`).
+- The unqualified `name` output column does not receive predicate edges (conservative: skip on ambiguity).
+
+## Gap 4 Interaction
+
+Gap 4 (self-referencing targets, landed in PR #61) introduced query-scoped self-read nodes for tables that appear as both source and destination in the same query or across consecutive pipeline statements. Gap 7 must integrate with this mechanism.
+
+### How it works
+
+When a self-referencing query has a JOIN whose right-side table is the self-referenced target:
+
+1. **Parsing (Phase 1):** `JoinPredicateInfo.right_table` captures the alias of the joined table (e.g., `"t"` for `LEFT JOIN dim_customer t`). `ParsedQuery.self_ref_aliases` (from Gap 4) maps `"t"` -> `"dim_customer"`.
+
+2. **Predicate column resolution (Phase 2):** When resolving a predicate column ref like `(table_ref="t", col_name="is_active")`:
+   - Resolve alias: `t` -> `dim_customer` via `unit.alias_mapping`.
+   - Check if `dim_customer` is in `query.self_referenced_tables`.
+   - If yes: the input node uses Gap 4's self-read naming: `{query_id}:self_read:dim_customer.is_active`.
+   - Look up this self-read node in the lineage graph (it was created by `pipeline_lineage_builder._add_query_columns` during Gap 4 processing).
+
+3. **Edge emission:** The predicate edge's `from_node` is the self-read node, not the physical `dim_customer.is_active` node. This is correct: the predicate reads the *prior state* of `dim_customer`, which is exactly what self-read nodes represent.
+
+### Implementation note
+
+Gap 7's predicate column resolution in `_create_join_predicate_edges` must check `query.self_referenced_tables` (or the pipeline-level equivalent) before resolving column names. If the predicate column's table is self-referenced, use the `{query_id}:self_read:{table}.{column}` naming convention to find the source node.
+
+At the single-query `lineage_builder.py` level, `self_referenced_tables` is not directly available (it lives on `ParsedQuery`, which is a multi-query concept). Two options:
+
+**Option A (recommended):** Gap 7's predicate edge emission happens at the `lineage_builder.py` level (single-query). The self-read renaming happens at the `pipeline_lineage_builder.py` level (multi-query) via `_make_full_name`. Since `_make_full_name` already routes self-read input columns to query-scoped names, predicate edges created at the single-query level will get renamed when `pipeline_lineage_builder._add_query_edges` copies them into the pipeline graph. **However, `_add_query_edges` (pipeline_lineage_builder.py:427-471) explicitly names every field it copies — it does NOT automatically copy new fields.** The new `is_join_predicate`, `join_condition`, and `join_side` fields must be added to the explicit field list in `_add_query_edges` (see Phase 2 required step below). Without this wiring, predicate edge metadata is silently lost when edges are copied into the pipeline graph. No special self-read handling is needed in `_create_join_predicate_edges` itself — but the pipeline-level copy must be updated.
+
+**Option B:** Add self-read awareness to `_create_join_predicate_edges`. This is only needed if the single-query lineage graph must be self-read-aware independently of the pipeline builder.
+
+Option A is preferred because it keeps Gap 7 implementation simple and leverages Gap 4's existing renaming infrastructure.
+
 ## Hostile Review
 
 ### Attack 1: Graph blow-up on wide schemas
@@ -447,6 +539,8 @@ However, tests that use `graph.edges` directly (e.g., `total_edges = [e for e in
 
 **Revision:** Before landing, run the full test suite against the implementation and fix any count-based assertions. The likely fix is to filter: `[e for e in graph.edges if e.to_node.full_name == X and not e.is_join_predicate]` in tests that care about value-only edges, or update count expectations.
 
+**Risk note:** `test_join_types.py:254` uses `edges[0]` index access, which depends on edge insertion order. Since `_create_join_predicate_edges` runs as step 9 (after value edges are created), `[0]` will still return the value edge. However, this ordering is fragile. The implementation should verify this test still passes, and consider updating it to filter by `not e.is_join_predicate` if needed.
+
 ### Attack 7: Self-join predicate edges
 
 **Concern:** In a self-join (`SELECT a.id, b.name FROM users a JOIN users b ON a.manager_id = b.id`), the "left" and "right" tables are the same physical table. Does `join_side` still work? Does `right_table` resolve correctly?
@@ -480,3 +574,13 @@ However, tests that use `graph.edges` directly (e.g., `total_edges = [e for e in
 For adversarial cases (50 joins, 100 columns each), the edge count could reach tens of thousands. This is a pre-existing concern (star expansion on wide tables already produces similar edge counts) and is not specific to this change.
 
 **Accepted limitation:** No performance guardrails added. Monitor in practice; add edge-count warnings if needed (similar to existing `UNQUALIFIED_STAR_MULTIPLE_TABLES` warnings).
+
+### Attack 11: Gap 4 self-read nodes as predicate sources
+
+**Concern:** With Gap 4 landed (PR #61), self-referencing queries create `{query_id}:self_read:{table}.{column}` input nodes. If Gap 7 creates predicate edges from *physical* `dim_customer.id` instead of `query_0:self_read:dim_customer.id`, the edge connects to the wrong node — the output node rather than the prior-state input node. Impact analysis would miss the self-read chain.
+
+**Response:** This is handled by the implementation architecture. Gap 7 emits predicate edges at the single-query `lineage_builder.py` level, where nodes use raw `table.column` naming. When `pipeline_lineage_builder.py` copies these edges into the pipeline graph, `_make_full_name` (modified by Gap 4) already renames self-read input columns to `{query_id}:self_read:{table}.{column}`. The predicate edges are automatically remapped to self-read nodes without any Gap-7-specific code.
+
+**Verification:** Test 8 and Test 9 in the test plan validate this interaction explicitly. If the remapping fails, these tests will catch it.
+
+**No revision needed.** The existing Gap 4 renaming infrastructure handles this transparently.
