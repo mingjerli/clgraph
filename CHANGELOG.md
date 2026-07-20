@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Pipeline.from_sql_files()` and `Pipeline.from_json_file()` now validate paths:
   directory traversal, disallowed extensions, and symbolic links are rejected.
+- LLM prompts (column descriptions, SQL generation, SQL explanation) now sanitize
+  and delimit user-controlled content, separate instructions from data, and
+  validate generated SQL against destructive operations.
 
 ### Changed
 
