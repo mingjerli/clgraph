@@ -5,7 +5,7 @@ using the composition pattern. Each helper receives a reference to the
 parent parser in its constructor for accessing shared state.
 
 Helper Dependencies:
-- FromClauseParser depends on: JoinHandler, SpecialSourcesHandler
+- FromClauseParser depends on: SpecialSourcesHandler
 - All helpers depend on: RecursiveQueryParser (via constructor injection)
 
 Usage:
@@ -14,7 +14,6 @@ Usage:
 
 from .from_clause import FromClauseParser
 from .grouping import GroupingParser
-from .join_handler import JoinHandler
 from .merge import MergeParser
 from .pivot_unpivot import PivotUnpivotParser
 from .recursive_cte import RecursiveCTEParser
@@ -25,7 +24,6 @@ from .window_functions import WindowFunctionsParser
 
 __all__ = [
     "FromClauseParser",
-    "JoinHandler",
     "SpecialSourcesHandler",
     "SetOperationsParser",
     "PivotUnpivotParser",
