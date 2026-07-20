@@ -317,6 +317,7 @@ def create_from_sql_files(
     pattern: str = "*.sql",
     query_id_from: str = "filename",
     template_context: Optional[Dict[str, Any]] = None,
+    allow_symlinks: bool = False,
 ) -> "Pipeline":
     """
     Create Pipeline from SQL files in a directory.
@@ -329,22 +330,37 @@ def create_from_sql_files(
             - "filename": Use filename without extension (default)
             - "comment": Extract from first line comment (-- query_id: name)
         template_context: Optional dictionary of template variables
+        allow_symlinks: If True, follow symbolic links (logs a security warning).
 
     Returns:
         Pipeline instance
     """
     import re
-    from pathlib import Path
 
-    sql_path = Path(sql_dir)
-    sql_files = sorted(sql_path.glob(pattern))
+    from .path_validation import PathValidator, _safe_read_sql_file
+
+    if allow_symlinks:
+        logging.getLogger(__name__).warning(
+            "SECURITY: allow_symlinks=True enables following symbolic links. "
+            "This may expose sensitive files outside the SQL directory."
+        )
+
+    validator = PathValidator()
+    resolved_dir = validator.validate_directory(sql_dir, allow_symlinks=allow_symlinks)
+    safe_pattern = validator.validate_glob_pattern(pattern, allowed_extensions=[".sql"])
+
+    sql_files = sorted(resolved_dir.glob(safe_pattern))
 
     if not sql_files:
         raise ValueError(f"No SQL files found in {sql_dir} matching {pattern}")
 
     queries = []
     for sql_file in sql_files:
-        sql_content = sql_file.read_text()
+        # Validate and read atomically to prevent TOCTOU (a validated file being
+        # swapped for a symlink before the read).
+        sql_content = _safe_read_sql_file(
+            sql_file, base_dir=resolved_dir, allow_symlinks=allow_symlinks
+        )
 
         if query_id_from == "filename":
             query_id = sql_file.stem

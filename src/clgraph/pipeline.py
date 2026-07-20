@@ -890,6 +890,8 @@ class Pipeline:
         pattern: str = "*.sql",
         query_id_from: str = "filename",
         template_context: Optional[Dict[str, Any]] = None,
+        *,
+        allow_symlinks: bool = False,
     ) -> "Pipeline":
         """
         Create pipeline from SQL files in a directory.
@@ -902,6 +904,7 @@ class Pipeline:
                 - "filename": Use filename without extension (default)
                 - "comment": Extract from first line comment (-- query_id: name)
             template_context: Optional dictionary of template variables
+            allow_symlinks: If True, follow symbolic links (logs a security warning).
 
         Returns:
             Pipeline instance
@@ -930,6 +933,7 @@ class Pipeline:
             pattern=pattern,
             query_id_from=query_id_from,
             template_context=template_context,
+            allow_symlinks=allow_symlinks,
         )
 
     @classmethod
