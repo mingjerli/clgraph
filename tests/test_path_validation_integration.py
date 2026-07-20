@@ -16,7 +16,7 @@ class TestFromJsonFilePathValidation:
     def test_non_json_extension_rejected(self, tmp_path: Path):
         bad = tmp_path / "data.txt"
         bad.write_text("{}")
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="Invalid file extension"):
             Pipeline.from_json_file(str(bad))
 
     def test_symlink_rejected_by_default(self, tmp_path: Path):
@@ -24,7 +24,7 @@ class TestFromJsonFilePathValidation:
         real.write_text(json.dumps({"columns": [], "edges": []}))
         link = tmp_path / "link.json"
         link.symlink_to(real)
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="Symbolic links are not allowed"):
             Pipeline.from_json_file(str(link))
 
     def test_missing_file_raises_filenotfound(self, tmp_path: Path):
