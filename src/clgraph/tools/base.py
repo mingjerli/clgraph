@@ -295,6 +295,36 @@ class LLMTool(BaseTool):
         else:
             raise ValueError(f"Unsupported LLM type: {type(self.llm)}")
 
+    def call_llm_structured(self, system_prompt: str, user_data: str) -> str:
+        """
+        Call the LLM with system instructions separated from user data.
+
+        Keeping instructions and user-controlled data in distinct message roles
+        prevents data from being interpreted as instructions.
+
+        Args:
+            system_prompt: Trusted instructions.
+            user_data: Untrusted, already-sanitized user content.
+
+        Returns:
+            The LLM's response as a string.
+        """
+        if hasattr(self.llm, "invoke"):
+            from langchain_core.messages import HumanMessage, SystemMessage
+
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_data),
+            ]
+            response = self.llm.invoke(messages)
+            if hasattr(response, "content"):
+                return response.content
+            return str(response)
+        elif callable(self.llm):
+            return self.llm(f"{system_prompt}\n\n{user_data}")
+        else:
+            raise ValueError(f"Unsupported LLM type: {type(self.llm)}")
+
 
 class ToolRegistry:
     """
