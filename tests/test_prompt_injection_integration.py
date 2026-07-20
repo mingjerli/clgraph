@@ -44,3 +44,8 @@ def test_call_llm_structured_separates_system_and_user():
     assert len(messages) == 2
     assert messages[0].content == "You are X."
     assert messages[1].content == "raw user data"
+
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    assert isinstance(messages[0], SystemMessage)
+    assert isinstance(messages[1], HumanMessage)
