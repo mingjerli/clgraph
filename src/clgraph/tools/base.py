@@ -308,6 +308,10 @@ class LLMTool(BaseTool):
 
         Returns:
             The LLM's response as a string.
+
+        Note: for a plain callable LLM (no LangChain message support), the two
+        are concatenated, so role separation applies only to the LangChain
+        invoke path.
         """
         if hasattr(self.llm, "invoke"):
             from langchain_core.messages import HumanMessage, SystemMessage
