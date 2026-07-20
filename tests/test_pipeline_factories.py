@@ -215,9 +215,10 @@ class TestPipelineFromSqlFiles:
         pipeline = Pipeline.from_sql_files(str(tmp_path), pattern="*.sql")
         assert len(pipeline.table_graph.queries) == 1
 
-        # Load .txt files
-        pipeline = Pipeline.from_sql_files(str(tmp_path), pattern="*.txt")
-        assert len(pipeline.table_graph.queries) == 1
+        # Patterns for non-.sql extensions are rejected by the path validator:
+        # from_sql_files is restricted to .sql files by design.
+        with pytest.raises(ValueError, match="Invalid extension in pattern"):
+            Pipeline.from_sql_files(str(tmp_path), pattern="*.txt")
 
 
 class TestQueryIdGeneration:
