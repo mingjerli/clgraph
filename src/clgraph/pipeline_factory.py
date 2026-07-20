@@ -290,16 +290,13 @@ def create_from_json_file(
         Pipeline instance
     """
     import json
-    import logging
 
     from .path_validation import PathValidator
 
-    if allow_symlinks:
-        logging.getLogger(__name__).warning(
-            "SECURITY: allow_symlinks=True enables following symbolic links. "
-            "This may expose sensitive files outside the intended location."
-        )
-
+    # Note: no factory-level "allow_symlinks=True" warning here. PathValidator
+    # already logs a SECURITY warning, gated on the resolved path actually
+    # being a symlink, so an unconditional warning here would both fire for
+    # non-symlink paths and double-log when the path is a symlink.
     validator = PathValidator()
     resolved = validator.validate_file(
         file_path, allowed_extensions=[".json"], allow_symlinks=allow_symlinks
@@ -339,12 +336,10 @@ def create_from_sql_files(
 
     from .path_validation import PathValidator, _safe_read_sql_file
 
-    if allow_symlinks:
-        logging.getLogger(__name__).warning(
-            "SECURITY: allow_symlinks=True enables following symbolic links. "
-            "This may expose sensitive files outside the SQL directory."
-        )
-
+    # Note: no factory-level "allow_symlinks=True" warning here. PathValidator
+    # already logs a SECURITY warning, gated on the resolved path actually
+    # being a symlink, so an unconditional warning here would both fire for
+    # non-symlink paths and double-log when the path is a symlink.
     validator = PathValidator()
     resolved_dir = validator.validate_directory(sql_dir, allow_symlinks=allow_symlinks)
     safe_pattern = validator.validate_glob_pattern(pattern, allowed_extensions=[".sql"])
