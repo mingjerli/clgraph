@@ -100,3 +100,31 @@ def test_injection_response_falls_back_to_rule_based():
     # Fallback humanizes the column name; it never stores the injection text.
     assert "pirate" not in (col.description or "").lower()
     assert col.description_source == DescriptionSource.GENERATED
+
+
+def test_generate_prompt_has_delimiters():
+    from clgraph.tools.sql import GENERATE_SQL_PROMPT
+
+    # Template must delimit schema and question so the model can be told to
+    # treat them as data.
+    assert "<question>" in GENERATE_SQL_PROMPT and "</question>" in GENERATE_SQL_PROMPT
+    assert "<schema>" in GENERATE_SQL_PROMPT and "</schema>" in GENERATE_SQL_PROMPT
+
+
+def test_validate_generated_sql_blocks_destructive():
+    import pytest
+
+    from clgraph.prompt_sanitization import _validate_generated_sql
+
+    with pytest.raises(ValueError):
+        _validate_generated_sql("DROP TABLE users")
+
+
+def test_validate_generated_sql_passes_unparseable_via_wrapper():
+    # This asserts the WRAPPER behavior the tool uses: unparseable SQL is not
+    # a hard failure. Implemented as a helper in tools/sql.py (Step 4).
+    from clgraph.tools.sql import _validate_sql_or_passthrough
+
+    weird = "SELECT ~~~ FROM"  # confirmed to raise sqlglot.errors.ParseError
+    # Must not raise; returns the SQL unchanged.
+    assert _validate_sql_or_passthrough(weird) == weird
