@@ -276,6 +276,7 @@ def create_from_json(
 def create_from_json_file(
     file_path: str,
     apply_metadata: bool = True,
+    allow_symlinks: bool = False,
 ) -> "Pipeline":
     """
     Create Pipeline from JSON file exported by JSONExporter.
@@ -283,18 +284,28 @@ def create_from_json_file(
     Args:
         file_path: Path to JSON file
         apply_metadata: Whether to apply metadata from the JSON
+        allow_symlinks: If True, follow symbolic links (logs a security warning).
 
     Returns:
         Pipeline instance
     """
     import json
-    from pathlib import Path
+    import logging
 
-    path = Path(file_path)
-    if not path.exists():
-        raise FileNotFoundError(f"JSON file not found: {file_path}")
+    from .path_validation import PathValidator
 
-    with open(path) as f:
+    if allow_symlinks:
+        logging.getLogger(__name__).warning(
+            "SECURITY: allow_symlinks=True enables following symbolic links. "
+            "This may expose sensitive files outside the intended location."
+        )
+
+    validator = PathValidator()
+    resolved = validator.validate_file(
+        file_path, allowed_extensions=[".json"], allow_symlinks=allow_symlinks
+    )
+
+    with open(resolved) as f:
         data = json.load(f)
 
     return create_from_json(data, apply_metadata=apply_metadata)
