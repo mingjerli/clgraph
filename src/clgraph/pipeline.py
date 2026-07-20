@@ -494,13 +494,20 @@ class Pipeline:
         return create_from_json(data, apply_metadata=apply_metadata)
 
     @classmethod
-    def from_json_file(cls, file_path: str, apply_metadata: bool = True) -> "Pipeline":
+    def from_json_file(
+        cls,
+        file_path: str,
+        apply_metadata: bool = True,
+        *,
+        allow_symlinks: bool = False,
+    ) -> "Pipeline":
         """
         Create pipeline from JSON file exported by JSONExporter.
 
         Args:
             file_path: Path to JSON file
             apply_metadata: Whether to apply metadata from the JSON
+            allow_symlinks: If True, follow symbolic links (logs a security warning).
 
         Returns:
             Pipeline instance
@@ -514,7 +521,9 @@ class Pipeline:
         """
         from .pipeline_factory import create_from_json_file
 
-        return create_from_json_file(file_path, apply_metadata=apply_metadata)
+        return create_from_json_file(
+            file_path, apply_metadata=apply_metadata, allow_symlinks=allow_symlinks
+        )
 
     @classmethod
     def _create_empty(cls, table_graph: "TableDependencyGraph") -> "Pipeline":
