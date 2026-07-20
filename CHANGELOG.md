@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- `Pipeline.from_sql_files()` and `Pipeline.from_json_file()` now validate paths:
+  directory traversal, disallowed extensions, and symbolic links are rejected.
+
+### Changed
+
+- **BREAKING:** `Pipeline.from_sql_files()` and `Pipeline.from_json_file()` reject
+  symlinked paths, glob patterns that escape the directory, and files whose
+  extension is not `.sql`/`.json`. Pass `allow_symlinks=True` to opt back into
+  following symbolic links.
+
 ## [0.0.3] - 2025-12-29
 
 ### Added
