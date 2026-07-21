@@ -376,6 +376,7 @@ def create_from_sql_files(
 def wrap_dbt_models(
     project_dir: Union[str, pathlib.Path],
     schema_map: Optional[Dict[str, str]] = None,
+    allow_symlinks: bool = False,
 ) -> List[Tuple[str, str, str]]:
     """Read dbt model SQL files and return Pipeline-ready 3-tuples.
 
@@ -385,6 +386,7 @@ def wrap_dbt_models(
             the target schema. Iteration order determines query ordering, so
             earlier entries (e.g. ``staging``) are emitted before later ones
             (e.g. ``marts``). Defaults to ``{"staging": "staging", "marts": "marts"}``.
+        allow_symlinks: If True, follow symbolic links (logs a security warning).
 
     Returns:
         List of ``(model_name, sql, target_table)`` tuples ready for
@@ -393,20 +395,35 @@ def wrap_dbt_models(
     Raises:
         FileNotFoundError: If ``project_dir/models`` does not exist.
     """
+    from .path_validation import PathValidator, _safe_read_sql_file
+
     project_dir = pathlib.Path(project_dir)
     models_dir = project_dir / "models"
-    if not models_dir.exists():
-        raise FileNotFoundError(f"No models/ directory in {project_dir}")
+
+    # Note: no factory-level "allow_symlinks=True" warning here. PathValidator
+    # already logs a SECURITY warning, gated on the resolved path actually
+    # being a symlink, so an unconditional warning here would both fire for
+    # non-symlink paths and double-log when the path is a symlink.
+    validator = PathValidator()
+    try:
+        resolved_models = validator.validate_directory(models_dir, allow_symlinks=allow_symlinks)
+    except FileNotFoundError as e:
+        raise FileNotFoundError(f"No models/ directory in {project_dir}") from e
 
     schema_map = schema_map or {"staging": "staging", "marts": "marts"}
 
     queries: List[Tuple[str, str, str]] = []
     for subdir, schema in schema_map.items():
-        subdir_path = models_dir / subdir
+        subdir_path = resolved_models / subdir
         if not subdir_path.exists():
             continue
         for f in sorted(subdir_path.glob("*.sql")):
-            queries.append((f.stem, f.read_text(), f"{schema}.{f.stem}"))
+            # Validate and read atomically to prevent TOCTOU (a validated file
+            # being swapped for a symlink before the read).
+            sql_content = _safe_read_sql_file(
+                f, base_dir=resolved_models, allow_symlinks=allow_symlinks
+            )
+            queries.append((f.stem, sql_content, f"{schema}.{f.stem}"))
 
     if not queries:
         logger.warning(

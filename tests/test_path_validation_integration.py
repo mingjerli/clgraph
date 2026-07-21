@@ -129,3 +129,55 @@ class TestFromSqlFilesPathValidation:
         assert pipeline is not None
         security_warnings = [r for r in caplog.records if "SECURITY" in r.message]
         assert security_warnings == []
+
+
+class TestFromDbtModelsPathValidation:
+    def test_valid_dbt_layout_loads(self, tmp_path: Path):
+        staging = tmp_path / "models" / "staging"
+        staging.mkdir(parents=True)
+        (staging / "stg_orders.sql").write_text("SELECT id AS order_id, amount FROM raw.raw_orders")
+
+        pipeline = Pipeline.from_dbt_models(tmp_path, schema_map={"staging": "staging"})
+
+        assert pipeline is not None
+        assert "staging.stg_orders" in pipeline.table_graph.tables
+
+    def test_symlinked_model_file_rejected_by_default(self, tmp_path: Path):
+        staging = tmp_path / "models" / "staging"
+        staging.mkdir(parents=True)
+        real = staging / "real_model.sql"
+        real.write_text("SELECT id AS order_id, amount FROM raw.raw_orders")
+        link = staging / "linked_model.sql"
+        link.symlink_to(real)
+
+        with pytest.raises(ValueError, match="Symbolic links are not allowed"):
+            Pipeline.from_dbt_models(tmp_path, schema_map={"staging": "staging"})
+
+    def test_symlinked_model_file_allowed_with_optin(self, tmp_path: Path):
+        staging = tmp_path / "models" / "staging"
+        staging.mkdir(parents=True)
+        real = staging / "real_model.sql"
+        real.write_text("SELECT id AS order_id, amount FROM raw.raw_orders")
+        link = staging / "linked_model.sql"
+        link.symlink_to(real)
+
+        pipeline = Pipeline.from_dbt_models(
+            tmp_path, schema_map={"staging": "staging"}, allow_symlinks=True
+        )
+
+        assert pipeline is not None
+
+    def test_symlink_escaping_models_dir_rejected(self, tmp_path: Path):
+        staging = tmp_path / "models" / "staging"
+        staging.mkdir(parents=True)
+        outside = tmp_path / "outside.sql"
+        outside.write_text("SELECT id AS order_id, amount FROM raw.raw_orders")
+        link = staging / "escape_model.sql"
+        link.symlink_to(outside)
+
+        # Confinement is checked before the symlink check, so even opting
+        # into symlinks does not allow escaping the models/ directory.
+        with pytest.raises(ValueError, match="Path escapes the base directory"):
+            Pipeline.from_dbt_models(
+                tmp_path, schema_map={"staging": "staging"}, allow_symlinks=True
+            )
