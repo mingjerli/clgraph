@@ -941,6 +941,8 @@ class Pipeline:
         cls,
         project_dir: Any,
         schema_map: Optional[Dict[str, str]] = None,
+        *,
+        allow_symlinks: bool = False,
         **pipeline_kwargs: Any,
     ) -> "Pipeline":
         """Build a Pipeline directly from a dbt project's model files.
@@ -953,13 +955,15 @@ class Pipeline:
             project_dir: Path to the dbt project root (containing ``models/``).
             schema_map: Optional ordered mapping of ``models/<subdir>`` to the
                 target schema. Defaults to ``{"staging": "staging", "marts": "marts"}``.
+            allow_symlinks: If True, follow symbolic links when reading model
+                files (logs a security warning).
             **pipeline_kwargs: Forwarded to :class:`Pipeline` (``dialect``,
                 ``template_context``, etc.).
 
         Returns:
             Fully-built Pipeline instance.
         """
-        queries = wrap_dbt_models(project_dir, schema_map=schema_map)
+        queries = wrap_dbt_models(project_dir, schema_map=schema_map, allow_symlinks=allow_symlinks)
         return cls(queries, **pipeline_kwargs)
 
     def _remap_query_ids(self):
