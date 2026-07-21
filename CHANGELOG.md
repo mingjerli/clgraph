@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - LLM prompts (column descriptions, SQL generation, SQL explanation) now sanitize
   and delimit user-controlled content, separate instructions from data, and
   validate generated SQL against destructive operations.
+- Table-level LLM descriptions (TableNode.generate_description) now sanitize and
+  delimit content and validate output, consistent with column descriptions.
 
 ### Changed
 
