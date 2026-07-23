@@ -369,7 +369,7 @@ def extract_columns_from_expr(expr_str: str, default_table: str) -> List[Tuple[s
     """
     result: List[Tuple[str, str]] = []
     try:
-        parsed = sqlglot.parse_one(expr_str, into=exp.Expression)
+        parsed = sqlglot.parse_one(expr_str)
         for col in parsed.find_all(exp.Column):
             table_ref = default_table
             if hasattr(col, "table") and col.table:
