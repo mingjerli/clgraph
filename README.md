@@ -13,6 +13,7 @@ The column lineage graph captures how data flows through your SQL: every column 
 - **PII compliance?** Mark nodes, propagate through edges.
 - **DAG construction?** Project to table-level dependencies.
 - **Documentation?** Describe nodes and their relationships.
+- **SQL RAG?** Schema context is graph export.
 - **AI applications?** Context engineering is graph traversal.
 
 **One graph. Many applications.**
@@ -45,6 +46,7 @@ Traditional tools reverse-engineer lineage from query logs and database metadata
 ### LLM-Powered Features
 - **Lineage Agent** — Natural language interface to query lineage ("Where does revenue come from?")
 - **Text-to-SQL** — Schema-aware SQL generation with column descriptions as context
+- **SQL RAG context** — Lineage-aware, PII-filtered schema context for retrieval pipelines
 - **Programmatic tools** — 11 built-in tools for lineage, schema, and governance queries
 
 ### MCP Server (AI Integration)
@@ -616,6 +618,51 @@ print(result.data["sql"])
 # LIMIT 10
 ```
 
+### SQL RAG: Schema Context for Retrieval Pipelines
+
+Text-to-SQL RAG systems live or die on the quality of the schema context they retrieve. Raw DDL tells an LLM that `lifetime_value` is a FLOAT—the lineage graph tells it the column is derived from order amounts, which tables it flows through, and whether it is safe to expose.
+
+clgraph is the context layer for these systems: it does not do retrieval or embedding, but it produces lineage-aware, description-rich, PII-filtered documents that any retrieval stack (LangChain, LlamaIndex, or your own) can index:
+
+```python
+from clgraph import Pipeline
+
+queries = [
+    ("customers", """
+        CREATE TABLE analytics.customers AS
+        SELECT
+            customer_id,       -- Unique customer identifier
+            email,             -- Customer email address [pii: true]
+            lifetime_value     -- Total revenue from this customer in USD
+        FROM raw.customers
+    """),
+]
+pipeline = Pipeline(queries, dialect="bigquery")
+
+# Build one retrieval document per table, filtering out PII columns
+documents = []
+for table_name in pipeline.table_graph.tables:
+    lines = [f"Table: {table_name}"]
+    for col in pipeline.get_columns_by_table(table_name):
+        if col.pii:
+            continue  # keep sensitive columns out of the retrieval store
+        lines.append(f"  {col.column_name}: {col.description or 'no description'}")
+    documents.append("\n".join(lines))
+
+print(f"Built {len(documents)} documents for embedding")
+```
+
+At question time, expand the retrieved context with lineage so the LLM sees where a column actually comes from:
+
+```python
+# The retriever matched analytics.customers.lifetime_value —
+# pull in its upstream sources as additional context
+sources = pipeline.trace_column_backward("analytics.customers", "lifetime_value")
+print(f"lifetime_value is derived from: {[s.full_name for s in sources]}")
+```
+
+For columns without inline comments, `pipeline.generate_all_descriptions()` fills the gaps with lineage-aware LLM descriptions, and `pipeline.propagate_all_metadata()` ensures PII flags flow through every transformation before you filter. The full graph is also available as a single JSON document via `pipeline.to_json()` if you prefer to chunk it yourself.
+
 ### Lineage Tools (Programmatic Access)
 
 Use tools directly without the agent for programmatic access:
@@ -1171,6 +1218,7 @@ print(f"Dialect: snowflake, Tables: {list(pipeline.table_graph.tables.keys())}")
 - **Pipeline Optimization**: Identify unused columns and redundant transformations
 - **Data Quality**: Trace data issues back to their source
 - **Documentation**: Auto-generate data flow diagrams and column descriptions
+- **SQL RAG**: Feed lineage-aware, PII-filtered schema context to retrieval-augmented text-to-SQL systems
 
 ## Development
 
