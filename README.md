@@ -108,7 +108,7 @@ print(query_lineage)
 # Get source tables
 input_nodes = query_lineage.get_input_nodes()
 source_tables = {node.table_name for node in input_nodes if node.table_name}
-print("-"*60)
+print("-" * 60)
 print(f"{len(source_tables)} source tables:")
 for table in source_tables:
     print(f"  {table}")
@@ -151,24 +151,33 @@ ColumnLineageGraph(
 from clgraph import Pipeline
 
 queries = [
-    ("raw_events", """
+    (
+        "raw_events",
+        """
         CREATE TABLE raw_events AS
         SELECT user_id, event_type, event_timestamp, session_id
         FROM source_events
         WHERE event_timestamp >= '2024-01-01'
-    """),
-    ("daily_active_users", """
+    """,
+    ),
+    (
+        "daily_active_users",
+        """
         CREATE TABLE daily_active_users AS
         SELECT user_id, DATE(event_timestamp) as activity_date, COUNT(*) as event_count
         FROM raw_events
         GROUP BY user_id, DATE(event_timestamp)
-    """),
-    ("user_summary", """
+    """,
+    ),
+    (
+        "user_summary",
+        """
         CREATE TABLE user_summary AS
         SELECT u.name, u.email, dau.activity_date, dau.event_count
         FROM users u
         JOIN daily_active_users dau ON u.id = dau.user_id
-    """),
+    """,
+    ),
 ]
 
 pipeline = Pipeline(queries, dialect="bigquery")
@@ -287,17 +296,23 @@ from clgraph import Pipeline, JSONExporter, CSVExporter, visualize_pipeline_line
 
 # Build pipeline
 queries = [
-    ("raw.orders", """
+    (
+        "raw.orders",
+        """
         CREATE TABLE raw.orders AS
         SELECT order_id, user_email, amount, order_date
         FROM source.orders
-    """),
-    ("analytics.revenue", """
+    """,
+    ),
+    (
+        "analytics.revenue",
+        """
         CREATE TABLE analytics.revenue AS
         SELECT user_email, SUM(amount) as total_revenue
         FROM raw.orders
         GROUP BY user_email
-    """),
+    """,
+    ),
 ]
 
 pipeline = Pipeline(queries, dialect="bigquery")
@@ -369,7 +384,10 @@ import json
 # Build pipeline
 queries = [
     ("staging", "CREATE TABLE staging.orders AS SELECT id, amount FROM raw.orders"),
-    ("analytics", "CREATE TABLE analytics.totals AS SELECT SUM(amount) as total FROM staging.orders"),
+    (
+        "analytics",
+        "CREATE TABLE analytics.totals AS SELECT SUM(amount) as total FROM staging.orders",
+    ),
 ]
 pipeline = Pipeline.from_tuples(queries, dialect="bigquery")
 
@@ -419,17 +437,23 @@ from langchain_ollama import ChatOllama
 
 # Build pipeline
 queries = [
-    ("raw.orders", """
+    (
+        "raw.orders",
+        """
         CREATE TABLE raw.orders AS
         SELECT order_id, user_email, amount, order_date
         FROM source.orders
-    """),
-    ("analytics.revenue", """
+    """,
+    ),
+    (
+        "analytics.revenue",
+        """
         CREATE TABLE analytics.revenue AS
         SELECT user_email, SUM(amount) as total_revenue
         FROM raw.orders
         GROUP BY user_email
-    """),
+    """,
+    ),
 ]
 
 pipeline = Pipeline(queries, dialect="bigquery")
@@ -445,9 +469,7 @@ pipeline.generate_all_descriptions(verbose=True)
 print("-" * 60)
 
 # View generated descriptions
-columns_with_descriptions = [
-    col for col in pipeline.columns.values() if col.description
-]
+columns_with_descriptions = [col for col in pipeline.columns.values() if col.description]
 print(f"Generated descriptions for {len(columns_with_descriptions)} columns:")
 for col in columns_with_descriptions:
     print(f"  {col.full_name}:")
@@ -489,17 +511,23 @@ from clgraph.agent import LineageAgent
 
 # Build pipeline
 queries = [
-    ("staging.orders", """
+    (
+        "staging.orders",
+        """
         CREATE TABLE staging.orders AS
         SELECT order_id, customer_id, amount, order_date
         FROM raw.orders WHERE amount > 0
-    """),
-    ("analytics.revenue", """
+    """,
+    ),
+    (
+        "analytics.revenue",
+        """
         CREATE TABLE analytics.revenue AS
         SELECT customer_id, SUM(amount) as total_revenue, COUNT(*) as order_count
         FROM staging.orders
         GROUP BY customer_id
-    """),
+    """,
+    ),
 ]
 pipeline = Pipeline(queries, dialect="bigquery")
 
@@ -554,7 +582,9 @@ from clgraph import Pipeline
 
 # Build pipeline with column descriptions (from SQL comments)
 queries = [
-    ("customers", """
+    (
+        "customers",
+        """
         CREATE TABLE analytics.customers AS
         SELECT
             customer_id,       -- Unique customer identifier
@@ -562,8 +592,11 @@ queries = [
             signup_date,       -- Date customer signed up
             lifetime_value     -- Total revenue from this customer in USD
         FROM raw.customers
-    """),
-    ("orders", """
+    """,
+    ),
+    (
+        "orders",
+        """
         CREATE TABLE analytics.orders AS
         SELECT
             order_id,          -- Unique order identifier
@@ -571,7 +604,8 @@ queries = [
             amount,            -- Order amount in USD
             order_date         -- Date of order
         FROM raw.orders
-    """),
+    """,
+    ),
 ]
 pipeline = Pipeline(queries, dialect="bigquery")
 
@@ -633,14 +667,20 @@ from clgraph.tools import (
 
 # Build pipeline
 queries = [
-    ("staging.orders", """
+    (
+        "staging.orders",
+        """
         CREATE TABLE staging.orders AS
         SELECT order_id, customer_email, amount FROM raw.orders
-    """),
-    ("analytics.revenue", """
+    """,
+    ),
+    (
+        "analytics.revenue",
+        """
         CREATE TABLE analytics.revenue AS
         SELECT customer_email, SUM(amount) as total FROM staging.orders GROUP BY 1
-    """),
+    """,
+    ),
 ]
 pipeline = Pipeline(queries, dialect="bigquery")
 
@@ -1033,7 +1073,10 @@ from clgraph import Pipeline
 # Sample pipeline for examples
 queries = [
     ("raw.orders", "CREATE TABLE raw.orders AS SELECT id, amount FROM source.orders"),
-    ("analytics.metrics", "CREATE TABLE analytics.metrics AS SELECT SUM(amount) as total FROM raw.orders"),
+    (
+        "analytics.metrics",
+        "CREATE TABLE analytics.metrics AS SELECT SUM(amount) as total FROM raw.orders",
+    ),
 ]
 pipeline = Pipeline(queries, dialect="bigquery")
 
@@ -1051,8 +1094,14 @@ from clgraph import Pipeline
 
 queries = [
     ("raw.orders", "CREATE TABLE raw.orders AS SELECT id, amount FROM source.orders"),
-    ("staging.orders", "CREATE TABLE staging.orders AS SELECT id, amount FROM raw.orders WHERE amount > 0"),
-    ("analytics.metrics", "CREATE TABLE analytics.metrics AS SELECT SUM(amount) as total FROM staging.orders"),
+    (
+        "staging.orders",
+        "CREATE TABLE staging.orders AS SELECT id, amount FROM raw.orders WHERE amount > 0",
+    ),
+    (
+        "analytics.metrics",
+        "CREATE TABLE analytics.metrics AS SELECT SUM(amount) as total FROM staging.orders",
+    ),
 ]
 pipeline = Pipeline(queries, dialect="bigquery")
 
@@ -1082,7 +1131,10 @@ from clgraph import Pipeline
 
 queries = [
     ("raw.orders", "CREATE TABLE raw.orders AS SELECT id, amount FROM source.orders"),
-    ("analytics.metrics", "CREATE TABLE analytics.metrics AS SELECT SUM(amount) as total FROM raw.orders"),
+    (
+        "analytics.metrics",
+        "CREATE TABLE analytics.metrics AS SELECT SUM(amount) as total FROM raw.orders",
+    ),
 ]
 pipeline = Pipeline(queries, dialect="bigquery")
 
@@ -1091,7 +1143,9 @@ print(f"Columns: {len(pipeline.column_graph.columns)}")
 print(f"Edges: {len(pipeline.column_graph.edges)}")
 
 # Backward compatible access (property aliases)
-print(f"pipeline.columns == pipeline.column_graph.columns: {pipeline.columns == pipeline.column_graph.columns}")
+print(
+    f"pipeline.columns == pipeline.column_graph.columns: {pipeline.columns == pipeline.column_graph.columns}"
+)
 
 # Get source columns (no incoming edges)
 source_cols = pipeline.column_graph.get_source_columns()
@@ -1112,7 +1166,10 @@ from clgraph import Pipeline
 queries = [
     ("raw.orders", "CREATE TABLE raw.orders AS SELECT id, amount FROM source.orders"),
     ("staging.orders", "CREATE TABLE staging.orders AS SELECT id, amount FROM raw.orders"),
-    ("analytics.metrics", "CREATE TABLE analytics.metrics AS SELECT SUM(amount) as total FROM staging.orders"),
+    (
+        "analytics.metrics",
+        "CREATE TABLE analytics.metrics AS SELECT SUM(amount) as total FROM staging.orders",
+    ),
 ]
 pipeline = Pipeline(queries, dialect="bigquery")
 
@@ -1125,10 +1182,7 @@ impacts = pipeline.trace_column_forward("raw.orders", "amount")
 print(f"Impacts of raw.orders.amount: {[i.full_name for i in impacts]}")
 
 # Find specific lineage path between two columns (returns edges)
-path = pipeline.get_lineage_path(
-    "raw.orders", "amount",
-    "analytics.metrics", "total"
-)
+path = pipeline.get_lineage_path("raw.orders", "amount", "analytics.metrics", "total")
 if path:
     print(f"Path has {len(path)} edges")
     for edge in path:
