@@ -119,9 +119,11 @@ conn = duckdb.connect(":memory:")
 # Build pipeline
 pipeline = Pipeline(queries, dialect="duckdb")
 
+
 # Define executor
 def execute_sql(sql: str):
     conn.execute(sql)
+
 
 # Run pipeline in dependency order
 result = pipeline.run(executor=execute_sql, max_workers=1, verbose=True)

@@ -62,7 +62,7 @@ pipeline = Pipeline.from_sql_files("examples/sql_files/", dialect="duckdb")
 # 2. Pipeline object created automatically
 
 # 3. Access graphs
-table_deps = pipeline.table_graph    # Table dependencies
+table_deps = pipeline.table_graph  # Table dependencies
 col_lineage = pipeline.column_graph  # Column lineage
 
 # 4. Use applications
@@ -90,6 +90,7 @@ dag = pipeline.to_airflow_dag(executor=my_execute_sql, dag_id="my_pipeline")
 
 # LLM-powered descriptions (requires langchain)
 from langchain_openai import ChatOpenAI
+
 pipeline.llm = ChatOpenAI()
 pipeline.generate_all_descriptions()
 ```
