@@ -56,7 +56,14 @@ class MetadataManager:
         """
         self._pipeline = pipeline
 
-    def generate_all_descriptions(self, batch_size: int = 10, verbose: bool = True):
+    def generate_all_descriptions(
+        self,
+        batch_size: int = 10,
+        verbose: bool = True,
+        *,
+        overwrite: bool = False,
+        on_error: str = "fallback",
+    ):
         """
         Generate descriptions for all columns using LLM.
 
@@ -65,6 +72,14 @@ class MetadataManager:
         Args:
             batch_size: Number of columns per batch (currently processes sequentially)
             verbose: If True, print progress messages
+            overwrite: By default only columns that have no description yet are
+                processed. Pass ``True`` to also re-describe columns that already
+                have one, including descriptions authored as SQL comments.
+            on_error: ``"fallback"`` (default) writes a rule-based description
+                when the LLM fails; ``"raise"`` propagates
+                :class:`~clgraph.column.DescriptionGenerationError` instead. Use
+                ``"raise"`` when a silent fallback would be mistaken for a real
+                model-generated description.
         """
         if not self._pipeline.llm:
             raise ValueError("LLM not configured. Set pipeline.llm before calling.")
@@ -79,7 +94,7 @@ class MetadataManager:
                 for col in self._pipeline.columns.values():
                     if (
                         col.table_name == query.destination_table
-                        and not col.description
+                        and (overwrite or not col.description)
                         and col.is_computed()
                     ):
                         columns_to_process.append(col)
@@ -91,7 +106,13 @@ class MetadataManager:
             if (i + 1) % batch_size == 0:
                 logger.info("Processed %d/%d columns...", i + 1, len(columns_to_process))
 
-            generate_description(col, self._pipeline.llm, self._pipeline)
+            generate_description(
+                col,
+                self._pipeline.llm,
+                self._pipeline,
+                overwrite=overwrite,
+                on_error=on_error,
+            )
 
         logger.info("Done! Generated %d descriptions", len(columns_to_process))
 

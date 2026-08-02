@@ -16,6 +16,11 @@ except PackageNotFoundError:
 # Import diff functionality
 # Import lineage intelligence components
 from .agent import AgentResult, LineageAgent, QuestionType
+from .column import (
+    DescriptionGenerationError,
+    build_description_prompt,
+    generate_description,
+)
 from .diff import ColumnDiff, PipelineDiff
 
 # Import execution functionality
@@ -126,6 +131,10 @@ __all__ = [
     "TableNode",
     "TableDependencyGraph",
     "TemplateTokenizer",
+    # Description generation
+    "build_description_prompt",
+    "generate_description",
+    "DescriptionGenerationError",
     # Metadata
     "DescriptionSource",
     "PipelineDiff",
