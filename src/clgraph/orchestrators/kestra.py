@@ -7,12 +7,29 @@ Kestra is a declarative orchestration platform using YAML-based workflow definit
 
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
-import yaml
-
 from .base import BaseOrchestrator
 
 if TYPE_CHECKING:
     pass
+
+
+def _require_yaml():
+    """Import PyYAML on demand, with an actionable message when it is absent.
+
+    PyYAML is an optional dependency: only this orchestrator needs it, and
+    ``clgraph.orchestrators`` imports every backend eagerly, so importing it at
+    module scope would make ``import clgraph`` fail outright for anyone who
+    installed clgraph without extras. Importing it here keeps the cost on the
+    people who actually generate Kestra flows.
+    """
+    try:
+        import yaml
+    except ImportError as exc:  # pragma: no cover - exercised in a subprocess
+        raise ImportError(
+            "KestraOrchestrator requires PyYAML, which is not installed. "
+            "Install it with `pip install 'clgraph[kestra]'` or `pip install pyyaml`."
+        ) from exc
+    return yaml
 
 
 class KestraOrchestrator(BaseOrchestrator):
@@ -149,7 +166,7 @@ class KestraOrchestrator(BaseOrchestrator):
         # Add any additional kwargs
         flow.update(kwargs)
 
-        return yaml.dump(flow, default_flow_style=False, sort_keys=False)
+        return _require_yaml().dump(flow, default_flow_style=False, sort_keys=False)
 
     def to_flow_with_triggers(
         self,
@@ -185,6 +202,7 @@ class KestraOrchestrator(BaseOrchestrator):
                 cron="0 * * * *"
             )
         """
+        yaml = _require_yaml()
         flow_yaml = self.to_flow(flow_id=flow_id, namespace=namespace, **kwargs)
         flow_dict = yaml.safe_load(flow_yaml)
 
@@ -220,7 +238,7 @@ class KestraOrchestrator(BaseOrchestrator):
             Dictionary representing Kestra flow structure
         """
         yaml_content = self.to_flow(flow_id=flow_id, namespace=namespace, **kwargs)
-        return yaml.safe_load(yaml_content)
+        return _require_yaml().safe_load(yaml_content)
 
 
 __all__ = ["KestraOrchestrator"]

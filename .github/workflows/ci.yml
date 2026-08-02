@@ -59,6 +59,72 @@ jobs:
       - name: Run tests
         run: uv run pytest tests/ -v --cov=src/clgraph --cov-report=term-missing
 
+  bare-install:
+    # Every other job installs ".[dev]", so an optional dependency that leaks
+    # into an import path is invisible to them. This installs the built wheel
+    # into a clean environment with no extras - what `pip install clgraph`
+    # actually gives a user. A missing PyYAML broke `import clgraph` outright
+    # in 0.0.5 and 0.0.6 while CI stayed green.
+    name: Bare install (no extras)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.13']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Build the wheel
+        run: uv build --wheel
+
+      - name: Install the wheel with no extras
+        run: |
+          python -m venv /tmp/bare
+          /tmp/bare/bin/pip install --upgrade pip
+          /tmp/bare/bin/pip install dist/*.whl
+
+      - name: Import clgraph and build a pipeline
+        run: |
+          /tmp/bare/bin/python - <<'PY'
+          import clgraph
+          from clgraph import Pipeline
+
+          print("clgraph", clgraph.__version__)
+          pipeline = Pipeline(
+              [("q", "CREATE TABLE mart_orders AS SELECT id, amount FROM raw_orders")],
+              dialect="bigquery",
+          )
+          assert pipeline.columns, "pipeline produced no columns"
+          print("columns:", len(pipeline.columns))
+          PY
+
+      - name: Optional dependencies must fail only at point of use
+        run: |
+          /tmp/bare/bin/python - <<'PY'
+          from clgraph import Pipeline
+          from clgraph.orchestrators import KestraOrchestrator
+
+          pipeline = Pipeline(
+              [("q", "CREATE TABLE mart_orders AS SELECT id FROM raw_orders")],
+              dialect="bigquery",
+          )
+          try:
+              KestraOrchestrator(pipeline).to_flow(flow_id="f", namespace="n")
+          except ImportError as exc:
+              assert "pyyaml" in str(exc).lower(), f"unhelpful message: {exc}"
+              print("Kestra without PyYAML raised as expected:", exc)
+          else:
+              raise SystemExit("expected ImportError naming PyYAML")
+          PY
+
   notebooks:
     name: Example Notebooks
     runs-on: ubuntu-latest
