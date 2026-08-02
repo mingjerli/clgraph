@@ -786,7 +786,14 @@ class Pipeline:
             to_column,
         )
 
-    def generate_all_descriptions(self, batch_size: int = 10, verbose: bool = True):
+    def generate_all_descriptions(
+        self,
+        batch_size: int = 10,
+        verbose: bool = True,
+        *,
+        overwrite: bool = False,
+        on_error: str = "fallback",
+    ):
         """
         Generate descriptions for all columns using LLM.
 
@@ -795,8 +802,16 @@ class Pipeline:
         Args:
             batch_size: Number of columns per batch (currently processes sequentially)
             verbose: If True, print progress messages
+            overwrite: By default only columns that have no description yet are
+                processed. Pass ``True`` to also re-describe columns that already
+                have one, including descriptions authored as SQL comments.
+            on_error: ``"fallback"`` (default) writes a rule-based description
+                when the LLM fails; ``"raise"`` propagates
+                :class:`~clgraph.column.DescriptionGenerationError` instead.
         """
-        return self._metadata_manager.generate_all_descriptions(batch_size, verbose)
+        return self._metadata_manager.generate_all_descriptions(
+            batch_size, verbose, overwrite=overwrite, on_error=on_error
+        )
 
     def propagate_all_metadata(self, verbose: bool = True):
         """

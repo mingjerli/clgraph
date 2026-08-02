@@ -30,7 +30,20 @@ if TYPE_CHECKING:
 # ============================================================================
 
 
-def generate_description(column: ColumnNode, llm: Any, pipeline: "Pipeline"):
+class DescriptionGenerationError(RuntimeError):
+    """Raised when ``generate_description(..., on_error="raise")`` cannot obtain
+    a usable LLM description - because the call failed, or because the model's
+    output was rejected by output validation."""
+
+
+def generate_description(
+    column: ColumnNode,
+    llm: Any,
+    pipeline: "Pipeline",
+    *,
+    overwrite: bool = False,
+    on_error: str = "fallback",
+) -> bool:
     """
     Generate description using LLM based on SQL expression and source columns.
 
@@ -38,13 +51,36 @@ def generate_description(column: ColumnNode, llm: Any, pipeline: "Pipeline"):
         column: The column node to generate description for
         llm: LangChain LLM instance (BaseChatModel)
         pipeline: The pipeline for source lookup
+        overwrite: By default a description that came from a SQL comment
+            (``description_source`` is ``SOURCE``) is left alone and the LLM is
+            not called. Pass ``True`` to describe the column anyway - useful
+            when you want a model's opinion *alongside* the authored text and
+            will store it separately.
+        on_error: ``"fallback"`` (default) keeps the historical behavior: if the
+            LLM call fails or its output is rejected by validation, a rule-based
+            description derived from the column name is written instead.
+            ``"raise"`` raises :class:`DescriptionGenerationError` and leaves the
+            column untouched - use it when a silent fallback would be worse than
+            a visible failure, e.g. when the result is attributed to the model.
+
+    Returns:
+        ``True`` if the LLM produced the description now stored on the column.
+        ``False`` if the column was skipped, or a rule-based fallback was used.
+        A ``False`` return is the signal that the text is not model-authored.
+
+    Raises:
+        ValueError: If ``on_error`` is not ``"fallback"`` or ``"raise"``.
+        DescriptionGenerationError: If generation failed and ``on_error="raise"``.
     """
-    # Don't overwrite source descriptions
-    if column.description_source == DescriptionSource.SOURCE:
-        return
+    if on_error not in ("fallback", "raise"):
+        raise ValueError(f"on_error must be 'fallback' or 'raise', got {on_error!r}")
+
+    # Don't overwrite source descriptions unless explicitly asked to.
+    if not overwrite and column.description_source == DescriptionSource.SOURCE:
+        return False
 
     # Build prompt
-    prompt = _build_description_prompt(column, pipeline)
+    prompt = build_description_prompt(column, pipeline)
 
     # Call LLM
     try:
@@ -68,18 +104,41 @@ def generate_description(column: ColumnNode, llm: Any, pipeline: "Pipeline"):
 
         validated = _validate_description_output(raw, column.column_name, column.table_name)
         if validated is None:
+            if on_error == "raise":
+                raise DescriptionGenerationError(
+                    f"Generated description for {column.full_name} was rejected by "
+                    f"output validation"
+                )
             _generate_fallback_description(column)
-        else:
-            column.description = validated
-            column.description_source = DescriptionSource.GENERATED
+            return False
+        column.description = validated
+        column.description_source = DescriptionSource.GENERATED
+        return True
     except (ImportError, ValueError, AttributeError, RuntimeError) as e:
+        if on_error == "raise":
+            if isinstance(e, DescriptionGenerationError):
+                raise
+            raise DescriptionGenerationError(
+                f"Description generation failed for {column.full_name}: {e}"
+            ) from e
         # Fallback to simple rule-based description if LLM fails
         logger.debug("LLM description generation failed: %s", e)
         _generate_fallback_description(column)
+        return False
 
 
-def _build_description_prompt(column: ColumnNode, pipeline: "Pipeline") -> str:
-    """Build LLM prompt for description generation (sanitized + delimited)."""
+def build_description_prompt(column: ColumnNode, pipeline: "Pipeline") -> str:
+    """Build the LLM prompt for a column description (sanitized + delimited).
+
+    Public so callers that want to drive the model themselves - to control
+    error handling, batching, or which model is used - can reuse clgraph's
+    lineage-aware prompt instead of reimplementing it. The prompt includes the
+    column's SQL expression and its upstream source columns.
+
+    Pair it with your own LLM call when :func:`generate_description`'s
+    behavior does not fit; the returned string is ready to send as the user
+    message.
+    """
     from .prompt_sanitization import sanitize_for_prompt, sanitize_sql_for_prompt
 
     data_lines = [
@@ -118,6 +177,11 @@ def _build_description_prompt(column: ColumnNode, pipeline: "Pipeline") -> str:
     ]
 
     return "\n".join(data_lines + instructions)
+
+
+# Backwards-compatible alias: this function was private until it was promoted,
+# and downstream code imported the underscore name. Keep it working.
+_build_description_prompt = build_description_prompt
 
 
 def _generate_fallback_description(column: ColumnNode):
@@ -461,7 +525,9 @@ class PipelineLineageGraph:
 
 
 __all__ = [
+    "DescriptionGenerationError",
     "PipelineLineageGraph",
+    "build_description_prompt",
     "generate_description",
     "propagate_metadata",
 ]

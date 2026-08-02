@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-08-01
+
+### Added
+
+- `build_description_prompt(column, pipeline)` is now public API, exported from
+  the package root. It builds clgraph's lineage-aware column-description prompt
+  (including the column's SQL expression and upstream sources) so callers who
+  want to drive the LLM themselves - to control error handling, batching, or
+  model choice - can reuse it instead of reimplementing it. The former private
+  name `_build_description_prompt` remains as an alias.
+- `generate_description(...)` gained two keyword-only parameters:
+  - `overwrite=False` - by default a description that came from a SQL comment
+    (`description_source` is `SOURCE`) is left alone and the LLM is not called.
+    Pass `True` to describe the column anyway, which is what you want when
+    capturing a model's opinion *alongside* the authored text.
+  - `on_error="fallback"` - `"raise"` raises the new `DescriptionGenerationError`
+    instead of silently writing a rule-based description derived from the column
+    name. Use it when a silent fallback would be mistaken for real model output.
+- `generate_description(...)` now returns `bool`: `True` only when the LLM
+  produced the stored description, `False` when the column was skipped or a
+  fallback was written. Previously it returned `None`, so a caller could not
+  tell a successful generation from a fallback.
+- `DescriptionGenerationError`, raised by `on_error="raise"`.
+- `Pipeline.generate_all_descriptions()` and
+  `MetadataManager.generate_all_descriptions()` accept and forward the same
+  `overwrite` and `on_error` keyword-only parameters.
+- `generate_description` and `DescriptionGenerationError` are now exported from
+  the package root alongside `build_description_prompt`.
+
+### Fixed
+
+- Callers had no way to distinguish "the LLM wrote this description" from "the
+  LLM call failed and clgraph substituted the humanized column name" - both left
+  `description_source` set to `GENERATED`. Any tool attributing the result to a
+  model could therefore label a rule-based fallback, or a column's own
+  hand-authored SQL comment, as model-generated output. The new return value and
+  `on_error="raise"` make both cases detectable.
+
+### Compatibility
+
+No breaking changes. All new parameters are keyword-only with defaults that
+preserve the previous behavior exactly, the new return value replaces `None`
+(falsy either way), and the private prompt-builder name still resolves.
+
+## [0.0.5] - 2026-07-31
+
 ### Security
 
 - `Pipeline.from_sql_files()` and `Pipeline.from_json_file()` now validate paths:
