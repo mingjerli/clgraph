@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.7] - 2026-08-02
+
+### Fixed
+
+- **`import clgraph` failed on a clean install.** `clgraph.orchestrators.kestra`
+  imported `yaml` at module scope and `clgraph/orchestrators/__init__.py` imports
+  every backend eagerly, so `import clgraph` raised
+  `ModuleNotFoundError: No module named 'yaml'` for anyone who installed clgraph
+  without extras. PyYAML was never a declared dependency - it only ever arrived
+  transitively in development environments, which is why the full test suite and
+  CI stayed green. Regression introduced in 0.0.5 and also present in 0.0.6;
+  0.0.3 was unaffected.
+
+  PyYAML is now imported at point of use. `KestraOrchestrator` imports and
+  constructs without it; only `to_flow()`, `to_flow_with_triggers()` and
+  `to_flow_dict()` need it, and they raise an `ImportError` naming the package
+  and how to install it. The other orchestrators (Airflow, Dagster, Prefect,
+  Mage) emit code as text and were never affected.
+
+### Added
+
+- `clgraph[kestra]` extra, which installs PyYAML.
+- CI job `bare-install`, which installs the built wheel into a clean environment
+  with no extras and imports it. Every other job installs `.[dev]`, so nothing
+  in the pipeline would have caught this class of bug.
+- Regression tests in `tests/test_optional_orchestrator_deps.py` that run in a
+  subprocess with `yaml` made unimportable, since the development environment
+  has PyYAML installed and the failure only reproduces without it.
+
+### Compatibility
+
+No API changes. Anyone who already has PyYAML installed sees identical behavior.
+
 ## [0.0.6] - 2026-08-01
 
 ### Added

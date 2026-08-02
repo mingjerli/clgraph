@@ -811,7 +811,7 @@ wheels = [
 
 [[package]]
 name = "clgraph"
-version = "0.0.6"
+version = "0.0.7"
 source = { editable = "." }
 dependencies = [
     { name = "graphviz" },
@@ -859,6 +859,9 @@ examples = [
     { name = "pandas" },
     { name = "streamlit" },
 ]
+kestra = [
+    { name = "pyyaml" },
+]
 llm = [
     { name = "langchain" },
     { name = "langchain-core" },
@@ -899,6 +902,7 @@ requires-dist = [
     { name = "pandas", marker = "extra == 'examples'", specifier = ">=2.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0" },
+    { name = "pyyaml", marker = "extra == 'kestra'", specifier = ">=6.0" },
     { name = "rich", specifier = ">=13.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.16.1,<0.17" },
     { name = "sqlglot", specifier = ">=28.0.0,<31.0.0" },
@@ -907,7 +911,7 @@ requires-dist = [
     { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.1a0" },
     { name = "typer", specifier = ">=0.12.0" },
 ]
-provides-extras = ["llm", "mcp", "dev", "build", "examples", "templates", "airflow", "all"]
+provides-extras = ["llm", "mcp", "kestra", "dev", "build", "examples", "templates", "airflow", "all"]
 
 [[package]]
 name = "click"

@@ -74,6 +74,14 @@ Or with uv:
 uv pip install clgraph
 ```
 
+Optional extras, for features with extra dependencies:
+
+```bash
+pip install 'clgraph[llm]'     # LLM-powered descriptions, text-to-SQL, agent
+pip install 'clgraph[mcp]'     # MCP server for Claude Desktop
+pip install 'clgraph[kestra]'  # Kestra flow generation (PyYAML)
+```
+
 ## Quick Start
 
 ### Single Query Column Lineage
