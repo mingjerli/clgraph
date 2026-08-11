@@ -190,9 +190,12 @@ class Pipeline:
         """Access edges through column_graph for backward compatibility"""
         return self.column_graph.edges
 
-    def _get_incoming_edges(self, full_name: str) -> List[ColumnEdge]:
-        """Get incoming edges for a column using adjacency index."""
+    def get_incoming_edges(self, full_name: str) -> List[ColumnEdge]:
+        """Incoming lineage edges for a column, via the adjacency index (O(1))."""
         return self.column_graph._incoming_index.get(full_name, [])
+
+    # Backwards-compatible alias: internal callers imported the underscore name.
+    _get_incoming_edges = get_incoming_edges
 
     def _get_outgoing_edges(self, full_name: str) -> List[ColumnEdge]:
         """Get outgoing edges for a column using adjacency index."""

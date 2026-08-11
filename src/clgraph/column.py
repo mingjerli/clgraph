@@ -149,7 +149,11 @@ def build_description_prompt(column: ColumnNode, pipeline: "Pipeline") -> str:
     ]
 
     # Add source column descriptions
-    incoming_edges = [e for e in pipeline.edges if e.to_node == column]
+    getter = getattr(pipeline, "get_incoming_edges", None)
+    if getter is not None:
+        incoming_edges = getter(column.full_name)
+    else:  # duck-typed pipeline objects that only expose .edges
+        incoming_edges = [e for e in pipeline.edges if e.to_node == column]
     source_descs = []
     for edge in incoming_edges:
         source_col = edge.from_node
@@ -222,7 +226,7 @@ def propagate_metadata_backward(column: ColumnNode, pipeline: "Pipeline"):
         return
 
     # Get source columns via incoming edges
-    incoming_edges = [e for e in pipeline.edges if e.to_node == column]
+    incoming_edges = pipeline.get_incoming_edges(column.full_name)
     if not incoming_edges:
         return
 
@@ -265,7 +269,7 @@ def propagate_metadata(column: ColumnNode, pipeline: "Pipeline"):
         return
 
     # Get source columns via incoming edges
-    incoming_edges = [e for e in pipeline.edges if e.to_node == column]
+    incoming_edges = pipeline.get_incoming_edges(column.full_name)
     if not incoming_edges:
         return
 
