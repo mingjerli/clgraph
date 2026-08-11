@@ -77,6 +77,9 @@ class ContextConfig:
     annotate_table_roles: bool = True
     """Label tables as source/intermediate/final in schema context."""
 
+    lineage_expansion_depth: int = 2
+    """How many ancestor levels expand_with_lineage() walks."""
+
 
 class ContextBuilder:
     """
@@ -289,36 +292,39 @@ class ContextBuilder:
     # Lineage Methods
     # =========================================================================
 
-    def expand_with_lineage(self, tables: List[str]) -> List[str]:
-        """
-        Expand table list with lineage-related tables.
+    def expand_with_lineage(self, tables: List[str], depth: Optional[int] = None) -> List[str]:
+        """Expand a table list with ancestors via BFS, shallow-first.
 
-        For each table, adds its source tables to help with
-        understanding join relationships.
-
-        Args:
-            tables: Initial list of table names.
-
-        Returns:
-            Expanded list including source tables.
+        ``depth`` bounds the number of ancestor levels; ``None`` reads
+        ``config.lineage_expansion_depth``. Result order: the original
+        selection, then depth-1 parents, then depth-2, ...
         """
         if not self.config.include_lineage:
-            return tables
+            return list(tables)
+        if depth is None:
+            depth = self.config.lineage_expansion_depth
 
-        expanded = set(tables)
-
-        for table_name in tables:
-            table_node = self.pipeline.table_graph.tables.get(table_name)
-            if not table_node:
-                continue
-
-            # Add source tables
-            if table_node.created_by:
+        ordered = list(tables)
+        seen = set(tables)
+        frontier = list(tables)
+        for _ in range(depth):
+            next_frontier = []
+            for table_name in frontier:
+                table_node = self.pipeline.table_graph.tables.get(table_name)
+                if not table_node or not table_node.created_by:
+                    continue
                 query = self.pipeline.table_graph.queries.get(table_node.created_by)
-                if query:
-                    expanded.update(query.source_tables)
-
-        return list(expanded)
+                if not query:
+                    continue
+                for parent in sorted(query.source_tables):
+                    if parent not in seen:
+                        seen.add(parent)
+                        ordered.append(parent)
+                        next_frontier.append(parent)
+            if not next_frontier:
+                break
+            frontier = next_frontier
+        return ordered
 
     def get_table_relationships(self, tables: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """
