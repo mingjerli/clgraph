@@ -26,6 +26,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def needs_description(col: ColumnNode) -> bool:
+    """True when a column has no description or only a rule-based placeholder."""
+    from .models import DescriptionSource
+
+    return not col.description or col.description_source == DescriptionSource.FALLBACK
+
+
 class MetadataManager:
     """
     Metadata management for Pipeline.
@@ -94,7 +101,7 @@ class MetadataManager:
                 for col in self._pipeline.columns.values():
                     if (
                         col.table_name == query.destination_table
-                        and (overwrite or not col.description)
+                        and (overwrite or needs_description(col))
                         and col.is_computed()
                     ):
                         columns_to_process.append(col)

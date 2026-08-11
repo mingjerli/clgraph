@@ -100,7 +100,7 @@ def test_injection_response_falls_back_to_rule_based():
     generate_description(col, _InjectionLLM(), _FakePipeline())
     # Fallback humanizes the column name; it never stores the injection text.
     assert "pirate" not in (col.description or "").lower()
-    assert col.description_source == DescriptionSource.GENERATED
+    assert col.description_source == DescriptionSource.FALLBACK
 
 
 class _FakeLineageGraph:

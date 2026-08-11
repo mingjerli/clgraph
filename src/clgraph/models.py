@@ -961,6 +961,7 @@ class DescriptionSource(Enum):
     SOURCE = "source"  # User-provided
     GENERATED = "generated"  # LLM-generated
     PROPAGATED = "propagated"  # Inherited from source
+    FALLBACK = "fallback"  # Rule-based placeholder written when the LLM failed
 
 
 __all__ = [

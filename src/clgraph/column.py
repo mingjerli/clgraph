@@ -148,7 +148,8 @@ def build_description_prompt(column: ColumnNode, pipeline: "Pipeline") -> str:
         f"SQL: {sanitize_sql_for_prompt(column.expression or column.column_name)}",
     ]
 
-    # Add source column descriptions
+    # Add source columns: always list by name; attach text only when it is
+    # authored or model-generated (FALLBACK text is a placeholder, not context).
     getter = getattr(pipeline, "get_incoming_edges", None)
     if getter is not None:
         incoming_edges = getter(column.full_name)
@@ -157,11 +158,10 @@ def build_description_prompt(column: ColumnNode, pipeline: "Pipeline") -> str:
     source_descs = []
     for edge in incoming_edges:
         source_col = edge.from_node
-        if source_col.description:
-            source_descs.append(
-                f"- {sanitize_for_prompt(source_col.full_name)}: "
-                f"{sanitize_for_prompt(source_col.description)}"
-            )
+        line = f"- {sanitize_for_prompt(source_col.full_name)}"
+        if source_col.description and source_col.description_source != DescriptionSource.FALLBACK:
+            line += f": {sanitize_for_prompt(source_col.description)}"
+        source_descs.append(line)
     if source_descs:
         data_lines.append("")
         data_lines.append("Source columns:")
@@ -195,7 +195,7 @@ def _generate_fallback_description(column: ColumnNode):
     base_desc = " ".join(word.capitalize() for word in words)
 
     column.description = base_desc
-    column.description_source = DescriptionSource.GENERATED
+    column.description_source = DescriptionSource.FALLBACK
 
 
 def propagate_metadata_backward(column: ColumnNode, pipeline: "Pipeline"):
