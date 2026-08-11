@@ -384,6 +384,8 @@ class ContextBuilder:
 
     def _and_leaves(self, condition):
         """Flatten a boolean condition into AND-connected leaves."""
+        if isinstance(condition, exp.Paren):
+            return self._and_leaves(condition.this)
         if isinstance(condition, exp.And):
             return self._and_leaves(condition.left) + self._and_leaves(condition.right)
         return [condition]

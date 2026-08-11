@@ -40,6 +40,21 @@ def test_composite_key_emits_one_entry_per_pair():
     assert _pairs(joins) == {("s.a", "x", "s.b", "x"), ("s.a", "y", "s.b", "y")}
 
 
+def test_parenthesized_on_condition_resolves():
+    pipeline = Pipeline.from_dict(
+        {
+            "q": """
+                CREATE TABLE m.t AS
+                SELECT a.x FROM s.a a
+                JOIN s.b b ON (a.x = b.x AND a.y = b.y)
+            """
+        },
+        dialect="bigquery",
+    )
+    joins = ContextBuilder(pipeline).get_observed_joins()
+    assert _pairs(joins) == {("s.a", "x", "s.b", "x"), ("s.a", "y", "s.b", "y")}
+
+
 def test_using_with_single_table_left_input():
     pipeline = Pipeline.from_dict(
         {"q": "CREATE TABLE m.t AS SELECT a.id FROM s.a a JOIN s.b b USING (id)"},
