@@ -9,6 +9,8 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 
+from sqlglot import exp
+
 if TYPE_CHECKING:
     from ..pipeline import Pipeline
 
@@ -79,6 +81,9 @@ class ContextConfig:
 
     lineage_expansion_depth: int = 2
     """How many ancestor levels expand_with_lineage() walks."""
+
+    max_join_hints: int = 15
+    """Maximum lines in the join-hints section (observed joins first)."""
 
 
 class ContextBuilder:
@@ -358,6 +363,127 @@ class ContextBuilder:
                             )
 
         return relationships
+
+    def _and_leaves(self, condition):
+        """Flatten a boolean condition into AND-connected leaves."""
+        if isinstance(condition, exp.And):
+            return self._and_leaves(condition.left) + self._and_leaves(condition.right)
+        return [condition]
+
+    def _physical_name(self, table: exp.Table) -> str:
+        parts = [table.args.get("catalog"), table.args.get("db"), table.this]
+        return ".".join(p.name for p in parts if p is not None)
+
+    def get_observed_joins(self, tables: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        """Equi-join pairs observed in the pipeline's SQL. Never fabricates:
+        predicates that cannot be resolved to exactly two physical pipeline
+        tables are skipped (and debug-logged)."""
+        import logging
+
+        log = logging.getLogger(__name__)
+        known = set(self.pipeline.table_graph.tables)
+        wanted = set(tables) if tables is not None else None
+        results, seen = [], {}
+
+        for query in self.pipeline.table_graph.queries.values():
+            cte_names = {cte.alias_or_name for cte in query.ast.find_all(exp.CTE)}
+            for select in query.ast.find_all(exp.Select):
+                # sqlglot's Select stores its FROM clause under the "from" arg key
+                # in most releases, but under "from_" in some (e.g. 30.x) to avoid
+                # colliding with the Python keyword. Check both for robustness
+                # across the pinned sqlglot range (>=28.0.0,<31.0.0).
+                from_expr = select.args.get("from") or select.args.get("from_")
+                from_table = from_expr.this if from_expr is not None else None
+
+                # Scope the alias map to THIS select's direct relations only (its
+                # FROM and each JOIN's target) — never find_all over the subtree,
+                # which would recurse into nested subqueries and let a correlated
+                # subquery's reused alias silently overwrite an outer table's
+                # mapping (fabricating a join between unrelated tables).
+                relations = []
+                if from_table is not None:
+                    relations.append(from_table)
+                for j in select.args.get("joins") or []:
+                    relations.append(j.this)
+                alias_map = {}
+                for rel in relations:
+                    if isinstance(rel, exp.Table):
+                        name = self._physical_name(rel)
+                        alias_map[rel.alias_or_name] = name
+                        alias_map[name] = name
+
+                def resolve(alias, cte_names=cte_names, alias_map=alias_map):
+                    if alias in cte_names:
+                        return None
+                    name = alias_map.get(alias)
+                    return name if name in known else None
+
+                joins = select.args.get("joins") or []
+                for join_index, join in enumerate(joins):
+                    pairs = []
+                    on = join.args.get("on")
+                    using = join.args.get("using")
+                    right = join.this if isinstance(join.this, exp.Table) else None
+                    if on is not None:
+                        for leaf in self._and_leaves(on):
+                            if (
+                                isinstance(leaf, exp.EQ)
+                                and isinstance(leaf.left, exp.Column)
+                                and isinstance(leaf.right, exp.Column)
+                            ):
+                                lt = resolve(leaf.left.table)
+                                rt = resolve(leaf.right.table)
+                                if lt and rt and lt != rt:
+                                    pairs.append((lt, leaf.left.name, rt, leaf.right.name))
+                                else:
+                                    log.debug(
+                                        "skipping unresolvable join predicate: %s", leaf.sql()
+                                    )
+                    elif using and right is not None:
+                        # USING is only safe when the left input is one physical table.
+                        if join_index == 0 and isinstance(from_table, exp.Table):
+                            lt = resolve(from_table.alias_or_name)
+                            rt = resolve(right.alias_or_name)
+                            if lt and rt:
+                                for ident in using:
+                                    pairs.append((lt, ident.name, rt, ident.name))
+                        else:
+                            log.debug("skipping USING join with composite left input")
+
+                    for lt, lc, rt, rc in pairs:
+                        if wanted is not None and (lt not in wanted or rt not in wanted):
+                            continue
+                        key = tuple(sorted([(lt, lc), (rt, rc)]))
+                        existing = seen.get(key)
+                        if existing is not None:
+                            if query.query_id not in existing["query_ids"]:
+                                existing["query_ids"].append(query.query_id)
+                            continue
+                        entry = {
+                            "left_table": lt,
+                            "left_column": lc,
+                            "right_table": rt,
+                            "right_column": rc,
+                            "query_id": query.query_id,
+                            "query_ids": [query.query_id],
+                        }
+                        seen[key] = entry
+                        results.append(entry)
+        return results
+
+    def build_join_context(self, tables: List[str]) -> str:
+        """Join-hints prompt section (observed joins; candidates added by T3b)."""
+        joins = self.get_observed_joins(tables)[: self.config.max_join_hints]
+        if not joins:
+            return ""
+        lines = ["## Join Hints", ""]
+        for j in joins:
+            observed_in = ", ".join(j["query_ids"][:3])
+            lines.append(
+                f"- {j['left_table']}.{j['left_column']} = "
+                f"{j['right_table']}.{j['right_column']} (observed in {observed_in})"
+            )
+        return "\n".join(lines)
 
     # =========================================================================
     # Text Context Methods (for LLM prompts)

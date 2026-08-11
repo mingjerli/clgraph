@@ -184,6 +184,7 @@ class GenerateSQLTool(LLMTool):
         parts = [
             builder.build_relationship_context(tables),
             builder.build_lineage_context(tables),
+            builder.build_join_context(tables),
         ]
         return "\n\n".join(p for p in parts if p)
 
