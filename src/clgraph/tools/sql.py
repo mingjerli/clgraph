@@ -216,7 +216,7 @@ class GenerateSQLTool(LLMTool):
             notes_section=sanitize_for_prompt(notes_section, max_length=100000),
             question=question,
             dialect=self.pipeline.dialect,
-            extra_instructions="",
+            extra_instructions="- Prefer final tables when they answer the question; use intermediate tables only when required",
         )
 
         # Call LLM
@@ -278,7 +278,12 @@ class GenerateSQLTool(LLMTool):
             notes_section=sanitize_for_prompt(notes_section, max_length=100000),
             question=question,
             dialect=self.pipeline.dialect,
-            extra_instructions="- Use ONLY the tables listed above",
+            extra_instructions="\n".join(
+                [
+                    "- Use ONLY the tables listed above",
+                    "- Prefer final tables when they answer the question; use intermediate tables only when required",
+                ]
+            ),
         )
 
         # Call LLM

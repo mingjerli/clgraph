@@ -74,6 +74,9 @@ class ContextConfig:
     max_lineage_lines: int = 20
     """Maximum total lines in the column-lineage section."""
 
+    annotate_table_roles: bool = True
+    """Label tables as source/intermediate/final in schema context."""
+
 
 class ContextBuilder:
     """
@@ -202,6 +205,15 @@ class ContextBuilder:
             if include_sources or not node.is_source:
                 tables.append(name)
         return sorted(tables)
+
+    def table_role(self, table_name: str) -> str:
+        """ "source", "final" (no downstream readers), or "intermediate"."""
+        node = self.pipeline.table_graph.tables[table_name]
+        if node.is_source:
+            return "source"
+        if len(node.read_by) == 0:
+            return "final"
+        return "intermediate"
 
     def get_pii_columns(self, table_name: Optional[str] = None) -> List[Dict[str, str]]:
         """
@@ -348,17 +360,14 @@ class ContextBuilder:
     def resolve_context_tables(self, tables: Optional[List[str]] = None) -> List[str]:
         """Ordered, capped table list — the single source of truth for a prompt.
 
-        With no explicit selection, all tables are considered and derived tables
-        outrank source tables when trimming. An explicit selection keeps its
-        order and is truncated to ``max_tables``.
+        With no explicit selection, all tables are considered and ranked by role
+        (final > intermediate > source) when trimming. An explicit selection
+        keeps its order and is truncated to ``max_tables``.
         """
         if tables is None:
             tables = self.get_table_names()
-            if len(tables) > self.config.max_tables:
-                source_tables = [t for t in tables if self.pipeline.table_graph.tables[t].is_source]
-                derived_tables = [t for t in tables if t not in source_tables]
-                remaining = self.config.max_tables - len(derived_tables)
-                tables = derived_tables + source_tables[: max(0, remaining)]
+            priority = {"final": 0, "intermediate": 1, "source": 2}
+            tables = sorted(tables, key=lambda t: (priority[self.table_role(t)], t))
         return list(tables)[: self.config.max_tables]
 
     def build_schema_context(self, tables: Optional[List[str]] = None) -> str:
@@ -397,9 +406,18 @@ class ContextBuilder:
             lines.append(f"Description: {desc}")
 
         # Table type
-        if table_info.is_source:
-            lines.append("(Source table)")
-        elif table_info.source_tables and self.config.include_source_tables:
+        if self.config.annotate_table_roles:
+            role = self.table_role(table_name)
+            lines.append(
+                {"source": "(Source table)", "final": "(Final table)"}.get(
+                    role, "(Intermediate table)"
+                )
+            )
+        if (
+            not table_info.is_source
+            and table_info.source_tables
+            and self.config.include_source_tables
+        ):
             sources = ", ".join(table_info.source_tables[:3])
             if len(table_info.source_tables) > 3:
                 sources += f" (+{len(table_info.source_tables) - 3} more)"

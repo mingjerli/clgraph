@@ -45,10 +45,8 @@ def test_direct_mode_prompt_contains_column_lineage(pipeline):
 def test_resolve_context_tables_is_capped_and_ordered(pipeline):
     builder = ContextBuilder(pipeline, ContextConfig(max_tables=2))
     tables = builder.resolve_context_tables()
-    assert len(tables) == 2
-    # derived tables outrank source tables when trimming (current priority rule;
-    # Task 6 upgrades this to final > intermediate > source)
-    assert "raw.users" not in tables
+    # role priority: final > intermediate > source (Task 6)
+    assert tables == ["mart.users", "staging.users"]
 
 
 def test_sections_only_reference_in_schema_tables(pipeline):
