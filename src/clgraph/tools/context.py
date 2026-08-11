@@ -68,6 +68,12 @@ class ContextConfig:
     max_description_length: int = 200
     """Truncate descriptions longer than this."""
 
+    max_lineage_columns_per_table: int = 10
+    """Maximum lineage lines contributed per table."""
+
+    max_lineage_lines: int = 20
+    """Maximum total lines in the column-lineage section."""
+
 
 class ContextBuilder:
     """
@@ -339,28 +345,24 @@ class ContextBuilder:
     # Text Context Methods (for LLM prompts)
     # =========================================================================
 
-    def build_schema_context(self, tables: Optional[List[str]] = None) -> str:
-        """
-        Build text context describing the schema.
+    def resolve_context_tables(self, tables: Optional[List[str]] = None) -> List[str]:
+        """Ordered, capped table list — the single source of truth for a prompt.
 
-        Args:
-            tables: Optional list of tables to include. If None, all tables.
-
-        Returns:
-            Formatted string describing the schema.
+        With no explicit selection, all tables are considered and derived tables
+        outrank source tables when trimming. An explicit selection keeps its
+        order and is truncated to ``max_tables``.
         """
         if tables is None:
             tables = self.get_table_names()
+            if len(tables) > self.config.max_tables:
+                source_tables = [t for t in tables if self.pipeline.table_graph.tables[t].is_source]
+                derived_tables = [t for t in tables if t not in source_tables]
+                remaining = self.config.max_tables - len(derived_tables)
+                tables = derived_tables + source_tables[: max(0, remaining)]
+        return list(tables)[: self.config.max_tables]
 
-        # Apply max tables limit
-        if len(tables) > self.config.max_tables:
-            # Prioritize derived tables over source tables
-            source_tables = [t for t in tables if self.pipeline.table_graph.tables[t].is_source]
-            derived_tables = [t for t in tables if t not in source_tables]
-            remaining = self.config.max_tables - len(derived_tables)
-            tables = derived_tables + source_tables[: max(0, remaining)]
-
-        return self.build_context_for_tables(tables)
+    def build_schema_context(self, tables: Optional[List[str]] = None) -> str:
+        return self.build_context_for_tables(self.resolve_context_tables(tables))
 
     def build_context_for_tables(self, tables: List[str]) -> str:
         """
@@ -467,7 +469,7 @@ class ContextBuilder:
             columns = self.pipeline.get_columns_by_table(table_name)
             output_columns = [c for c in columns if c.layer == "output"]
 
-            for col in output_columns[:10]:  # Limit per table
+            for col in output_columns[: self.config.max_lineage_columns_per_table]:
                 sources = self.pipeline.trace_column_backward(table_name, col.column_name)
                 relevant_sources = [s for s in sources if s.table_name in tables]
 
@@ -480,7 +482,7 @@ class ContextBuilder:
         if not lineage_info:
             return ""
 
-        return "## Column Lineage\n\n" + "\n".join(lineage_info[:20])
+        return "## Column Lineage\n\n" + "\n".join(lineage_info[: self.config.max_lineage_lines])
 
     # =========================================================================
     # Table Selection (for two-stage approaches)

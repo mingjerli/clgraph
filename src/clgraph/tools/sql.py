@@ -179,6 +179,14 @@ class GenerateSQLTool(LLMTool):
         except (ImportError, ValueError, AttributeError, RuntimeError) as e:
             return ToolResult.error_result(f"SQL generation failed: {e}")
 
+    def _build_graph_context(self, builder: ContextBuilder, tables: List[str]) -> str:
+        """Relationship + lineage sections for the resolved table set."""
+        parts = [
+            builder.build_relationship_context(tables),
+            builder.build_lineage_context(tables),
+        ]
+        return "\n\n".join(p for p in parts if p)
+
     def _generate_direct(self, question: str, include_explanation: bool) -> ToolResult:
         """Generate SQL using all tables as context."""
         config = ContextConfig(
@@ -187,15 +195,10 @@ class GenerateSQLTool(LLMTool):
             include_lineage=True,
         )
         builder = ContextBuilder(self.pipeline, config)
-
-        # Build context
-        schema_context = builder.build_schema_context()
-        tables = builder.get_table_names()
-        relationship_context = builder.build_relationship_context(tables)
-
-        # Build notes
-        notes = self._build_notes(tables)
-        notes_section = self._format_notes(notes)
+        tables = builder.resolve_context_tables()
+        schema_context = builder.build_context_for_tables(tables)
+        relationship_context = self._build_graph_context(builder, tables)
+        notes_section = self._format_notes(self._build_notes(tables))
 
         # Choose prompt
         if include_explanation:
@@ -249,13 +252,14 @@ class GenerateSQLTool(LLMTool):
 
         # Expand with lineage
         expanded_tables = builder.expand_with_lineage(selected_tables)
+        tables = builder.resolve_context_tables(expanded_tables)
 
         # Stage 2: Build context and generate
-        schema_context = builder.build_context_for_tables(expanded_tables)
-        lineage_context = builder.build_lineage_context(expanded_tables)
+        schema_context = builder.build_context_for_tables(tables)
+        relationship_context = self._build_graph_context(builder, tables)
 
         # Build notes
-        notes = self._build_notes(expanded_tables)
+        notes = self._build_notes(tables)
         notes_section = self._format_notes(notes)
 
         # Build prompt
@@ -270,7 +274,7 @@ class GenerateSQLTool(LLMTool):
 
         prompt = prompt.format(
             schema_context=sanitize_for_prompt(schema_context, max_length=100000),
-            relationship_section=sanitize_for_prompt(lineage_context, max_length=100000),
+            relationship_section=sanitize_for_prompt(relationship_context, max_length=100000),
             notes_section=sanitize_for_prompt(notes_section, max_length=100000),
             question=question,
             dialect=self.pipeline.dialect,
@@ -288,10 +292,10 @@ class GenerateSQLTool(LLMTool):
             data={
                 "sql": sql,
                 "explanation": explanation,
-                "tables_used": expanded_tables,
+                "tables_used": tables,
                 "strategy": "two_stage",
             },
-            message=f"Generated SQL query using {len(expanded_tables)} tables",
+            message=f"Generated SQL query using {len(tables)} tables",
         )
 
     def _select_tables(self, question: str, builder: ContextBuilder) -> List[str]:
