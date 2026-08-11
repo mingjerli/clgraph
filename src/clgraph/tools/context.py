@@ -7,12 +7,26 @@ used by SQL generation, schema tools, and other components.
 
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
+import sqlglot
 from sqlglot import exp
 
 if TYPE_CHECKING:
     from ..pipeline import Pipeline
+
+# Edge types produced by the lineage builder that are ALWAYS identity-preserving
+# regardless of the node's own expression text: "direct_column" (bare,
+# unaliased column refs, e.g. `SELECT id FROM t`), "star_passthrough" (SELECT *
+# expansion), and "cross_query" (column carried across queries unchanged).
+# "expression" is deliberately excluded here: it's the lineage builder's
+# catch-all for *any* aliased, non-aggregate projection, so it covers both
+# harmless renames (`id AS user_id`) and genuine transforms
+# (`UPPER(email) AS x`) alike — see `_is_identity_edge`, which disambiguates
+# it by inspecting the destination node's own expression. Any other edge type
+# (e.g. "aggregate", "join_predicate", "case", "arithmetic", "window_*",
+# "merge_*") fails closed and disqualifies the whole path.
+_IDENTITY_EDGE_TYPES = frozenset({"direct_column", "star_passthrough", "cross_query"})
 
 
 @dataclass
@@ -471,19 +485,143 @@ class ContextBuilder:
                         results.append(entry)
         return results
 
+    def _ancestor_table_names(self, table_name: str) -> Set[str]:
+        """All tables (any depth) that ``table_name`` transitively derives from."""
+        ancestors: Set[str] = set()
+        frontier = [table_name]
+        while frontier:
+            next_frontier = []
+            for name in frontier:
+                node = self.pipeline.table_graph.tables.get(name)
+                if not node or not node.created_by:
+                    continue
+                query = self.pipeline.table_graph.queries.get(node.created_by)
+                if not query:
+                    continue
+                for parent in query.source_tables:
+                    if parent not in ancestors:
+                        ancestors.add(parent)
+                        next_frontier.append(parent)
+            frontier = next_frontier
+        return ancestors
+
+    def _is_lineage_related(self, table_a: str, table_b: str) -> bool:
+        """True if one table transitively derives from the other. Such pairs are
+        excluded from candidates: the relationship is already visible via table
+        lineage (derives_from), so it isn't a "hidden" join, and treating it as
+        one would let the join-hints section reference tables outside the
+        tables given to build_join_context."""
+        return table_b in self._ancestor_table_names(
+            table_a
+        ) or table_a in self._ancestor_table_names(table_b)
+
+    def _is_identity_edge(self, edge: Any) -> bool:
+        """True if a single lineage edge preserves column identity.
+
+        `direct_column` / `star_passthrough` / `cross_query` always qualify.
+        `expression` is the lineage builder's catch-all for any aliased,
+        non-aggregate projection — it covers both a harmless rename
+        (`id AS user_id`) and a genuine transform (`UPPER(email) AS x`) alike,
+        since the builder classifies by the outer alias wrapper rather than
+        the inner expression. Disambiguate by parsing the destination node's
+        own expression and requiring it reduce, after stripping any alias, to
+        a bare column reference. Missing/unparsable expressions and any other
+        edge type fail closed.
+        """
+        if edge.edge_type in _IDENTITY_EDGE_TYPES:
+            return True
+        if edge.edge_type != "expression":
+            return False
+        expr = edge.to_node.expression
+        if not expr:
+            return False
+        try:
+            parsed = sqlglot.parse_one(expr, dialect=self.pipeline.dialect)
+        except Exception:
+            return False
+        return isinstance(parsed.unalias(), exp.Column)
+
+    def _identity_join_candidates(self, tables: List[str]) -> List[Dict[str, str]]:
+        """Join candidates from shared ultimate sources, restricted to columns
+        whose entire backward path is identity-preserving. Unknown edge types
+        fail closed."""
+        by_source: Dict[str, List[Tuple[str, str]]] = {}
+        source_tables: Dict[str, str] = {}
+        for table_name in tables:
+            for col in self.pipeline.get_columns_by_table(table_name):
+                if col.layer != "output":
+                    continue
+                _nodes, edges = self.pipeline.trace_column_backward_full(
+                    table_name, col.column_name
+                )
+                if not edges:
+                    continue
+                if any(not self._is_identity_edge(e) for e in edges):
+                    continue
+                for leaf in self.pipeline.trace_column_backward(table_name, col.column_name):
+                    if leaf.table_name != table_name:
+                        by_source.setdefault(leaf.full_name, []).append(
+                            (table_name, col.column_name)
+                        )
+                        source_tables[leaf.full_name] = leaf.table_name
+
+        candidates = []
+        for source_name, endpoints in sorted(by_source.items()):
+            per_table = {}
+            for table_name, column_name in endpoints:
+                per_table.setdefault(table_name, column_name)
+            table_names = sorted(per_table)
+            for i, left in enumerate(table_names):
+                for right in table_names[i + 1 :]:
+                    if self._is_lineage_related(left, right):
+                        continue
+                    candidates.append(
+                        {
+                            "left_table": left,
+                            "left_column": per_table[left],
+                            "right_table": right,
+                            "right_column": per_table[right],
+                            "source": source_name,
+                            "source_table": source_tables[source_name],
+                        }
+                    )
+        return candidates
+
     def build_join_context(self, tables: List[str]) -> str:
-        """Join-hints prompt section (observed joins; candidates added by T3b)."""
-        joins = self.get_observed_joins(tables)[: self.config.max_join_hints]
-        if not joins:
-            return ""
-        lines = ["## Join Hints", ""]
-        for j in joins:
+        """Join-hints prompt section: observed joins first, then candidates."""
+        observed = self.get_observed_joins(tables)[: self.config.max_join_hints]
+        observed_keys = {
+            tuple(
+                sorted([(j["left_table"], j["left_column"]), (j["right_table"], j["right_column"])])
+            )
+            for j in observed
+        }
+        lines = []
+        for j in observed:
             observed_in = ", ".join(j["query_ids"][:3])
             lines.append(
                 f"- {j['left_table']}.{j['left_column']} = "
                 f"{j['right_table']}.{j['right_column']} (observed in {observed_in})"
             )
-        return "\n".join(lines)
+        for c in self._identity_join_candidates(tables):
+            if len(lines) >= self.config.max_join_hints:
+                break
+            key = tuple(
+                sorted([(c["left_table"], c["left_column"]), (c["right_table"], c["right_column"])])
+            )
+            if key in observed_keys:
+                continue
+            if c["source_table"] in tables:
+                explanation = f"both derive from {c['source']}"
+            else:
+                explanation = "shared upstream key"
+            lines.append(
+                f"- candidate: {c['left_table']}.{c['left_column']} = "
+                f"{c['right_table']}.{c['right_column']} ({explanation})"
+            )
+        if not lines:
+            return ""
+        return "\n".join(["## Join Hints", ""] + lines)
 
     # =========================================================================
     # Text Context Methods (for LLM prompts)
