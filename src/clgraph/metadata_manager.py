@@ -33,6 +33,11 @@ def needs_description(col: ColumnNode) -> bool:
     return not col.description or col.description_source == DescriptionSource.FALLBACK
 
 
+def target_table(query) -> str:
+    """The table a query's output columns live under (shared by both bulk ops)."""
+    return query.destination_table or f"{query.query_id}_result"
+
+
 class MetadataManager:
     """
     Metadata management for Pipeline.
@@ -97,14 +102,14 @@ class MetadataManager:
         columns_to_process = []
         for query_id in sorted_query_ids:
             query = self._pipeline.table_graph.queries[query_id]
-            if query.destination_table:
-                for col in self._pipeline.columns.values():
-                    if (
-                        col.table_name == query.destination_table
-                        and (overwrite or needs_description(col))
-                        and col.is_computed()
-                    ):
-                        columns_to_process.append(col)
+            table = target_table(query)
+            for col in self._pipeline.columns.values():
+                if (
+                    col.table_name == table
+                    and (overwrite or needs_description(col))
+                    and col.is_computed()
+                ):
+                    columns_to_process.append(col)
 
         logger.info("Generating descriptions for %d columns...", len(columns_to_process))
 
@@ -157,12 +162,9 @@ class MetadataManager:
         columns_to_process = []
         for query_id in sorted_query_ids:
             query = self._pipeline.table_graph.queries[query_id]
-            # Get the table name for this query's output
-            # For CREATE TABLE queries, use destination_table
-            # For plain SELECTs, use query_id_result pattern
-            target_table = query.destination_table or f"{query_id}_result"
+            table = target_table(query)
             for col in self._pipeline.columns.values():
-                if col.table_name == target_table and col.is_computed():
+                if col.table_name == table and col.is_computed():
                     columns_to_process.append(col)
 
         logger.info(
@@ -210,4 +212,4 @@ class MetadataManager:
         return [col for col in self._pipeline.columns.values() if tag in col.tags]
 
 
-__all__ = ["MetadataManager"]
+__all__ = ["MetadataManager", "target_table", "needs_description"]
