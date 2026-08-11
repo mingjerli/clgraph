@@ -28,6 +28,10 @@ if TYPE_CHECKING:
 # "merge_*") fails closed and disqualifies the whole path.
 _IDENTITY_EDGE_TYPES = frozenset({"direct_column", "star_passthrough", "cross_query"})
 
+# Weight applied when diffusing a matched table's lexical score onto its graph
+# neighbors (parent sources and downstream readers) in select_tables_by_keywords.
+_NEIGHBOR_SCORE_FACTOR = 0.5
+
 
 @dataclass
 class TableInfo:
@@ -818,18 +822,44 @@ class ContextBuilder:
             if score > 0:
                 scored_tables.append((table_name, score))
 
-        # Sort by score
-        scored_tables.sort(key=lambda x: x[1], reverse=True)
-        selected = [t[0] for t in scored_tables[:max_tables]]
+        base_scores = dict(scored_tables)
 
-        # Ensure minimum
+        def neighbors(table_name: str) -> Set[str]:
+            node = self.pipeline.table_graph.tables[table_name]
+            result: Set[str] = set()
+            if node.created_by:
+                query = self.pipeline.table_graph.queries.get(node.created_by)
+                if query:
+                    result.update(query.source_tables)
+            for query_id in node.read_by:
+                query = self.pipeline.table_graph.queries.get(query_id)
+                if query and query.destination_table:
+                    result.add(query.destination_table)
+            result.discard(table_name)
+            return result
+
+        diffused = dict(base_scores)
+        for table_name, score in base_scores.items():
+            for neighbor in neighbors(table_name):
+                diffused[neighbor] = diffused.get(neighbor, 0) + _NEIGHBOR_SCORE_FACTOR * score
+
+        ranked = sorted(diffused.items(), key=lambda item: (-item[1], item[0]))
+        selected = [name for name, _ in ranked[:max_tables]]
+
         if len(selected) < min_tables:
-            all_tables = list(self.pipeline.table_graph.tables.keys())
-            for table in all_tables:
+            pool = set(selected)
+            neighbor_pad = sorted({n for s in selected for n in neighbors(s)} - pool)
+            final_pad = sorted(
+                t
+                for t in self.pipeline.table_graph.tables
+                if self.table_role(t) == "final" and t not in pool
+            )
+            rest = sorted(t for t in self.pipeline.table_graph.tables if t not in pool)
+            for table in neighbor_pad + final_pad + rest:
                 if table not in selected:
                     selected.append(table)
-                    if len(selected) >= min_tables:
-                        break
+                if len(selected) >= min_tables:
+                    break
 
         return selected
 
