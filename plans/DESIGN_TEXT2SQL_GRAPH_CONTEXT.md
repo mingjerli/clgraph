@@ -19,11 +19,24 @@ strategy or not surfaced at all. This document specifies five gaps:
 T1–T3 all modify how the `relationship_section` prompt slot is assembled; T3 is the
 highest-value change for generated-SQL correctness (join quality).
 
-### Shared change: graph-context assembly point
+### Shared change: one capped table set, one graph-context assembly point
 
-Both `_generate_direct` (`sql.py:182`) and `_generate_two_stage` (`sql.py:238`)
-currently fill `relationship_section` with a single builder call. Refactor both to a
-shared assembly:
+**Current inconsistency**: `_generate_direct` builds `<schema>` via
+`build_schema_context()`, which applies `max_tables` internally
+(`context.py:356-361`), but then fills the relationship section from
+`get_table_names()` — the *uncapped* list (`sql.py:192-194`). On pipelines larger
+than `max_tables`, relationship/lineage/join sections would reference tables absent
+from `<schema>`, and omitted tables can consume section caps before included tables
+get their hints.
+
+Refactor both strategies to resolve the table set **once**:
+
+```python
+def resolve_context_tables(self, tables: Optional[List[str]] = None) -> List[str]:
+    """Ordered, capped table list — the single source of truth for a prompt."""
+    # selection (all tables / two-stage selection) -> role-priority truncation
+    # to config.max_tables (T4 defines the priority order)
+```
 
 ```python
 def _build_graph_context(self, builder: ContextBuilder, tables: List[str]) -> str:
@@ -35,10 +48,19 @@ def _build_graph_context(self, builder: ContextBuilder, tables: List[str]) -> st
     return "\n\n".join(p for p in parts if p)
 ```
 
+The resolved list feeds **every** consumer: `build_context_for_tables()` (schema),
+`_build_graph_context()` (relationships/lineage/joins), `_build_notes()` (PII), and
+the `tables_used` result field. `build_schema_context()` becomes a thin wrapper that
+resolves and delegates, so external callers keep their behavior.
+
 The existing `GENERATE_SQL_PROMPT` / `GENERATE_SQL_WITH_EXPLANATION_PROMPT` templates
 keep their `{relationship_section}` slot; no template signature change. Sanitization
 stays where it is today (each section passed through `sanitize_for_prompt` at the
 `prompt.format(...)` call sites).
+
+**Regression test**: fixture with more than `max_tables` tables — every table named
+in the relationship, lineage, join, and notes sections must appear in `<schema>`,
+and `tables_used` must equal the resolved list.
 
 ---
 
@@ -167,21 +189,45 @@ Implementation sketch:
   **Phase 1 scope**: skip predicates whose alias resolves to a CTE-internal name
   rather than a pipeline table; log at debug level. (CTE mapping via
   `query_lineage` is a follow-up.)
-- `USING (col)` joins (`exp.Join` args) emit `left.col = right.col`.
+- `USING (col)` joins emit `left.col = right.col` **only when the join's left input
+  resolves to exactly one physical table**. In a chain like
+  `a JOIN b USING (id) JOIN c USING (id)`, the second join's left input is the
+  composite relation `(a JOIN b)` — there is no unique physical `left_table`, and
+  picking `a` or `b` would fabricate an observed pair. Such joins are skipped and
+  debug-logged, consistent with the zero-fabrication goal.
 - Non-equi joins and `ON` conditions that are not column-to-column equality are
   skipped.
 
-#### 2. Candidate joins (from shared lineage sources)
+#### 2. Candidate joins (from shared lineage sources — identity-preserving paths only)
 
-For table pairs never joined in the pipeline (e.g. two marts), infer candidates:
+For table pairs never joined in the pipeline (e.g. two marts), infer candidates.
+**Shared ultimate ancestry alone does not prove an equality join**:
+`trace_column_backward()` returns ultimate leaves and discards transformation and
+grain, so `mart.user_counts.user_count = COUNT(raw.users.id)` and
+`mart.user_ids.user_id = raw.users.id` both trace to `raw.users.id` — naive
+inference would suggest the nonsensical `user_count = user_id`, and a `candidate:`
+label does not make that safe for SQL generation.
 
-- For each output column of each context table, call
-  `pipeline.trace_column_backward(table, column)` once and record
-  `ultimate_source_full_name -> [(table, column), ...]`.
-- Any source mapped to columns in ≥2 distinct context tables yields candidate pairs.
-- Deduplicate against observed joins; cap total candidates
+Restriction: a column qualifies as a candidate endpoint only if its **entire
+backward path is identity-preserving**:
+
+- Use `pipeline.trace_column_backward_full(table, column)` (returns nodes **and**
+  edges) instead of the leaf-only variant.
+- Every edge on the path from the column to the shared source must have
+  `edge_type` in the allowlist `{"direct", "star_passthrough", "cross_query"}`
+  (`ColumnEdge.edge_type`, `models.py:598-600`). Any `transform`, `aggregate`,
+  `join`, or unrecognized edge type disqualifies the path — unknown types fail
+  closed.
+- Both endpoints of a candidate pair must qualify; the pair maps to the same shared
+  source column.
+- Deduplicate against observed joins; cap total hints
   (`ContextConfig.max_join_hints: int = 15`, shared with observed joins,
   observed first).
+
+If implementation finds `edge_type` granularity insufficient to prove identity
+preservation (e.g. renames recorded as `transform`), ship observed joins **without**
+inferred candidates rather than emit unproven ones — observed joins alone deliver
+most of T3's value.
 
 #### 3. Prompt section
 
@@ -204,9 +250,15 @@ explicitly labeled `candidate:` so the model can weigh them below observed joins
 - Fixture with `JOIN ... ON o.customer_id = c.id` and aliases → observed join with
   real table names and `query_id`.
 - Composite key (`ON a.x = b.x AND a.y = b.y`) → two entries, same query.
-- `USING (id)` → resolved to both tables.
-- Two marts sharing `raw.users.id` ancestry, never joined directly → one
-  `candidate:` line; no candidates between unrelated tables.
+- `USING (id)` with a single-table left input → resolved to both tables.
+- **Chained `USING`**: `a JOIN b USING (id) JOIN c USING (id)` → exactly one
+  observed hint (`a.id = b.id`); the second join emits nothing (composite left
+  input), and no `a.id = c.id` / `b.id = c.id` pair is fabricated.
+- Two marts sharing `raw.users.id` ancestry via pass-through paths, never joined
+  directly → one `candidate:` line; no candidates between unrelated tables.
+- **Aggregate counterexample**: `mart.user_counts.user_count = COUNT(raw.users.id)`
+  and `mart.user_ids.user_id = raw.users.id` both trace to `raw.users.id` → **no**
+  candidate emitted (the `aggregate` edge disqualifies the path).
 - Non-equi join (`ON a.ts > b.ts`) produces nothing.
 - Cap: hints truncated to `max_join_hints`, observed joins prioritized.
 

@@ -78,9 +78,20 @@ source column is consumed downstream even when nothing upstream exists.
    changes LLM call volume and export diffs for existing users. Revisit the default in
    a minor release.
 
-3. `generate_description()` dispatches on layer: source columns (no incoming edges,
-   `is_computed()` is False) use `build_source_description_prompt`; computed columns
-   keep `build_description_prompt`.
+3. `generate_description()` dispatches on **table role, not `is_computed()`**:
+
+   ```python
+   is_source_column = pipeline.table_graph.tables[column.table_name].is_source
+   ```
+
+   `is_computed()` cannot make this distinction: it returns `True` whenever
+   `query_id` is set (`models.py:570-578`), and `_add_query_columns()` assigns
+   `query_id` to every parsed node — so in `raw.users -> staging.users`,
+   `raw.users.email` has `layer="input"` and no incoming edges yet
+   `is_computed()` is still `True`. Source columns
+   (`table_node.is_source`) use `build_source_description_prompt`; all others keep
+   `build_description_prompt`. `layer == "input"` and the absence of incoming edges
+   are validation assertions in tests, not the dispatch criterion.
 
 ### Test Cases
 
@@ -94,6 +105,10 @@ source column is consumed downstream even when nothing upstream exists.
   `overwrite=True`.
 - Source column consumed by zero described targets still yields a valid prompt
   (name + siblings only).
+- **Dispatch test**: spy on both prompt builders in a `raw.users -> staging.users`
+  fixture; assert `raw.users.email` (which has `query_id` set and
+  `is_computed() == True`) is routed to `build_source_description_prompt` and
+  `staging.users.*` to `build_description_prompt`.
 
 ### Risks and Mitigations
 
