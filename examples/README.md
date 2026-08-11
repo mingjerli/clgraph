@@ -50,7 +50,7 @@ Extracting and using metadata from SQL comments.
 ---
 
 ### `llm_description_generation.ipynb`
-Using LLMs to generate column descriptions.
+Using LLMs to generate column descriptions — including source-column descriptions from forward usage (`include_sources=True`) and fallback/retry semantics (`DescriptionSource.FALLBACK`).
 
 **Features demonstrated:**
 - LLM-powered description generation
