@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `DescriptionSource.FALLBACK` - rule-based placeholder descriptions are now
+  distinguishable from model output and retried on the next
+  `generate_all_descriptions()` run. Exports emit `"fallback"`; older clgraph
+  versions will not recognize this value when importing such exports.
+- `generate_all_descriptions(include_sources=True)` also describes
+  source-table columns from forward usage context. New public
+  `build_source_description_prompt()`.
+- Public `Pipeline.get_incoming_edges()`. Bulk description/metadata passes now
+  use the adjacency index instead of linear edge scans.
+- Text2sql prompts now include column lineage in the default direct strategy,
+  table role labels (source/intermediate/final) with a prefer-final-tables
+  instruction, and a `## Join Hints` section (observed equi-joins from
+  pipeline SQL plus identity-preserving candidate joins).
+- `ContextConfig` fields `max_lineage_columns_per_table`, `max_lineage_lines`,
+  `annotate_table_roles`, `lineage_expansion_depth`, `max_join_hints`.
+
+### Changed
+
+- `generate_all_descriptions()` now also describes computed columns of
+  queries without a destination table (terminal SELECTs) - reruns may issue
+  more LLM calls than before.
+- `expand_with_lineage()` walks ancestors transitively (default depth 2,
+  configurable); two-stage text2sql context may include more tables.
+- `build_schema_context()`/`resolve_context_tables()` - explicit table
+  selections now preserve caller order and truncate to `max_tables`
+  (previously oversized explicit lists were reordered and could exceed the
+  cap).
+
 ## [0.0.7] - 2026-08-02
 
 ### Fixed
