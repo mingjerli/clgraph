@@ -37,6 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (previously oversized explicit lists were reordered and could exceed the
   cap).
 
+### Fixed
+
+- Generated-SQL safety validation now parses with the pipeline's dialect.
+  Dialect-specific syntax (e.g. BigQuery backticked identifiers) previously
+  failed to parse and was passed through unvalidated.
+
 ## [0.0.7] - 2026-08-02
 
 ### Fixed

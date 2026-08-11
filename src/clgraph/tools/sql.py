@@ -95,7 +95,7 @@ TABLE_SELECTION_PROMPT = """Given the following database tables and a user quest
 """
 
 
-def _validate_sql_or_passthrough(sql: str) -> str:
+def _validate_sql_or_passthrough(sql: str, dialect: Optional[str] = None) -> str:
     """Block destructive SQL; pass through SQL sqlglot cannot parse.
 
     A parse failure means "cannot assess", not "malicious" — clgraph supports
@@ -107,7 +107,7 @@ def _validate_sql_or_passthrough(sql: str) -> str:
     from ..prompt_sanitization import _validate_generated_sql
 
     try:
-        return _validate_generated_sql(sql)
+        return _validate_generated_sql(sql, dialect=dialect)
     except ValueError as e:
         if "could not be parsed" in str(e):
             logging.getLogger(__name__).warning(
@@ -225,7 +225,7 @@ class GenerateSQLTool(LLMTool):
 
         # Parse response
         sql, explanation = self._parse_response(response)
-        sql = _validate_sql_or_passthrough(sql)
+        sql = _validate_sql_or_passthrough(sql, self.pipeline.dialect)
 
         return ToolResult.success_result(
             data={
@@ -292,7 +292,7 @@ class GenerateSQLTool(LLMTool):
 
         # Parse response
         sql, explanation = self._parse_response(response)
-        sql = _validate_sql_or_passthrough(sql)
+        sql = _validate_sql_or_passthrough(sql, self.pipeline.dialect)
 
         return ToolResult.success_result(
             data={

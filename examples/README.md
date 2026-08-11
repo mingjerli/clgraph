@@ -52,6 +52,9 @@ Extracting and using metadata from SQL comments.
 ### `llm_description_generation.ipynb`
 Using LLMs to generate column descriptions — including source-column descriptions from forward usage (`include_sources=True`) and fallback/retry semantics (`DescriptionSource.FALLBACK`).
 
+### `text_to_sql.ipynb`
+Schema-aware SQL generation from natural language — shows the lineage-derived prompt context (table roles, column lineage, observed and candidate join hints), direct vs two-stage strategies, and routing through `LineageAgent`.
+
 **Features demonstrated:**
 - LLM-powered description generation
 - Automated documentation

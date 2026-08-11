@@ -416,7 +416,9 @@ def _validate_description_output(
     return description
 
 
-def _validate_generated_sql(sql: str, allow_mutations: bool = False) -> str:
+def _validate_generated_sql(
+    sql: str, allow_mutations: bool = False, dialect: Optional[str] = None
+) -> str:
     """
     Validate generated SQL for destructive operations.
 
@@ -428,6 +430,9 @@ def _validate_generated_sql(sql: str, allow_mutations: bool = False) -> str:
         sql: The generated SQL to validate.
         allow_mutations: If True, allows INSERT/UPDATE/DELETE operations.
             Defaults to False for safety.
+        dialect: sqlglot dialect to parse with. Without it, dialect-specific
+            syntax (e.g. BigQuery backticked identifiers) fails to parse and
+            the SQL cannot be validated at all.
 
     Returns:
         The validated SQL if safe.
@@ -452,7 +457,7 @@ def _validate_generated_sql(sql: str, allow_mutations: bool = False) -> str:
         return _validate_sql_with_patterns(sql, allow_mutations)
 
     try:
-        parsed = sqlglot.parse(sql)
+        parsed = sqlglot.parse(sql, dialect=dialect)
     except sqlglot.errors.ParseError as e:
         raise ValueError(f"Generated SQL could not be parsed for validation: {e}") from e
 
