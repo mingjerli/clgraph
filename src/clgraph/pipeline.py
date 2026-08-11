@@ -796,6 +796,7 @@ class Pipeline:
         *,
         overwrite: bool = False,
         on_error: str = "fallback",
+        include_sources: bool = False,
     ):
         """
         Generate descriptions for all columns using LLM.
@@ -811,9 +812,15 @@ class Pipeline:
             on_error: ``"fallback"`` (default) writes a rule-based description
                 when the LLM fails; ``"raise"`` propagates
                 :class:`~clgraph.column.DescriptionGenerationError` instead.
+            include_sources: If ``True``, also describe columns of source tables
+                using their forward usage and sibling columns as context.
         """
         return self._metadata_manager.generate_all_descriptions(
-            batch_size, verbose, overwrite=overwrite, on_error=on_error
+            batch_size,
+            verbose,
+            overwrite=overwrite,
+            on_error=on_error,
+            include_sources=include_sources,
         )
 
     def propagate_all_metadata(self, verbose: bool = True):

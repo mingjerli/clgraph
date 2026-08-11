@@ -18,7 +18,7 @@ from .column import (
     propagate_metadata,
     propagate_metadata_backward,
 )
-from .models import ColumnNode
+from .models import ColumnNode, DescriptionSource
 
 if TYPE_CHECKING:
     from .pipeline import Pipeline
@@ -28,8 +28,6 @@ logger = logging.getLogger(__name__)
 
 def needs_description(col: ColumnNode) -> bool:
     """True when a column has no description or only a rule-based placeholder."""
-    from .models import DescriptionSource
-
     return not col.description or col.description_source == DescriptionSource.FALLBACK
 
 
@@ -75,6 +73,7 @@ class MetadataManager:
         *,
         overwrite: bool = False,
         on_error: str = "fallback",
+        include_sources: bool = False,
     ):
         """
         Generate descriptions for all columns using LLM.
@@ -92,6 +91,10 @@ class MetadataManager:
                 :class:`~clgraph.column.DescriptionGenerationError` instead. Use
                 ``"raise"`` when a silent fallback would be mistaken for a real
                 model-generated description.
+            include_sources: If ``True``, also describe columns of source tables
+                (tables not produced by any query in the pipeline), using their
+                forward usage and sibling columns as context. Defaults to
+                ``False`` since source columns have no lineage-derived context.
         """
         if not self._pipeline.llm:
             raise ValueError("LLM not configured. Set pipeline.llm before calling.")
@@ -100,6 +103,21 @@ class MetadataManager:
         sorted_query_ids = self._pipeline.table_graph.topological_sort()
 
         columns_to_process = []
+        if include_sources:
+            for table_name, node in self._pipeline.table_graph.tables.items():
+                if not node.is_source:
+                    continue
+                by_column = {}
+                for col in self._pipeline.columns.values():
+                    if col.table_name == table_name and (overwrite or needs_description(col)):
+                        by_column.setdefault(col.column_name, []).append(col)
+                for _name, nodes in sorted(by_column.items()):
+                    representative = max(
+                        nodes,
+                        key=lambda c: len(self._pipeline._get_outgoing_edges(c.full_name)),
+                    )
+                    columns_to_process.append(representative)
+
         for query_id in sorted_query_ids:
             query = self._pipeline.table_graph.queries[query_id]
             table = target_table(query)
@@ -125,6 +143,24 @@ class MetadataManager:
                 overwrite=overwrite,
                 on_error=on_error,
             )
+
+            # The same physical column may appear as several ColumnNodes (one
+            # per consuming query); copy the result to every twin so all
+            # consumers see it. The guard mirrors the candidate-filter
+            # semantics above: only touch twins that overwrite allows or that
+            # still need a description, so an adequate GENERATED twin is left
+            # alone without overwrite, and overwrite=True can replace even a
+            # SOURCE twin's stale text instead of leaving nodes disagreeing.
+            if col.description:
+                for twin in self._pipeline.columns.values():
+                    if (
+                        twin is not col
+                        and twin.table_name == col.table_name
+                        and twin.column_name == col.column_name
+                        and (overwrite or needs_description(twin))
+                    ):
+                        twin.description = col.description
+                        twin.description_source = col.description_source
 
         logger.info("Done! Generated %d descriptions", len(columns_to_process))
 
