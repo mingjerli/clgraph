@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.8] - 2026-08-11
+
 ### Added
 
 - `DescriptionSource.FALLBACK` - rule-based placeholder descriptions are now
