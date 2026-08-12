@@ -155,7 +155,7 @@ def test_llm_failure_falls_back_by_default():
     result = generate_description(col, _BoomLLM(), _FakePipeline())
     # Fallback humanizes the column name.
     assert col.description == "Total Amount"
-    assert col.description_source == DescriptionSource.GENERATED
+    assert col.description_source == DescriptionSource.FALLBACK
     assert result is False, "a fallback is not an LLM-produced description"
 
 
@@ -179,7 +179,7 @@ def test_rejected_output_falls_back_by_default():
     col = _make_column()
     result = generate_description(col, _RejectedLLM(), _FakePipeline())
     assert "pirate" not in (col.description or "").lower()
-    assert col.description_source == DescriptionSource.GENERATED
+    assert col.description_source == DescriptionSource.FALLBACK
     assert result is False
 
 

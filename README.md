@@ -509,6 +509,21 @@ Generated descriptions for 8 columns:
     Order total amount in USD per customer from raw orders table.
 ```
 
+Options worth knowing:
+
+<!-- skip-test -->
+```python
+# Also describe source-table columns (from how they are used downstream),
+# so the first computed layer gets real source context in its prompts:
+pipeline.generate_all_descriptions(include_sources=True)
+
+# When the LLM fails or its output is rejected, a rule-based placeholder is
+# written with description_source == DescriptionSource.FALLBACK. Placeholders
+# are retried automatically on the next run, and are never fed into
+# downstream prompts as source context. Prefer a hard error instead:
+pipeline.generate_all_descriptions(on_error="raise")
+```
+
 ### Lineage Agent (Natural Language Interface)
 
 Query your lineage data using natural language. The agent automatically routes questions to appropriate tools. Most queries work without an LLM - only SQL generation requires one:

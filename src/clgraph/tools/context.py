@@ -7,10 +7,30 @@ used by SQL generation, schema tools, and other components.
 
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
+
+import sqlglot
+from sqlglot import exp
 
 if TYPE_CHECKING:
     from ..pipeline import Pipeline
+
+# Edge types produced by the lineage builder that are ALWAYS identity-preserving
+# regardless of the node's own expression text: "direct_column" (bare,
+# unaliased column refs, e.g. `SELECT id FROM t`), "star_passthrough" (SELECT *
+# expansion), and "cross_query" (column carried across queries unchanged).
+# "expression" is deliberately excluded here: it's the lineage builder's
+# catch-all for *any* aliased, non-aggregate projection, so it covers both
+# harmless renames (`id AS user_id`) and genuine transforms
+# (`UPPER(email) AS x`) alike — see `_is_identity_edge`, which disambiguates
+# it by inspecting the destination node's own expression. Any other edge type
+# (e.g. "aggregate", "join_predicate", "case", "arithmetic", "window_*",
+# "merge_*") fails closed and disqualifies the whole path.
+_IDENTITY_EDGE_TYPES = frozenset({"direct_column", "star_passthrough", "cross_query"})
+
+# Weight applied when diffusing a matched table's lexical score onto its graph
+# neighbors (parent sources and downstream readers) in select_tables_by_keywords.
+_NEIGHBOR_SCORE_FACTOR = 0.5
 
 
 @dataclass
@@ -67,6 +87,21 @@ class ContextConfig:
 
     max_description_length: int = 200
     """Truncate descriptions longer than this."""
+
+    max_lineage_columns_per_table: int = 10
+    """Maximum lineage lines contributed per table."""
+
+    max_lineage_lines: int = 20
+    """Maximum total lines in the column-lineage section."""
+
+    annotate_table_roles: bool = True
+    """Label tables as source/intermediate/final in schema context."""
+
+    lineage_expansion_depth: int = 2
+    """How many ancestor levels expand_with_lineage() walks."""
+
+    max_join_hints: int = 15
+    """Maximum lines in the join-hints section (observed joins first)."""
 
 
 class ContextBuilder:
@@ -197,6 +232,15 @@ class ContextBuilder:
                 tables.append(name)
         return sorted(tables)
 
+    def table_role(self, table_name: str) -> str:
+        """ "source", "final" (no downstream readers), or "intermediate"."""
+        node = self.pipeline.table_graph.tables[table_name]
+        if node.is_source:
+            return "source"
+        if len(node.read_by) == 0:
+            return "final"
+        return "intermediate"
+
     def get_pii_columns(self, table_name: Optional[str] = None) -> List[Dict[str, str]]:
         """
         Get all PII-flagged columns.
@@ -271,36 +315,39 @@ class ContextBuilder:
     # Lineage Methods
     # =========================================================================
 
-    def expand_with_lineage(self, tables: List[str]) -> List[str]:
-        """
-        Expand table list with lineage-related tables.
+    def expand_with_lineage(self, tables: List[str], depth: Optional[int] = None) -> List[str]:
+        """Expand a table list with ancestors via BFS, shallow-first.
 
-        For each table, adds its source tables to help with
-        understanding join relationships.
-
-        Args:
-            tables: Initial list of table names.
-
-        Returns:
-            Expanded list including source tables.
+        ``depth`` bounds the number of ancestor levels; ``None`` reads
+        ``config.lineage_expansion_depth``. Result order: the original
+        selection, then depth-1 parents, then depth-2, ...
         """
         if not self.config.include_lineage:
-            return tables
+            return list(tables)
+        if depth is None:
+            depth = self.config.lineage_expansion_depth
 
-        expanded = set(tables)
-
-        for table_name in tables:
-            table_node = self.pipeline.table_graph.tables.get(table_name)
-            if not table_node:
-                continue
-
-            # Add source tables
-            if table_node.created_by:
+        ordered = list(tables)
+        seen = set(tables)
+        frontier = list(tables)
+        for _ in range(depth):
+            next_frontier = []
+            for table_name in frontier:
+                table_node = self.pipeline.table_graph.tables.get(table_name)
+                if not table_node or not table_node.created_by:
+                    continue
                 query = self.pipeline.table_graph.queries.get(table_node.created_by)
-                if query:
-                    expanded.update(query.source_tables)
-
-        return list(expanded)
+                if not query:
+                    continue
+                for parent in sorted(query.source_tables):
+                    if parent not in seen:
+                        seen.add(parent)
+                        ordered.append(parent)
+                        next_frontier.append(parent)
+            if not next_frontier:
+                break
+            frontier = next_frontier
+        return ordered
 
     def get_table_relationships(self, tables: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """
@@ -335,32 +382,272 @@ class ContextBuilder:
 
         return relationships
 
+    def _and_leaves(self, condition):
+        """Flatten a boolean condition into AND-connected leaves."""
+        if isinstance(condition, exp.Paren):
+            return self._and_leaves(condition.this)
+        if isinstance(condition, exp.And):
+            return self._and_leaves(condition.left) + self._and_leaves(condition.right)
+        return [condition]
+
+    def _physical_name(self, table: exp.Table) -> str:
+        parts = [table.args.get("catalog"), table.args.get("db"), table.this]
+        return ".".join(p.name for p in parts if p is not None)
+
+    def get_observed_joins(self, tables: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        """Equi-join pairs observed in the pipeline's SQL. Never fabricates:
+        predicates that cannot be resolved to exactly two physical pipeline
+        tables are skipped (and debug-logged)."""
+        import logging
+
+        log = logging.getLogger(__name__)
+        known = set(self.pipeline.table_graph.tables)
+        wanted = set(tables) if tables is not None else None
+        results, seen = [], {}
+
+        for query in self.pipeline.table_graph.queries.values():
+            cte_names = {cte.alias_or_name for cte in query.ast.find_all(exp.CTE)}
+            for select in query.ast.find_all(exp.Select):
+                # sqlglot's Select stores its FROM clause under the "from" arg key
+                # in most releases, but under "from_" in some (e.g. 30.x) to avoid
+                # colliding with the Python keyword. Check both for robustness
+                # across the pinned sqlglot range (>=28.0.0,<31.0.0).
+                from_expr = select.args.get("from") or select.args.get("from_")
+                from_table = from_expr.this if from_expr is not None else None
+
+                # Scope the alias map to THIS select's direct relations only (its
+                # FROM and each JOIN's target) — never find_all over the subtree,
+                # which would recurse into nested subqueries and let a correlated
+                # subquery's reused alias silently overwrite an outer table's
+                # mapping (fabricating a join between unrelated tables).
+                relations = []
+                if from_table is not None:
+                    relations.append(from_table)
+                for j in select.args.get("joins") or []:
+                    relations.append(j.this)
+                alias_map = {}
+                for rel in relations:
+                    if isinstance(rel, exp.Table):
+                        name = self._physical_name(rel)
+                        alias_map[rel.alias_or_name] = name
+                        alias_map[name] = name
+
+                def resolve(alias, cte_names=cte_names, alias_map=alias_map):
+                    if alias in cte_names:
+                        return None
+                    name = alias_map.get(alias)
+                    return name if name in known else None
+
+                joins = select.args.get("joins") or []
+                for join_index, join in enumerate(joins):
+                    pairs = []
+                    on = join.args.get("on")
+                    using = join.args.get("using")
+                    right = join.this if isinstance(join.this, exp.Table) else None
+                    if on is not None:
+                        for leaf in self._and_leaves(on):
+                            if (
+                                isinstance(leaf, exp.EQ)
+                                and isinstance(leaf.left, exp.Column)
+                                and isinstance(leaf.right, exp.Column)
+                            ):
+                                lt = resolve(leaf.left.table)
+                                rt = resolve(leaf.right.table)
+                                if lt and rt and lt != rt:
+                                    pairs.append((lt, leaf.left.name, rt, leaf.right.name))
+                                else:
+                                    log.debug(
+                                        "skipping unresolvable join predicate: %s", leaf.sql()
+                                    )
+                    elif using and right is not None:
+                        # USING is only safe when the left input is one physical table.
+                        if join_index == 0 and isinstance(from_table, exp.Table):
+                            lt = resolve(from_table.alias_or_name)
+                            rt = resolve(right.alias_or_name)
+                            if lt and rt:
+                                for ident in using:
+                                    pairs.append((lt, ident.name, rt, ident.name))
+                        else:
+                            log.debug("skipping USING join with composite left input")
+
+                    for lt, lc, rt, rc in pairs:
+                        if wanted is not None and (lt not in wanted or rt not in wanted):
+                            continue
+                        key = tuple(sorted([(lt, lc), (rt, rc)]))
+                        existing = seen.get(key)
+                        if existing is not None:
+                            if query.query_id not in existing["query_ids"]:
+                                existing["query_ids"].append(query.query_id)
+                            continue
+                        entry = {
+                            "left_table": lt,
+                            "left_column": lc,
+                            "right_table": rt,
+                            "right_column": rc,
+                            "query_id": query.query_id,
+                            "query_ids": [query.query_id],
+                        }
+                        seen[key] = entry
+                        results.append(entry)
+        return results
+
+    def _ancestor_table_names(self, table_name: str) -> Set[str]:
+        """All tables (any depth) that ``table_name`` transitively derives from."""
+        ancestors: Set[str] = set()
+        frontier = [table_name]
+        while frontier:
+            next_frontier = []
+            for name in frontier:
+                node = self.pipeline.table_graph.tables.get(name)
+                if not node or not node.created_by:
+                    continue
+                query = self.pipeline.table_graph.queries.get(node.created_by)
+                if not query:
+                    continue
+                for parent in query.source_tables:
+                    if parent not in ancestors:
+                        ancestors.add(parent)
+                        next_frontier.append(parent)
+            frontier = next_frontier
+        return ancestors
+
+    def _is_lineage_related(self, table_a: str, table_b: str) -> bool:
+        """True if one table transitively derives from the other. Such pairs are
+        excluded from candidates: the relationship is already visible via table
+        lineage (derives_from), so it isn't a "hidden" join, and treating it as
+        one would let the join-hints section reference tables outside the
+        tables given to build_join_context."""
+        return table_b in self._ancestor_table_names(
+            table_a
+        ) or table_a in self._ancestor_table_names(table_b)
+
+    def _is_identity_edge(self, edge: Any) -> bool:
+        """True if a single lineage edge preserves column identity.
+
+        `direct_column` / `star_passthrough` / `cross_query` always qualify.
+        `expression` is the lineage builder's catch-all for any aliased,
+        non-aggregate projection — it covers both a harmless rename
+        (`id AS user_id`) and a genuine transform (`UPPER(email) AS x`) alike,
+        since the builder classifies by the outer alias wrapper rather than
+        the inner expression. Disambiguate by parsing the destination node's
+        own expression and requiring it reduce, after stripping any alias, to
+        a bare column reference. Missing/unparsable expressions and any other
+        edge type fail closed.
+        """
+        if edge.edge_type in _IDENTITY_EDGE_TYPES:
+            return True
+        if edge.edge_type != "expression":
+            return False
+        expr = edge.to_node.expression
+        if not expr:
+            return False
+        try:
+            parsed = sqlglot.parse_one(expr, dialect=self.pipeline.dialect)
+        except Exception:
+            return False
+        return isinstance(parsed.unalias(), exp.Column)
+
+    def _identity_join_candidates(self, tables: List[str]) -> List[Dict[str, str]]:
+        """Join candidates from shared ultimate sources, restricted to columns
+        whose entire backward path is identity-preserving. Unknown edge types
+        fail closed."""
+        by_source: Dict[str, List[Tuple[str, str]]] = {}
+        source_tables: Dict[str, str] = {}
+        for table_name in tables:
+            for col in self.pipeline.get_columns_by_table(table_name):
+                if col.layer != "output":
+                    continue
+                _nodes, edges = self.pipeline.trace_column_backward_full(
+                    table_name, col.column_name
+                )
+                if not edges:
+                    continue
+                if any(not self._is_identity_edge(e) for e in edges):
+                    continue
+                for leaf in self.pipeline.trace_column_backward(table_name, col.column_name):
+                    if leaf.table_name != table_name:
+                        by_source.setdefault(leaf.full_name, []).append(
+                            (table_name, col.column_name)
+                        )
+                        source_tables[leaf.full_name] = leaf.table_name
+
+        candidates = []
+        for source_name, endpoints in sorted(by_source.items()):
+            per_table = {}
+            for table_name, column_name in endpoints:
+                per_table.setdefault(table_name, column_name)
+            table_names = sorted(per_table)
+            for i, left in enumerate(table_names):
+                for right in table_names[i + 1 :]:
+                    if self._is_lineage_related(left, right):
+                        continue
+                    candidates.append(
+                        {
+                            "left_table": left,
+                            "left_column": per_table[left],
+                            "right_table": right,
+                            "right_column": per_table[right],
+                            "source": source_name,
+                            "source_table": source_tables[source_name],
+                        }
+                    )
+        return candidates
+
+    def build_join_context(self, tables: List[str]) -> str:
+        """Join-hints prompt section: observed joins first, then candidates."""
+        observed = self.get_observed_joins(tables)[: self.config.max_join_hints]
+        observed_keys = {
+            tuple(
+                sorted([(j["left_table"], j["left_column"]), (j["right_table"], j["right_column"])])
+            )
+            for j in observed
+        }
+        lines = []
+        for j in observed:
+            observed_in = ", ".join(j["query_ids"][:3])
+            lines.append(
+                f"- {j['left_table']}.{j['left_column']} = "
+                f"{j['right_table']}.{j['right_column']} (observed in {observed_in})"
+            )
+        for c in self._identity_join_candidates(tables):
+            if len(lines) >= self.config.max_join_hints:
+                break
+            key = tuple(
+                sorted([(c["left_table"], c["left_column"]), (c["right_table"], c["right_column"])])
+            )
+            if key in observed_keys:
+                continue
+            if c["source_table"] in tables:
+                explanation = f"both derive from {c['source']}"
+            else:
+                explanation = "shared upstream key"
+            lines.append(
+                f"- candidate: {c['left_table']}.{c['left_column']} = "
+                f"{c['right_table']}.{c['right_column']} ({explanation})"
+            )
+        if not lines:
+            return ""
+        return "\n".join(["## Join Hints", ""] + lines)
+
     # =========================================================================
     # Text Context Methods (for LLM prompts)
     # =========================================================================
 
-    def build_schema_context(self, tables: Optional[List[str]] = None) -> str:
-        """
-        Build text context describing the schema.
+    def resolve_context_tables(self, tables: Optional[List[str]] = None) -> List[str]:
+        """Ordered, capped table list — the single source of truth for a prompt.
 
-        Args:
-            tables: Optional list of tables to include. If None, all tables.
-
-        Returns:
-            Formatted string describing the schema.
+        With no explicit selection, all tables are considered and ranked by role
+        (final > intermediate > source) when trimming. An explicit selection
+        keeps its order and is truncated to ``max_tables``.
         """
         if tables is None:
             tables = self.get_table_names()
+            priority = {"final": 0, "intermediate": 1, "source": 2}
+            tables = sorted(tables, key=lambda t: (priority[self.table_role(t)], t))
+        return list(tables)[: self.config.max_tables]
 
-        # Apply max tables limit
-        if len(tables) > self.config.max_tables:
-            # Prioritize derived tables over source tables
-            source_tables = [t for t in tables if self.pipeline.table_graph.tables[t].is_source]
-            derived_tables = [t for t in tables if t not in source_tables]
-            remaining = self.config.max_tables - len(derived_tables)
-            tables = derived_tables + source_tables[: max(0, remaining)]
-
-        return self.build_context_for_tables(tables)
+    def build_schema_context(self, tables: Optional[List[str]] = None) -> str:
+        return self.build_context_for_tables(self.resolve_context_tables(tables))
 
     def build_context_for_tables(self, tables: List[str]) -> str:
         """
@@ -395,9 +682,18 @@ class ContextBuilder:
             lines.append(f"Description: {desc}")
 
         # Table type
-        if table_info.is_source:
-            lines.append("(Source table)")
-        elif table_info.source_tables and self.config.include_source_tables:
+        if self.config.annotate_table_roles:
+            role = self.table_role(table_name)
+            lines.append(
+                {"source": "(Source table)", "final": "(Final table)"}.get(
+                    role, "(Intermediate table)"
+                )
+            )
+        if (
+            not table_info.is_source
+            and table_info.source_tables
+            and self.config.include_source_tables
+        ):
             sources = ", ".join(table_info.source_tables[:3])
             if len(table_info.source_tables) > 3:
                 sources += f" (+{len(table_info.source_tables) - 3} more)"
@@ -467,7 +763,7 @@ class ContextBuilder:
             columns = self.pipeline.get_columns_by_table(table_name)
             output_columns = [c for c in columns if c.layer == "output"]
 
-            for col in output_columns[:10]:  # Limit per table
+            for col in output_columns[: self.config.max_lineage_columns_per_table]:
                 sources = self.pipeline.trace_column_backward(table_name, col.column_name)
                 relevant_sources = [s for s in sources if s.table_name in tables]
 
@@ -480,7 +776,7 @@ class ContextBuilder:
         if not lineage_info:
             return ""
 
-        return "## Column Lineage\n\n" + "\n".join(lineage_info[:20])
+        return "## Column Lineage\n\n" + "\n".join(lineage_info[: self.config.max_lineage_lines])
 
     # =========================================================================
     # Table Selection (for two-stage approaches)
@@ -528,18 +824,44 @@ class ContextBuilder:
             if score > 0:
                 scored_tables.append((table_name, score))
 
-        # Sort by score
-        scored_tables.sort(key=lambda x: x[1], reverse=True)
-        selected = [t[0] for t in scored_tables[:max_tables]]
+        base_scores = dict(scored_tables)
 
-        # Ensure minimum
+        def neighbors(table_name: str) -> Set[str]:
+            node = self.pipeline.table_graph.tables[table_name]
+            result: Set[str] = set()
+            if node.created_by:
+                query = self.pipeline.table_graph.queries.get(node.created_by)
+                if query:
+                    result.update(query.source_tables)
+            for query_id in node.read_by:
+                query = self.pipeline.table_graph.queries.get(query_id)
+                if query and query.destination_table:
+                    result.add(query.destination_table)
+            result.discard(table_name)
+            return result
+
+        diffused = dict(base_scores)
+        for table_name, score in base_scores.items():
+            for neighbor in neighbors(table_name):
+                diffused[neighbor] = diffused.get(neighbor, 0) + _NEIGHBOR_SCORE_FACTOR * score
+
+        ranked = sorted(diffused.items(), key=lambda item: (-item[1], item[0]))
+        selected = [name for name, _ in ranked[:max_tables]]
+
         if len(selected) < min_tables:
-            all_tables = list(self.pipeline.table_graph.tables.keys())
-            for table in all_tables:
+            pool = set(selected)
+            neighbor_pad = sorted({n for s in selected for n in neighbors(s)} - pool)
+            final_pad = sorted(
+                t
+                for t in self.pipeline.table_graph.tables
+                if self.table_role(t) == "final" and t not in pool
+            )
+            rest = sorted(t for t in self.pipeline.table_graph.tables if t not in pool)
+            for table in neighbor_pad + final_pad + rest:
                 if table not in selected:
                     selected.append(table)
-                    if len(selected) >= min_tables:
-                        break
+                if len(selected) >= min_tables:
+                    break
 
         return selected
 

@@ -19,6 +19,7 @@ from .agent import AgentResult, LineageAgent, QuestionType
 from .column import (
     DescriptionGenerationError,
     build_description_prompt,
+    build_source_description_prompt,
     generate_description,
 )
 from .diff import ColumnDiff, PipelineDiff
@@ -133,6 +134,7 @@ __all__ = [
     "TemplateTokenizer",
     # Description generation
     "build_description_prompt",
+    "build_source_description_prompt",
     "generate_description",
     "DescriptionGenerationError",
     # Metadata

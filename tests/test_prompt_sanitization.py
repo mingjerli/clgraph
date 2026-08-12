@@ -920,3 +920,19 @@ class TestIntegrationScenarios:
         # Very short non-relevant response might pass, but at least
         # the input was sanitized
         assert validated is None or len(validated) <= 200
+
+
+class TestValidateGeneratedSQLDialect:
+    """Dialect-aware parsing: dialect-specific syntax must be validatable."""
+
+    def test_bigquery_backticks_validate_with_dialect(self):
+        sql = "SELECT region FROM `mart.customer_revenue` GROUP BY region"
+        # default dialect cannot parse backticked identifiers
+        with pytest.raises(ValueError, match="could not be parsed"):
+            _validate_generated_sql(sql)
+        # the pipeline's dialect parses and validates it
+        assert _validate_generated_sql(sql, dialect="bigquery") == sql
+
+    def test_destructive_sql_caught_with_dialect(self):
+        with pytest.raises(ValueError, match="destructive"):
+            _validate_generated_sql("DROP TABLE `mart.customer_revenue`", dialect="bigquery")
